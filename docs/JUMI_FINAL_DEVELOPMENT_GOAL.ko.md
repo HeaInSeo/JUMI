@@ -19,6 +19,7 @@ JUMI의 최종 개발 목표는 Kubernetes 클러스터 내부에서 executable 
 - JUMI는 policy scheduler가 아니다.
 - JUMI는 front-door queue system이 아니다.
 - JUMI는 executable run spec 기반 execution kernel이다.
+- JUMI는 실행 요청의 정책적 선택을 하지 않고, 이미 선택된 executable run spec을 실제 Kubernetes 실행으로 변환·관찰·제어하는 data-plane 계층이다.
 - JUMI는 Kubernetes native path 위에서 먼저 성립해야 한다.
 - Kueue는 선택적으로 연동되지만, 필수 의존성이 아니다.
 
@@ -30,8 +31,9 @@ JUMI의 최종 개발 목표는 Kubernetes 클러스터 내부에서 executable 
 
 ### 3.1 실행 경계
 
-- northbound로 executable run spec을 받는다.
-- gRPC 기반 app-to-app 인터페이스를 가진다.
+- northbound로 executable run spec submit/status/cancel을 위한 gRPC app-to-app 인터페이스를 가진다.
+- southbound로 internal DAG engine, backend adapter, Kubernetes API와 연결된다.
+- southbound에서 optional Kueue observation을 통해 admission visibility와 pending reason 관찰을 강화할 수 있다.
 - Redis Streams, scheduler, lowering은 외부 계층으로 남긴다.
 
 ### 3.2 실행 의미론
@@ -39,20 +41,19 @@ JUMI의 최종 개발 목표는 Kubernetes 클러스터 내부에서 executable 
 - dag-go를 readiness source of truth로 사용한다.
 - ready node를 bounded release로 제어한다.
 - backend prepare/start/wait/cancel을 일관되게 수행한다.
-- fast-fail, cancel, retry semantics를 명확히 가진다.
+- fast-fail, cancel semantics를 명확히 가지며, retry는 제한된 execution semantics만 내부에서 다루고 복잡한 retry policy와 backoff/classification은 외부 계층에 남긴다.
 
 ### 3.3 상태 모델
 
-- run 상태를 노출한다.
-- node 상태를 노출한다.
-- attempt 상태를 노출한다.
-- current status, stop cause, failure reason을 분리한다.
+- run/node/attempt 상태를 일관된 전이 규칙으로 유지하고 API로 노출한다.
+- current execution status, current bottleneck location, current stop cause, terminal failure reason을 분리한다.
+- 현재 상태와 이벤트 히스토리를 섞지 않는다.
 
 ### 3.4 운영성
 
 - health / readiness / status endpoint를 가진다.
-- no-Kueue 환경에서도 정상 실행된다.
-- optional Kueue integration에서 admission 관찰을 강화할 수 있다.
+- JUMI core는 no-Kueue 환경에서 완결적으로 동작한다.
+- Kueue integration은 admission visibility, pending reason, cluster policy alignment를 강화하는 선택 기능이다.
 - 운영자가 병목 위치를 읽을 수 있다.
 
 ### 3.5 확장성
@@ -71,7 +72,7 @@ JUMI 개발이 충분히 진행되었다고 판단하려면 최소한 아래가 
 - optional Kueue path가 core를 깨지 않고 붙는다.
 - fixture 기반 executable run spec 샘플들이 통합 테스트로 유지된다.
 - gRPC submit/status/cancel 계약이 고정된다.
-- run/node/attempt 상태가 API로 조회 가능하다.
+- run/node/attempt 상태가 일관된 전이 규칙 아래 API로 조회 가능하다.
 - cancel과 failure propagation이 예측 가능하다.
 
 ---
