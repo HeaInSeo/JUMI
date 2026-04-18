@@ -19,7 +19,7 @@ JUMI는 이 경로를 제품 초기 기준선으로 삼는다.
 
 - Redis Streams는 외부 scheduler/front-door 계층에 남긴다.
 - authored pipeline과 lowering은 외부 계층에 남긴다.
-- Kueue는 optional integration으로 둔다.
+- JUMI는 Kueue와 연동되는 방향으로 개발하되, core execution semantics는 Kueue 부재에도 성립해야 한다.
 - JUMI는 Kubernetes 내부 data-plane app으로 구현한다.
 - app 간 제어 인터페이스는 gRPC를 우선한다.
 
@@ -29,7 +29,7 @@ JUMI는 이 경로를 제품 초기 기준선으로 삼는다.
 
 초기 JUMI 스프린트는 아래 질문에 답하는 순서로 진행한다.
 
-- JUMI가 no-Kueue 환경에서도 실행 커널로 성립하는가
+- JUMI가 Kubernetes native baseline 위에서 성립하면서도 Kueue-integrated target으로 확장 가능한가
 - JUMI가 run/node/attempt 상태를 일관되게 유지하는가
 - JUMI가 gRPC 기반 in-cluster execution service로 동작하는가
 - JUMI가 나중에 scheduler/lowering과 연결될 수 있는 경계를 유지하는가
@@ -111,15 +111,15 @@ bounded release와 fast-fail semantics를 강화한다.
 - fan-out saturation 시 release pacing 관찰
 - fast-fail semantics 구현 강화
 - retry 없음 기본 경로 고정
-- no-Kueue e2e 추가
-- optional Kueue integration path 실험 시작
+- Kubernetes native baseline e2e 추가
+- Kueue-integrated path 실험 시작
 
 ### 완료 기준
 
 - fan-out burst에서도 bounded release가 동작한다.
 - upstream failure 시 downstream이 `Skipped`로 정리된다.
-- no-Kueue e2e가 기준선으로 통과한다.
-- Kueue가 있을 때 optional 관찰 신호를 붙일 수 있다.
+- Kubernetes native baseline e2e가 기준선으로 통과한다.
+- Kueue-integrated path가 core를 깨지 않고 admission 관찰 신호를 제공한다.
 
 ### 참조 PoC
 
@@ -196,8 +196,9 @@ cancel과 attempt semantics를 보강한다.
 
 ## 9. 스프린트 운영 원칙
 
-- JUMI core는 항상 no-Kueue path를 먼저 기준선으로 둔다.
-- optional integration은 core를 깨지 않는 범위에서만 붙인다.
+- JUMI core는 Kubernetes native baseline 위에서 성립해야 한다.
+- Kueue integration은 초기부터 목표 범위에 포함하되, core를 깨지 않는 방식으로 붙인다.
+- 주요 실행 경로는 baseline path와 Kueue-integrated path를 함께 검증한다.
 - fixture 기반 executable spec 테스트를 authored pipeline보다 우선한다.
 - `poc`의 실험 코드는 참고하되, JUMI main path는 더 좁고 명확해야 한다.
 
@@ -205,4 +206,4 @@ cancel과 attempt semantics를 보강한다.
 
 ## 10. 한 줄 결론
 
-JUMI 초기 스프린트의 핵심은 PoC 실행 경로를 그대로 키우는 것이 아니라, 그 경로를 제품 경계에 맞게 더 좁고 단단하게 재구성하는 것이다.
+JUMI 초기 스프린트의 핵심은 PoC 실행 경로를 그대로 키우는 것이 아니라, 그 경로를 제품 경계에 맞게 더 좁고 단단하게 재구성하면서 Kubernetes native baseline과 Kueue-integrated target을 함께 맞추는 것이다.
