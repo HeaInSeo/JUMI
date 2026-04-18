@@ -20,8 +20,8 @@ JUMI의 최종 개발 목표는 Kubernetes 클러스터 내부에서 executable 
 - JUMI는 front-door queue system이 아니다.
 - JUMI는 executable run spec 기반 execution kernel이다.
 - JUMI는 실행 요청의 정책적 선택을 하지 않고, 이미 선택된 executable run spec을 실제 Kubernetes 실행으로 변환·관찰·제어하는 data-plane 계층이다.
-- JUMI는 Kubernetes native path 위에서 먼저 성립해야 한다.
-- Kueue는 선택적으로 연동되지만, 필수 의존성이 아니다.
+- JUMI는 Kubernetes native baseline 위에서 먼저 성립해야 한다.
+- JUMI는 Kueue와 연동되는 방향으로 개발되지만, core execution semantics는 Kueue 부재에도 성립해야 한다.
 
 ---
 
@@ -33,7 +33,7 @@ JUMI의 최종 개발 목표는 Kubernetes 클러스터 내부에서 executable 
 
 - northbound로 executable run spec submit/status/cancel을 위한 gRPC app-to-app 인터페이스를 가진다.
 - southbound로 internal DAG engine (dag-go), backend adapter, Kubernetes API와 연결된다.
-- southbound에서 optional Kueue observation을 통해 admission visibility와 pending reason 관찰을 강화할 수 있다.
+- southbound에서 Kueue integration을 통해 admission visibility와 pending reason 관찰을 강화할 수 있다.
 - Redis Streams, scheduler, lowering은 외부 계층으로 남긴다.
 
 ### 3.2 실행 의미론
@@ -53,7 +53,7 @@ JUMI의 최종 개발 목표는 Kubernetes 클러스터 내부에서 executable 
 
 - health / readiness / status endpoint를 가진다.
 - JUMI core는 no-Kueue 환경에서 완결적으로 동작한다.
-- Kueue integration은 admission visibility, pending reason, cluster policy alignment를 강화하는 선택 기능이다.
+- Kueue integration은 admission visibility, pending reason, cluster policy alignment를 강화하는 통합 계층이다.
 - 운영자가 병목 위치를 읽을 수 있다.
 
 ### 3.5 확장성
@@ -68,8 +68,8 @@ JUMI의 최종 개발 목표는 Kubernetes 클러스터 내부에서 executable 
 
 JUMI 개발이 충분히 진행되었다고 판단하려면 최소한 아래가 성립해야 한다.
 
-- no-Kueue 기본 실행 경로가 안정적으로 동작한다.
-- optional Kueue path가 core를 깨지 않고 붙는다.
+- Kubernetes native baseline 실행 경로가 안정적으로 동작한다.
+- Kueue-integrated path가 core를 깨지 않고 붙는다.
 - fixture 기반 executable run spec 샘플들이 통합 테스트로 유지된다.
 - gRPC submit/status/cancel 계약이 고정된다.
 - run/node/attempt 상태가 일관된 전이 규칙 아래 API로 조회 가능하다.
@@ -95,8 +95,8 @@ JUMI 최종 목표에 포함되지 않는 것은 아래와 같다.
 
 영문:
 
-JUMI is a policy-agnostic in-cluster execution data-plane app that accepts executable run specs and manages run, node, and attempt execution on Kubernetes with optional Kueue integration.
+JUMI is a policy-agnostic in-cluster execution data-plane app that accepts executable run specs and manages run, node, and attempt execution on Kubernetes with Kueue-integrated but core-independent execution semantics.
 
 국문:
 
-JUMI는 executable run spec을 받아 Kubernetes 위에서 run, node, attempt 실행을 제어·관찰하는 in-cluster policy-agnostic execution data-plane app이며, Kueue는 선택적으로 연동된다.
+JUMI는 executable run spec을 받아 Kubernetes 위에서 run, node, attempt 실행을 제어·관찰하는 in-cluster policy-agnostic execution data-plane app이며, Kueue와 연동되지만 core execution semantics는 Kueue에 종속되지 않는다.
