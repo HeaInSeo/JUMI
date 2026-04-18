@@ -1,6 +1,6 @@
 # JUMI
 
-Policy-agnostic in-cluster execution data-plane app for Kubernetes, with optional Kueue integration.
+Policy-agnostic in-cluster execution data-plane app for Kubernetes, built on a Kubernetes native baseline and integrated with Kueue without making core execution semantics depend on it.
 
 ## Documents
 
