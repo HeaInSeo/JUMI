@@ -32,7 +32,7 @@ JUMI의 최종 개발 목표는 Kubernetes 클러스터 내부에서 executable 
 ### 3.1 실행 경계
 
 - northbound로 executable run spec submit/status/cancel을 위한 gRPC app-to-app 인터페이스를 가진다.
-- southbound로 internal DAG engine, backend adapter, Kubernetes API와 연결된다.
+- southbound로 internal DAG engine (dag-go), backend adapter, Kubernetes API와 연결된다.
 - southbound에서 optional Kueue observation을 통해 admission visibility와 pending reason 관찰을 강화할 수 있다.
 - Redis Streams, scheduler, lowering은 외부 계층으로 남긴다.
 
@@ -46,7 +46,7 @@ JUMI의 최종 개발 목표는 Kubernetes 클러스터 내부에서 executable 
 ### 3.3 상태 모델
 
 - run/node/attempt 상태를 일관된 전이 규칙으로 유지하고 API로 노출한다.
-- current execution status, current bottleneck location, current stop cause, terminal failure reason을 분리한다.
+- current execution status, current bottleneck location, terminal stop cause, terminal failure reason을 분리한다.
 - 현재 상태와 이벤트 히스토리를 섞지 않는다.
 
 ### 3.4 운영성
@@ -87,6 +87,7 @@ JUMI 최종 목표에 포함되지 않는 것은 아래와 같다.
 - tenant scheduling policy
 - queue selection policy
 - control-plane orchestration 전체 대체
+  - JUMI는 상위 control-plane의 정책, 승인, 큐잉, 오케스트레이션 책임을 흡수하지 않는다.
 
 ---
 
