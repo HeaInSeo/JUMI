@@ -1,6 +1,6 @@
 # JUMI
 
-Policy-agnostic execution interface for Kubernetes.
+Policy-agnostic in-cluster execution data-plane app for Kubernetes.
 
 ## Documents
 
