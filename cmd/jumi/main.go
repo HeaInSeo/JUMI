@@ -33,7 +33,7 @@ func main() {
 	engine := executor.NewDagEngine(reg, adapter)
 	service := api.NewService(reg, engine)
 
-	httpServer := newHTTPServer()
+	httpServer := newHTTPServer(reg)
 	grpcServer := grpc.NewServer()
 	api.RegisterRunService(grpcServer, service)
 
@@ -75,7 +75,7 @@ func main() {
 	grpcServer.GracefulStop()
 }
 
-func newHTTPServer() *http.Server {
+func newHTTPServer(reg registry.Registry) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -87,11 +87,13 @@ func newHTTPServer() *http.Server {
 	})
 	mux.HandleFunc("/statusz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(observe.StatusSnapshot{
-			RunningRuns:      0,
-			ReleaseWaitNodes: 0,
-			BackendReady:     true,
-		})
+		snapshot, err := observe.SnapshotFromRegistry(context.Background(), reg, true)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(snapshot)
 	})
 	return &http.Server{
 		Handler:           mux,

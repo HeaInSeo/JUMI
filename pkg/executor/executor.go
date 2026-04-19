@@ -28,12 +28,16 @@ func NewNoopEngine(reg registry.Registry) *NoopEngine {
 
 func (e *NoopEngine) Admit(ctx context.Context, record spec.RunRecord) error {
 	now := time.Now().UTC()
-	return e.registry.UpdateRun(ctx, record.RunID, func(run *spec.RunRecord) error {
+	if err := e.registry.UpdateRun(ctx, record.RunID, func(run *spec.RunRecord) error {
 		run.Status = spec.RunStatusAdmitted
 		run.CurrentBottleneckLocation = "dispatch_wait"
 		run.StartedAt = &now
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	appendEvent(ctx, e.registry, spec.EventRecord{RunID: record.RunID, Type: "run.admitted", OccurredAt: now, Level: "info", Message: "run admitted to executor"})
+	return nil
 }
 
 func (e *NoopEngine) Cancel(ctx context.Context, runID string, _ string) error {
@@ -68,6 +72,7 @@ func (e *DagEngine) Admit(ctx context.Context, record spec.RunRecord) error {
 	}); err != nil {
 		return err
 	}
+	appendEvent(ctx, e.registry, spec.EventRecord{RunID: record.RunID, Type: "run.admitted", OccurredAt: now, Level: "info", Message: "run admitted to dag executor"})
 	go e.executeRun(record.RunID)
 	return nil
 }
@@ -88,6 +93,7 @@ func (e *DagEngine) Cancel(ctx context.Context, runID string, reason string) err
 	}); err != nil {
 		return err
 	}
+	appendEvent(ctx, e.registry, spec.EventRecord{RunID: runID, Type: "run.cancel.requested", OccurredAt: now, Level: "warn", StopCause: "canceled", FailureReason: firstNonEmpty(reason, "cancellation_requested")})
 	active := e.getActiveRun(runID)
 	if active != nil {
 		active.cancel()
@@ -101,6 +107,7 @@ func (e *DagEngine) Cancel(ctx context.Context, runID string, reason string) err
 	}
 	for _, node := range nodes {
 		nodeID := node.NodeID
+		canceledImmediately := false
 		_ = e.registry.UpdateNode(ctx, runID, nodeID, func(current *spec.NodeRecord) error {
 			switch current.Status {
 			case spec.NodeStatusSucceeded, spec.NodeStatusFailed, spec.NodeStatusCanceled, spec.NodeStatusSkipped:
@@ -111,11 +118,15 @@ func (e *DagEngine) Cancel(ctx context.Context, runID string, reason string) err
 				current.TerminalFailureReason = firstNonEmpty(reason, "cancellation_requested")
 				current.CurrentBottleneckLocation = ""
 				current.FinishedAt = &now
+				canceledImmediately = true
 			default:
 				current.CurrentBottleneckLocation = "canceling"
 			}
 			return nil
 		})
+		if canceledImmediately {
+			appendEvent(ctx, e.registry, spec.EventRecord{RunID: runID, NodeID: nodeID, Type: "node.canceled", OccurredAt: now, Level: "warn", StopCause: "canceled", FailureReason: firstNonEmpty(reason, "cancellation_requested")})
+		}
 	}
 	return nil
 }
@@ -176,11 +187,13 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 	if !d.GetReady(ctx) {
 		return fmt.Errorf("failed to initialize dag worker pool")
 	}
+	now := time.Now().UTC()
 	_ = e.registry.UpdateRun(context.Background(), run.RunID, func(current *spec.RunRecord) error {
 		current.Status = spec.RunStatusRunning
 		current.CurrentBottleneckLocation = "running"
 		return nil
 	})
+	appendEvent(context.Background(), e.registry, spec.EventRecord{RunID: run.RunID, Type: "run.running", OccurredAt: now, Level: "info", Message: "run execution started"})
 	firstErr := make(chan error, 1)
 	go func() {
 		ticker := time.NewTicker(10 * time.Millisecond)
@@ -222,14 +235,20 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 		}
 		for _, node := range run.Spec.Graph.Nodes {
 			nodeID := node.NodeID
+			skipped := false
+			occurredAt := time.Now().UTC()
 			_ = e.registry.UpdateNode(context.Background(), run.RunID, nodeID, func(current *spec.NodeRecord) error {
 				if current.Status == spec.NodeStatusPending {
 					current.Status = spec.NodeStatusSkipped
 					current.TerminalFailureReason = "dependency_failed"
 					current.TerminalStopCause = "failed"
+					skipped = true
 				}
 				return nil
 			})
+			if skipped {
+				appendEvent(context.Background(), e.registry, spec.EventRecord{RunID: run.RunID, NodeID: nodeID, Type: "node.skipped", OccurredAt: occurredAt, Level: "warn", StopCause: "failed", FailureReason: "dependency_failed"})
+			}
 		}
 		return errors.New(runErr)
 	}
@@ -286,7 +305,7 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 			terminalFailureReason = reason
 		}
 	}
-	return e.registry.UpdateRun(ctx, runID, func(current *spec.RunRecord) error {
+	if err := e.registry.UpdateRun(ctx, runID, func(current *spec.RunRecord) error {
 		current.Status = status
 		current.FinishedAt = &now
 		current.Counters = counters
@@ -294,7 +313,11 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 		current.TerminalFailureReason = terminalFailureReason
 		current.CurrentBottleneckLocation = ""
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	appendEvent(ctx, e.registry, spec.EventRecord{RunID: runID, Type: "run.completed", OccurredAt: now, Level: eventLevelForRunStatus(status), StopCause: terminalStopCause, FailureReason: terminalFailureReason, Message: string(status)})
+	return nil
 }
 
 type nodeRunner struct {
@@ -318,9 +341,11 @@ func (r *nodeRunner) RunE(_ interface{}) error {
 		return err
 	}
 	now := time.Now().UTC()
+	attemptID := ""
 	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.AttemptCount++
-		current.CurrentAttemptID = fmt.Sprintf("%s-%s-attempt-%d", r.runID, r.node.NodeID, current.AttemptCount)
+		attemptID = fmt.Sprintf("%s-%s-attempt-%d", r.runID, r.node.NodeID, current.AttemptCount)
+		current.CurrentAttemptID = attemptID
 		current.Status = spec.NodeStatusReady
 		current.CurrentBottleneckLocation = "release_wait"
 		current.StartedAt = &now
@@ -328,6 +353,8 @@ func (r *nodeRunner) RunE(_ interface{}) error {
 	}); err != nil {
 		return err
 	}
+	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusPrepared, StartedAt: &now})
+	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.ready", OccurredAt: now, Level: "info", Message: "node became ready for release"})
 	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusStarting
 		current.CurrentBottleneckLocation = "backend_prepare"
@@ -335,9 +362,11 @@ func (r *nodeRunner) RunE(_ interface{}) error {
 	}); err != nil {
 		return err
 	}
+	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.starting", OccurredAt: time.Now().UTC(), Level: "info", Message: "backend prepare starting"})
 	prepared, err := r.adapter.PrepareNode(ctx, run, r.node)
 	if err != nil {
-		return r.failNode(err, "failed", "backend_prepare_error")
+		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &now, FinishedAt: timePtr(time.Now().UTC()), TerminalStopCause: "failed", TerminalFailureReason: "backend_prepare_error"})
+		return r.failNode(err, attemptID, "failed", "backend_prepare_error")
 	}
 	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusReleasing
@@ -346,12 +375,16 @@ func (r *nodeRunner) RunE(_ interface{}) error {
 	}); err != nil {
 		return err
 	}
+	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.releasing", OccurredAt: time.Now().UTC(), Level: "info", Message: "bounded release waiting/start in progress"})
 	handle, err := r.adapter.StartNode(ctx, prepared)
 	if err != nil {
-		return r.failNode(err, "failed", "backend_start_error")
+		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &now, FinishedAt: timePtr(time.Now().UTC()), TerminalStopCause: "failed", TerminalFailureReason: "backend_start_error"})
+		return r.failNode(err, attemptID, "failed", "backend_start_error")
 	}
 	r.registerHandle(handle)
 	defer r.unregisterHandle()
+	startedAt := time.Now().UTC()
+	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusStarted, StartedAt: &startedAt})
 	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusRunning
 		current.CurrentBottleneckLocation = "running"
@@ -359,14 +392,19 @@ func (r *nodeRunner) RunE(_ interface{}) error {
 	}); err != nil {
 		return err
 	}
+	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.running", OccurredAt: startedAt, Level: "info", Message: "backend start completed and node is running"})
 	result, err := r.adapter.WaitNode(ctx, handle)
 	if err != nil {
 		if r.isRunCanceled() || result.TerminalStopCause == "canceled" {
-			return r.cancelNode(firstNonEmpty(result.TerminalFailureReason, "cancellation_requested"))
+			return r.cancelNode(attemptID, firstNonEmpty(result.TerminalFailureReason, "cancellation_requested"))
 		}
-		return r.failNode(err, firstNonEmpty(result.TerminalStopCause, "failed"), firstNonEmpty(result.TerminalFailureReason, "backend_wait_error"))
+		finishedAt := time.Now().UTC()
+		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &startedAt, FinishedAt: &finishedAt, TerminalStopCause: firstNonEmpty(result.TerminalStopCause, "failed"), TerminalFailureReason: firstNonEmpty(result.TerminalFailureReason, "backend_wait_error")})
+		return r.failNode(err, attemptID, firstNonEmpty(result.TerminalStopCause, "failed"), firstNonEmpty(result.TerminalFailureReason, "backend_wait_error"))
 	}
 	finishedAt := time.Now().UTC()
+	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusCompleted, StartedAt: &startedAt, FinishedAt: &finishedAt, TerminalStopCause: firstNonEmpty(result.TerminalStopCause, "finished"), TerminalFailureReason: result.TerminalFailureReason})
+	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.succeeded", OccurredAt: finishedAt, Level: "info", StopCause: firstNonEmpty(result.TerminalStopCause, "finished")})
 	return r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusSucceeded
 		current.TerminalStopCause = firstNonEmpty(result.TerminalStopCause, "finished")
@@ -377,11 +415,12 @@ func (r *nodeRunner) RunE(_ interface{}) error {
 	})
 }
 
-func (r *nodeRunner) failNode(cause error, terminalStopCause string, failureReason string) error {
+func (r *nodeRunner) failNode(cause error, attemptID string, terminalStopCause string, failureReason string) error {
 	if r.isRunCanceled() {
-		return r.cancelNode("cancellation_requested")
+		return r.cancelNode(attemptID, "cancellation_requested")
 	}
 	finishedAt := time.Now().UTC()
+	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.failed", OccurredAt: finishedAt, Level: "error", StopCause: terminalStopCause, FailureReason: failureReason})
 	_ = r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusFailed
 		current.TerminalStopCause = terminalStopCause
@@ -393,8 +432,10 @@ func (r *nodeRunner) failNode(cause error, terminalStopCause string, failureReas
 	return cause
 }
 
-func (r *nodeRunner) cancelNode(reason string) error {
+func (r *nodeRunner) cancelNode(attemptID string, reason string) error {
 	finishedAt := time.Now().UTC()
+	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, FinishedAt: &finishedAt, TerminalStopCause: "canceled", TerminalFailureReason: firstNonEmpty(reason, "cancellation_requested")})
+	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.canceled", OccurredAt: finishedAt, Level: "warn", StopCause: "canceled", FailureReason: firstNonEmpty(reason, "cancellation_requested")})
 	return r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusCanceled
 		current.TerminalStopCause = "canceled"
@@ -464,12 +505,14 @@ func markRunCanceled(ctx context.Context, reg registry.Registry, runID string) e
 	}); err != nil {
 		return err
 	}
+	appendEvent(ctx, reg, spec.EventRecord{RunID: runID, Type: "run.canceled", OccurredAt: now, Level: "warn", StopCause: "canceled", FailureReason: "cancellation_requested"})
 	nodes, err := reg.ListNodes(ctx, runID)
 	if err != nil {
 		return err
 	}
 	for _, node := range nodes {
 		nodeID := node.NodeID
+		canceled := false
 		_ = reg.UpdateNode(ctx, runID, nodeID, func(current *spec.NodeRecord) error {
 			switch current.Status {
 			case spec.NodeStatusSucceeded, spec.NodeStatusFailed, spec.NodeStatusCanceled, spec.NodeStatusSkipped:
@@ -479,11 +522,34 @@ func markRunCanceled(ctx context.Context, reg registry.Registry, runID string) e
 				current.TerminalStopCause = "canceled"
 				current.TerminalFailureReason = "cancellation_requested"
 				current.FinishedAt = &now
+				canceled = true
 				return nil
 			}
 		})
+		if canceled {
+			appendEvent(ctx, reg, spec.EventRecord{RunID: runID, NodeID: nodeID, Type: "node.canceled", OccurredAt: now, Level: "warn", StopCause: "canceled", FailureReason: "cancellation_requested"})
+		}
 	}
 	return nil
+}
+
+func appendEvent(ctx context.Context, reg registry.Registry, event spec.EventRecord) {
+	_ = reg.AppendEvent(ctx, event)
+}
+
+func eventLevelForRunStatus(status spec.RunStatus) string {
+	switch status {
+	case spec.RunStatusSucceeded:
+		return "info"
+	case spec.RunStatusCanceled:
+		return "warn"
+	default:
+		return "error"
+	}
+}
+
+func timePtr(v time.Time) *time.Time {
+	return &v
 }
 
 func firstNonEmpty(values ...string) string {

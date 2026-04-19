@@ -44,12 +44,12 @@ type ExecutableRunSpec struct {
 }
 
 type RunMetadata struct {
-	RunID         string         `json:"runId"`
-	SubmittedAt   time.Time      `json:"submittedAt"`
-	FailurePolicy FailurePolicy  `json:"failurePolicy"`
-	RequesterID   string         `json:"requesterId,omitempty"`
-	TraceID       string         `json:"traceId,omitempty"`
-	SourceSystem  string         `json:"sourceSystem,omitempty"`
+	RunID         string        `json:"runId"`
+	SubmittedAt   time.Time     `json:"submittedAt"`
+	FailurePolicy FailurePolicy `json:"failurePolicy"`
+	RequesterID   string        `json:"requesterId,omitempty"`
+	TraceID       string        `json:"traceId,omitempty"`
+	SourceSystem  string        `json:"sourceSystem,omitempty"`
 }
 
 type FailurePolicy struct {
@@ -57,7 +57,7 @@ type FailurePolicy struct {
 }
 
 type Graph struct {
-	Nodes []Node   `json:"nodes"`
+	Nodes []Node     `json:"nodes"`
 	Edges [][]string `json:"edges"`
 }
 
@@ -98,9 +98,9 @@ type TimeoutPolicy struct {
 }
 
 type RetryPolicy struct {
-	MaxAttempts int      `json:"maxAttempts,omitempty"`
+	MaxAttempts     int      `json:"maxAttempts,omitempty"`
 	RetryablePhases []string `json:"retryablePhases,omitempty"`
-	RetryDelayHint string `json:"retryDelayHint,omitempty"`
+	RetryDelayHint  string   `json:"retryDelayHint,omitempty"`
 }
 
 type Mount struct {
@@ -139,14 +139,37 @@ type RunCounters struct {
 }
 
 type NodeRecord struct {
-	RunID                     string      `json:"runId"`
-	NodeID                    string      `json:"nodeId"`
-	Status                    NodeStatus  `json:"status"`
-	CurrentBottleneckLocation string      `json:"currentBottleneckLocation,omitempty"`
-	TerminalStopCause         string      `json:"terminalStopCause,omitempty"`
-	TerminalFailureReason     string      `json:"terminalFailureReason,omitempty"`
-	AttemptCount              int         `json:"attemptCount,omitempty"`
-	CurrentAttemptID          string      `json:"currentAttemptId,omitempty"`
-	StartedAt                 *time.Time  `json:"startedAt,omitempty"`
-	FinishedAt                *time.Time  `json:"finishedAt,omitempty"`
+	RunID                     string     `json:"runId"`
+	NodeID                    string     `json:"nodeId"`
+	Status                    NodeStatus `json:"status"`
+	CurrentBottleneckLocation string     `json:"currentBottleneckLocation,omitempty"`
+	TerminalStopCause         string     `json:"terminalStopCause,omitempty"`
+	TerminalFailureReason     string     `json:"terminalFailureReason,omitempty"`
+	AttemptCount              int        `json:"attemptCount,omitempty"`
+	CurrentAttemptID          string     `json:"currentAttemptId,omitempty"`
+	StartedAt                 *time.Time `json:"startedAt,omitempty"`
+	FinishedAt                *time.Time `json:"finishedAt,omitempty"`
+}
+
+type AttemptRecord struct {
+	RunID                 string        `json:"runId"`
+	NodeID                string        `json:"nodeId"`
+	AttemptID             string        `json:"attemptId"`
+	Status                AttemptStatus `json:"status"`
+	StartedAt             *time.Time    `json:"startedAt,omitempty"`
+	FinishedAt            *time.Time    `json:"finishedAt,omitempty"`
+	TerminalStopCause     string        `json:"terminalStopCause,omitempty"`
+	TerminalFailureReason string        `json:"terminalFailureReason,omitempty"`
+}
+
+type EventRecord struct {
+	RunID         string    `json:"runId"`
+	NodeID        string    `json:"nodeId,omitempty"`
+	AttemptID     string    `json:"attemptId,omitempty"`
+	Type          string    `json:"type"`
+	Message       string    `json:"message,omitempty"`
+	OccurredAt    time.Time `json:"occurredAt"`
+	Level         string    `json:"level,omitempty"`
+	StopCause     string    `json:"stopCause,omitempty"`
+	FailureReason string    `json:"failureReason,omitempty"`
 }
