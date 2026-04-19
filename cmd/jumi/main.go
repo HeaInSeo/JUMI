@@ -1,23 +1,71 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/HeaInSeo/JUMI/pkg/api"
 	"github.com/HeaInSeo/JUMI/pkg/executor"
 	"github.com/HeaInSeo/JUMI/pkg/observe"
 	"github.com/HeaInSeo/JUMI/pkg/registry"
+	"google.golang.org/grpc"
 )
 
 func main() {
-	registry := registry.NewMemoryRegistry()
-	engine := executor.NewNoopEngine(registry)
-	_ = api.NewService(registry, engine)
+	reg := registry.NewMemoryRegistry()
+	engine := executor.NewNoopEngine(reg)
+	service := api.NewService(reg, engine)
 
+	httpServer := newHTTPServer()
+	grpcServer := grpc.NewServer()
+	api.RegisterRunService(grpcServer, service)
+
+	httpAddr := envOrDefault("JUMI_HTTP_ADDR", ":8080")
+	grpcAddr := envOrDefault("JUMI_GRPC_ADDR", ":9090")
+	grpcListener, err := net.Listen("tcp", grpcAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	errCh := make(chan error, 2)
+	go func() {
+		log.Printf("jumi starting http server on %s", httpAddr)
+		httpServer.Addr = httpAddr
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+	}()
+	go func() {
+		log.Printf("jumi starting grpc server on %s", grpcAddr)
+		if err := grpcServer.Serve(grpcListener); err != nil {
+			errCh <- err
+		}
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case sig := <-sigCh:
+		log.Printf("jumi shutting down on signal %s", sig)
+	case err := <-errCh:
+		log.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = httpServer.Shutdown(ctx)
+	grpcServer.GracefulStop()
+}
+
+func newHTTPServer() *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -35,17 +83,9 @@ func main() {
 			BackendReady:     true,
 		})
 	})
-
-	addr := envOrDefault("JUMI_HTTP_ADDR", ":8080")
-	server := &http.Server{
-		Addr:              addr,
+	return &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	log.Printf("jumi starting http server on %s", addr)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatal(err)
 	}
 }
 
