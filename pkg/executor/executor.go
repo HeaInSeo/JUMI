@@ -213,7 +213,11 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 						case firstErr <- fmt.Errorf("node %s failed", node.NodeID):
 						default:
 						}
+						appendEvent(context.Background(), e.registry, spec.EventRecord{RunID: run.RunID, NodeID: node.NodeID, Type: "run.fast_fail.triggered", OccurredAt: time.Now().UTC(), Level: "warn", StopCause: "failed", FailureReason: firstNonEmpty(node.TerminalFailureReason, "fast_fail")})
 						active.cancel()
+						for _, handle := range e.snapshotHandles(active) {
+							_ = e.adapter.CancelNode(context.Background(), handle)
+						}
 						return
 					}
 				}
