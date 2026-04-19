@@ -3,7 +3,7 @@ module github.com/HeaInSeo/JUMI
 go 1.25.5
 
 require (
-	github.com/seoyhaein/dag-go v0.0.9
+	github.com/seoyhaein/dag-go v0.0.10-0.20260403082453-9c3e609ade22
 	github.com/seoyhaein/spawner v0.0.0-20260419061231-474de23038bd
 	google.golang.org/grpc v1.80.0
 )

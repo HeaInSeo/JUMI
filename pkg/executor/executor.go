@@ -157,10 +157,11 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 		return err
 	}
 	inDegree := make(map[string]int, len(run.Spec.Graph.Nodes))
+	runners := make(map[string]dag.Runnable, len(run.Spec.Graph.Nodes))
 	for _, node := range run.Spec.Graph.Nodes {
 		inDegree[node.NodeID] = 0
-		dagNode := d.CreateNode(node.NodeID)
-		dagNode.RunCommand = &nodeRunner{registry: e.registry, adapter: e.adapter, runID: run.RunID, node: node, runCtx: ctx, active: active}
+		_ = d.CreateNode(node.NodeID)
+		runners[node.NodeID] = &nodeRunner{registry: e.registry, adapter: e.adapter, runID: run.RunID, active: active, node: node}
 	}
 	for _, edge := range run.Spec.Graph.Edges {
 		if len(edge) != 2 {
@@ -180,6 +181,9 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 	}
 	if err := d.FinishDag(); err != nil {
 		return err
+	}
+	if _, missing, _ := d.SetNodeRunners(runners); len(missing) > 0 {
+		return fmt.Errorf("failed to set dag-go runners for nodes: %v", missing)
 	}
 	if !d.ConnectRunner() {
 		return fmt.Errorf("failed to connect runners")
@@ -329,12 +333,10 @@ type nodeRunner struct {
 	adapter  backend.Adapter
 	runID    string
 	node     spec.Node
-	runCtx   context.Context
 	active   *activeRun
 }
 
-func (r *nodeRunner) RunE(_ interface{}) error {
-	ctx := r.runCtx
+func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 	if r.node.TimeoutPolicy.Seconds > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(r.node.TimeoutPolicy.Seconds)*time.Second)
