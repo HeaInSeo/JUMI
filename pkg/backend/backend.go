@@ -6,6 +6,10 @@ import (
 	"github.com/HeaInSeo/JUMI/pkg/spec"
 )
 
+type PreparedNode any
+
+type Handle any
+
 type ExecutionResult struct {
 	Succeeded             bool               `json:"succeeded"`
 	TerminalStopCause     string             `json:"terminalStopCause,omitempty"`
@@ -14,7 +18,10 @@ type ExecutionResult struct {
 }
 
 type Adapter interface {
-	ExecuteNode(ctx context.Context, run spec.RunRecord, node spec.Node) (ExecutionResult, error)
+	PrepareNode(ctx context.Context, run spec.RunRecord, node spec.Node) (PreparedNode, error)
+	StartNode(ctx context.Context, prepared PreparedNode) (Handle, error)
+	WaitNode(ctx context.Context, handle Handle) (ExecutionResult, error)
+	CancelNode(ctx context.Context, handle Handle) error
 }
 
 type OptionalKueueInfo struct {

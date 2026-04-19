@@ -27,28 +27,34 @@ func NewSpawnerK8sAdapterFromKubeconfig(namespace, kubeconfigPath string, maxCon
 	return &SpawnerK8sAdapter{driver: drv}, nil
 }
 
-func (a *SpawnerK8sAdapter) ExecuteNode(ctx context.Context, run spec.RunRecord, node spec.Node) (ExecutionResult, error) {
-	runSpec := toSpawnerRunSpec(run, node)
-	prepared, err := a.driver.Prepare(ctx, runSpec)
+func (a *SpawnerK8sAdapter) PrepareNode(ctx context.Context, run spec.RunRecord, node spec.Node) (PreparedNode, error) {
+	prepared, err := a.driver.Prepare(ctx, toSpawnerRunSpec(run, node))
 	if err != nil {
-		return ExecutionResult{
-			TerminalStopCause:     "failed",
-			TerminalFailureReason: "backend_prepare_error",
-		}, err
+		return nil, err
 	}
-	handle, err := a.driver.Start(ctx, prepared)
-	if err != nil {
-		return ExecutionResult{
-			TerminalStopCause:     "failed",
-			TerminalFailureReason: "backend_start_error",
-		}, err
+	return prepared, nil
+}
+
+func (a *SpawnerK8sAdapter) StartNode(ctx context.Context, prepared PreparedNode) (Handle, error) {
+	spPrepared, ok := prepared.(spdriver.Prepared)
+	if !ok {
+		return nil, fmt.Errorf("unexpected prepared type %T", prepared)
 	}
-	event, err := a.driver.Wait(ctx, handle)
+	handle, err := a.driver.Start(ctx, spPrepared)
 	if err != nil {
-		return ExecutionResult{
-			TerminalStopCause:     "failed",
-			TerminalFailureReason: "backend_wait_error",
-		}, err
+		return nil, err
+	}
+	return handle, nil
+}
+
+func (a *SpawnerK8sAdapter) WaitNode(ctx context.Context, handle Handle) (ExecutionResult, error) {
+	spHandle, ok := handle.(spdriver.Handle)
+	if !ok {
+		return ExecutionResult{TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"}, fmt.Errorf("unexpected handle type %T", handle)
+	}
+	event, err := a.driver.Wait(ctx, spHandle)
+	if err != nil {
+		return ExecutionResult{TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"}, err
 	}
 
 	result := ExecutionResult{}
@@ -59,20 +65,28 @@ func (a *SpawnerK8sAdapter) ExecuteNode(ctx context.Context, run spec.RunRecord,
 	case spapi.StateCancelled:
 		result.TerminalStopCause = "canceled"
 		result.TerminalFailureReason = "cancellation_propagated"
-		return result, fmt.Errorf("node canceled: %s", node.NodeID)
+		return result, fmt.Errorf("node canceled")
 	case spapi.StateFailed:
 		result.TerminalStopCause = "failed"
 		result.TerminalFailureReason = "backend_wait_error"
 		if strings.TrimSpace(event.Message) != "" {
 			return result, fmt.Errorf("node failed: %s", event.Message)
 		}
-		return result, fmt.Errorf("node failed: %s", node.NodeID)
+		return result, fmt.Errorf("node failed")
 	default:
 		result.TerminalStopCause = "failed"
 		result.TerminalFailureReason = "backend_wait_error"
 		return result, fmt.Errorf("unexpected backend terminal state: %s", event.State)
 	}
 	return result, nil
+}
+
+func (a *SpawnerK8sAdapter) CancelNode(ctx context.Context, handle Handle) error {
+	spHandle, ok := handle.(spdriver.Handle)
+	if !ok {
+		return fmt.Errorf("unexpected handle type %T", handle)
+	}
+	return a.driver.Cancel(ctx, spHandle)
 }
 
 func toSpawnerRunSpec(run spec.RunRecord, node spec.Node) spapi.RunSpec {
