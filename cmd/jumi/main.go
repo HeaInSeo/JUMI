@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/HeaInSeo/JUMI/pkg/api"
+	"github.com/HeaInSeo/JUMI/pkg/backend"
 	"github.com/HeaInSeo/JUMI/pkg/executor"
 	"github.com/HeaInSeo/JUMI/pkg/observe"
 	"github.com/HeaInSeo/JUMI/pkg/registry"
@@ -20,7 +22,15 @@ import (
 
 func main() {
 	reg := registry.NewMemoryRegistry()
-	engine := executor.NewNoopEngine(reg)
+	adapter, err := backend.NewSpawnerK8sAdapterFromKubeconfig(
+		envOrDefault("JUMI_NAMESPACE", "default"),
+		os.Getenv("JUMI_KUBECONFIG"),
+		envIntOrDefault("JUMI_MAX_CONCURRENT_RELEASE", 4),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	engine := executor.NewDagEngine(reg, adapter)
 	service := api.NewService(reg, engine)
 
 	httpServer := newHTTPServer()
@@ -94,4 +104,16 @@ func envOrDefault(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envIntOrDefault(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
