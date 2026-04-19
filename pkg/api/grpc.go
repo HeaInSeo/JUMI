@@ -14,6 +14,8 @@ type RunServiceServer interface {
 	SubmitRun(context.Context, SubmitRunRequest) (SubmitRunResponse, error)
 	GetRun(context.Context, GetRunRequest) (GetRunResponse, error)
 	ListRunNodes(context.Context, ListRunNodesRequest) (ListRunNodesResponse, error)
+	ListNodeAttempts(context.Context, ListNodeAttemptsRequest) (ListNodeAttemptsResponse, error)
+	ListRunEvents(context.Context, ListRunEventsRequest) (ListRunEventsResponse, error)
 	CancelRun(context.Context, CancelRunRequest) (CancelRunResponse, error)
 }
 
@@ -43,6 +45,8 @@ func RegisterRunService(server *grpc.Server, service *Service) {
 			{MethodName: "SubmitRun", Handler: submitRunHandler(service)},
 			{MethodName: "GetRun", Handler: getRunHandler(service)},
 			{MethodName: "ListRunNodes", Handler: listRunNodesHandler(service)},
+			{MethodName: "ListNodeAttempts", Handler: listNodeAttemptsHandler(service)},
+			{MethodName: "ListRunEvents", Handler: listRunEventsHandler(service)},
 			{MethodName: "CancelRun", Handler: cancelRunHandler(service)},
 		},
 		Streams:  []grpc.StreamDesc{},
@@ -77,6 +81,22 @@ func (c *RunServiceClient) GetRun(ctx context.Context, req *GetRunRequest, opts 
 func (c *RunServiceClient) ListRunNodes(ctx context.Context, req *ListRunNodesRequest, opts ...grpc.CallOption) (*ListRunNodesResponse, error) {
 	resp := new(ListRunNodesResponse)
 	if err := c.conn.Invoke(ctx, "/"+ServiceName+"/ListRunNodes", req, resp, opts...); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (c *RunServiceClient) ListNodeAttempts(ctx context.Context, req *ListNodeAttemptsRequest, opts ...grpc.CallOption) (*ListNodeAttemptsResponse, error) {
+	resp := new(ListNodeAttemptsResponse)
+	if err := c.conn.Invoke(ctx, "/"+ServiceName+"/ListNodeAttempts", req, resp, opts...); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (c *RunServiceClient) ListRunEvents(ctx context.Context, req *ListRunEventsRequest, opts ...grpc.CallOption) (*ListRunEventsResponse, error) {
+	resp := new(ListRunEventsResponse)
+	if err := c.conn.Invoke(ctx, "/"+ServiceName+"/ListRunEvents", req, resp, opts...); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -136,6 +156,40 @@ func listRunNodesHandler(service *Service) grpc.MethodHandler {
 		info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/" + ServiceName + "/ListRunNodes"}
 		handler := func(ctx context.Context, req any) (any, error) {
 			return service.ListRunNodes(ctx, *(req.(*ListRunNodesRequest)))
+		}
+		return interceptor(ctx, in, info, handler)
+	}
+}
+
+func listNodeAttemptsHandler(service *Service) grpc.MethodHandler {
+	return func(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+		in := new(ListNodeAttemptsRequest)
+		if err := dec(in); err != nil {
+			return nil, err
+		}
+		if interceptor == nil {
+			return service.ListNodeAttempts(ctx, *in)
+		}
+		info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/" + ServiceName + "/ListNodeAttempts"}
+		handler := func(ctx context.Context, req any) (any, error) {
+			return service.ListNodeAttempts(ctx, *(req.(*ListNodeAttemptsRequest)))
+		}
+		return interceptor(ctx, in, info, handler)
+	}
+}
+
+func listRunEventsHandler(service *Service) grpc.MethodHandler {
+	return func(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+		in := new(ListRunEventsRequest)
+		if err := dec(in); err != nil {
+			return nil, err
+		}
+		if interceptor == nil {
+			return service.ListRunEvents(ctx, *in)
+		}
+		info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/" + ServiceName + "/ListRunEvents"}
+		handler := func(ctx context.Context, req any) (any, error) {
+			return service.ListRunEvents(ctx, *(req.(*ListRunEventsRequest)))
 		}
 		return interceptor(ctx, in, info, handler)
 	}

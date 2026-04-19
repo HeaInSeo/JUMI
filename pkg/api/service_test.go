@@ -55,6 +55,33 @@ func TestServiceSubmitGetAndCancelRun(t *testing.T) {
 		t.Fatalf("ListRunNodes() node status = %q, want %q", nodesResp.Nodes[0].Status, spec.NodeStatusPending)
 	}
 
+	now := time.Now().UTC()
+	if err := reg.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: "run-1", NodeID: "a", AttemptID: "run-1-a-attempt-1", Status: spec.AttemptStatusPrepared, StartedAt: &now}); err != nil {
+		t.Fatalf("UpsertAttempt() error = %v", err)
+	}
+	if err := reg.AppendEvent(context.Background(), spec.EventRecord{RunID: "run-1", NodeID: "a", AttemptID: "run-1-a-attempt-1", Type: "node.ready", OccurredAt: now, Level: "info"}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+
+	attemptsResp, err := svc.ListNodeAttempts(context.Background(), ListNodeAttemptsRequest{RunID: "run-1", NodeID: "a"})
+	if err != nil {
+		t.Fatalf("ListNodeAttempts() error = %v", err)
+	}
+	if len(attemptsResp.Attempts) != 1 {
+		t.Fatalf("ListNodeAttempts() len = %d, want 1", len(attemptsResp.Attempts))
+	}
+	if attemptsResp.Attempts[0].AttemptID != "run-1-a-attempt-1" {
+		t.Fatalf("ListNodeAttempts() attemptID = %q, want run-1-a-attempt-1", attemptsResp.Attempts[0].AttemptID)
+	}
+
+	eventsResp, err := svc.ListRunEvents(context.Background(), ListRunEventsRequest{RunID: "run-1", Limit: 10})
+	if err != nil {
+		t.Fatalf("ListRunEvents() error = %v", err)
+	}
+	if len(eventsResp.Events) == 0 {
+		t.Fatal("ListRunEvents() empty, want at least one event")
+	}
+
 	cancelResp, err := svc.CancelRun(context.Background(), CancelRunRequest{RunID: "run-1", Reason: "test"})
 	if err != nil {
 		t.Fatalf("CancelRun() error = %v", err)

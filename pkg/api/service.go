@@ -45,6 +45,24 @@ type ListRunNodesResponse struct {
 	Nodes []spec.NodeRecord `json:"nodes"`
 }
 
+type ListNodeAttemptsRequest struct {
+	RunID  string `json:"runId"`
+	NodeID string `json:"nodeId"`
+}
+
+type ListNodeAttemptsResponse struct {
+	Attempts []spec.AttemptRecord `json:"attempts"`
+}
+
+type ListRunEventsRequest struct {
+	RunID string `json:"runId"`
+	Limit int    `json:"limit,omitempty"`
+}
+
+type ListRunEventsResponse struct {
+	Events []spec.EventRecord `json:"events"`
+}
+
 type CancelRunRequest struct {
 	RunID  string `json:"runId"`
 	Reason string `json:"reason,omitempty"`
@@ -103,6 +121,31 @@ func (s *Service) ListRunNodes(ctx context.Context, req ListRunNodesRequest) (Li
 		return ListRunNodesResponse{}, err
 	}
 	return ListRunNodesResponse{Nodes: nodes}, nil
+}
+
+func (s *Service) ListNodeAttempts(ctx context.Context, req ListNodeAttemptsRequest) (ListNodeAttemptsResponse, error) {
+	if req.RunID == "" {
+		return ListNodeAttemptsResponse{}, errors.New("runId is required")
+	}
+	if req.NodeID == "" {
+		return ListNodeAttemptsResponse{}, errors.New("nodeId is required")
+	}
+	attempts, err := s.registry.ListAttempts(ctx, req.RunID, req.NodeID)
+	if err != nil {
+		return ListNodeAttemptsResponse{}, err
+	}
+	return ListNodeAttemptsResponse{Attempts: attempts}, nil
+}
+
+func (s *Service) ListRunEvents(ctx context.Context, req ListRunEventsRequest) (ListRunEventsResponse, error) {
+	if req.RunID == "" {
+		return ListRunEventsResponse{}, errors.New("runId is required")
+	}
+	events, err := s.registry.ListEvents(ctx, req.RunID, req.Limit)
+	if err != nil {
+		return ListRunEventsResponse{}, err
+	}
+	return ListRunEventsResponse{Events: events}, nil
 }
 
 func (s *Service) CancelRun(ctx context.Context, req CancelRunRequest) (CancelRunResponse, error) {
