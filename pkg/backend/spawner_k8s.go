@@ -54,6 +54,9 @@ func (a *SpawnerK8sAdapter) WaitNode(ctx context.Context, handle Handle) (Execut
 	}
 	event, err := a.driver.Wait(ctx, spHandle)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ExecutionResult{TerminalStopCause: "canceled", TerminalFailureReason: "cancellation_requested"}, ctx.Err()
+		}
 		return ExecutionResult{TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"}, err
 	}
 
