@@ -3,7 +3,9 @@ package backend
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
+	"time"
 
 	"github.com/HeaInSeo/JUMI/pkg/spec"
 	spimp "github.com/seoyhaein/spawner/cmd/imp"
@@ -12,7 +14,14 @@ import (
 )
 
 type SpawnerK8sAdapter struct {
-	driver spdriver.Driver
+	driver   spdriver.Driver
+	observer *spimp.K8sObserver
+}
+
+type spawnerHandle struct {
+	inner     spdriver.Handle
+	jobName   string
+	queueName string
 }
 
 func NewSpawnerK8sAdapterFromKubeconfig(namespace, kubeconfigPath string, maxConcurrentRelease int) (*SpawnerK8sAdapter, error) {
@@ -20,11 +29,15 @@ func NewSpawnerK8sAdapterFromKubeconfig(namespace, kubeconfigPath string, maxCon
 	if err != nil {
 		return nil, err
 	}
+	observer, err := spimp.NewK8sObserverFromKubeconfig(namespace, kubeconfigPath)
+	if err != nil {
+		return nil, err
+	}
 	var drv spdriver.Driver = inner
 	if maxConcurrentRelease > 0 {
 		drv = spimp.NewBoundedDriver(inner, maxConcurrentRelease)
 	}
-	return &SpawnerK8sAdapter{driver: drv}, nil
+	return &SpawnerK8sAdapter{driver: drv, observer: observer}, nil
 }
 
 func (a *SpawnerK8sAdapter) PrepareNode(ctx context.Context, run spec.RunRecord, node spec.Node) (PreparedNode, error) {
@@ -44,15 +57,45 @@ func (a *SpawnerK8sAdapter) StartNode(ctx context.Context, prepared PreparedNode
 	if err != nil {
 		return nil, err
 	}
-	return handle, nil
+	jobName, _ := extractHandleJobName(handle)
+	queueName := extractPreparedQueueName(prepared)
+	return spawnerHandle{inner: handle, jobName: jobName, queueName: queueName}, nil
+}
+
+func (a *SpawnerK8sAdapter) ObserveNode(ctx context.Context, handle Handle) (*OptionalKueueInfo, error) {
+	h, ok := handle.(spawnerHandle)
+	if !ok {
+		return nil, nil
+	}
+	if h.queueName == "" || h.jobName == "" || a.observer == nil {
+		return nil, nil
+	}
+	info := &OptionalKueueInfo{Observed: false, QueueName: h.queueName}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		obs, err := a.observer.ObserveWorkload(ctx, h.jobName)
+		if err == nil {
+			info.Observed = true
+			info.WorkloadName = obs.WorkloadName
+			info.PendingReason = obs.PendingReason
+			info.Admitted = obs.Admitted
+			return info, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	return info, nil
 }
 
 func (a *SpawnerK8sAdapter) WaitNode(ctx context.Context, handle Handle) (ExecutionResult, error) {
-	spHandle, ok := handle.(spdriver.Handle)
+	h, ok := handle.(spawnerHandle)
 	if !ok {
 		return ExecutionResult{TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"}, fmt.Errorf("unexpected handle type %T", handle)
 	}
-	event, err := a.driver.Wait(ctx, spHandle)
+	event, err := a.driver.Wait(ctx, h.inner)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ExecutionResult{TerminalStopCause: "canceled", TerminalFailureReason: "cancellation_requested"}, ctx.Err()
@@ -85,11 +128,11 @@ func (a *SpawnerK8sAdapter) WaitNode(ctx context.Context, handle Handle) (Execut
 }
 
 func (a *SpawnerK8sAdapter) CancelNode(ctx context.Context, handle Handle) error {
-	spHandle, ok := handle.(spdriver.Handle)
+	h, ok := handle.(spawnerHandle)
 	if !ok {
 		return fmt.Errorf("unexpected handle type %T", handle)
 	}
-	return a.driver.Cancel(ctx, spHandle)
+	return a.driver.Cancel(ctx, h.inner)
 }
 
 func toSpawnerRunSpec(run spec.RunRecord, node spec.Node) spapi.RunSpec {
@@ -135,4 +178,34 @@ func toSpawnerRunSpec(run spec.RunRecord, node spec.Node) spapi.RunSpec {
 		CorrelationID: run.Spec.Run.TraceID,
 		Cleanup:       spapi.CleanupPolicy{TTLSecondsAfterFinished: 600},
 	}
+}
+
+func extractHandleJobName(handle spdriver.Handle) (string, bool) {
+	v := reflect.ValueOf(handle)
+	if v.Kind() == reflect.Struct {
+		f := v.FieldByName("name")
+		if f.IsValid() && f.Kind() == reflect.String {
+			return f.String(), true
+		}
+	}
+	return "", false
+}
+
+func extractPreparedQueueName(prepared PreparedNode) string {
+	v := reflect.ValueOf(prepared)
+	if v.Kind() == reflect.Struct {
+		jobField := v.FieldByName("job")
+		if jobField.IsValid() && !jobField.IsNil() {
+			labelsField := jobField.Elem().FieldByName("ObjectMeta").FieldByName("Labels")
+			if labelsField.IsValid() && labelsField.Kind() == reflect.Map {
+				iter := labelsField.MapRange()
+				for iter.Next() {
+					if iter.Key().String() == "kueue.x-k8s.io/queue-name" {
+						return iter.Value().String()
+					}
+				}
+			}
+		}
+	}
+	return ""
 }

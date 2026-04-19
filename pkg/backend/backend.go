@@ -20,6 +20,7 @@ type ExecutionResult struct {
 type Adapter interface {
 	PrepareNode(ctx context.Context, run spec.RunRecord, node spec.Node) (PreparedNode, error)
 	StartNode(ctx context.Context, prepared PreparedNode) (Handle, error)
+	ObserveNode(ctx context.Context, handle Handle) (*OptionalKueueInfo, error)
 	WaitNode(ctx context.Context, handle Handle) (ExecutionResult, error)
 	CancelNode(ctx context.Context, handle Handle) error
 }
@@ -29,4 +30,5 @@ type OptionalKueueInfo struct {
 	QueueName     string `json:"queueName,omitempty"`
 	WorkloadName  string `json:"workloadName,omitempty"`
 	PendingReason string `json:"pendingReason,omitempty"`
+	Admitted      bool   `json:"admitted,omitempty"`
 }

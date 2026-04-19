@@ -40,6 +40,10 @@ func (f *fakeAdapter) StartNode(_ context.Context, prepared backend.PreparedNode
 	return fakeHandle{nodeID: p.nodeID}, nil
 }
 
+func (f *fakeAdapter) ObserveNode(_ context.Context, _ backend.Handle) (*backend.OptionalKueueInfo, error) {
+	return nil, nil
+}
+
 func (f *fakeAdapter) WaitNode(ctx context.Context, handle backend.Handle) (backend.ExecutionResult, error) {
 	h := handle.(fakeHandle)
 	if ch := f.channelFor(h.nodeID); ch != nil {

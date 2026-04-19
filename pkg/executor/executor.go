@@ -391,9 +391,20 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 	defer r.unregisterHandle()
 	startedAt := time.Now().UTC()
 	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusStarted, StartedAt: &startedAt})
+	bottleneck := "running"
+	if r.node.Kueue != nil && r.node.Kueue.QueueName != "" {
+		if kueueInfo, obsErr := r.adapter.ObserveNode(ctx, handle); obsErr == nil && kueueInfo != nil && kueueInfo.Observed {
+			if !kueueInfo.Admitted {
+				bottleneck = "kueue_pending"
+				appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.kueue.pending", OccurredAt: time.Now().UTC(), Level: "info", Message: firstNonEmpty(kueueInfo.PendingReason, "waiting for Kueue admission")})
+			} else {
+				appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.kueue.admitted", OccurredAt: time.Now().UTC(), Level: "info", Message: firstNonEmpty(kueueInfo.WorkloadName, "Kueue admitted workload")})
+			}
+		}
+	}
 	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusRunning
-		current.CurrentBottleneckLocation = "running"
+		current.CurrentBottleneckLocation = bottleneck
 		return nil
 	}); err != nil {
 		return err
