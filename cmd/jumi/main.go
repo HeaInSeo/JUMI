@@ -33,7 +33,7 @@ func main() {
 	engine := executor.NewDagEngine(reg, adapter)
 	service := api.NewService(reg, engine)
 
-	httpServer := newHTTPServer(reg)
+	httpServer := newHTTPServer(reg, adapter)
 	grpcServer := grpc.NewServer()
 	api.RegisterRunService(grpcServer, service)
 
@@ -75,7 +75,7 @@ func main() {
 	grpcServer.GracefulStop()
 }
 
-func newHTTPServer(reg registry.Registry) *http.Server {
+func newHTTPServer(reg registry.Registry, adapter backend.Adapter) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -87,7 +87,18 @@ func newHTTPServer(reg registry.Registry) *http.Server {
 	})
 	mux.HandleFunc("/statusz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		snapshot, err := observe.SnapshotFromRegistry(context.Background(), reg, true)
+		backendSnapshot := observe.BackendSnapshot{Ready: true}
+		if statusProvider, ok := adapter.(backend.StatusProvider); ok {
+			status := statusProvider.AdapterStatus()
+			backendSnapshot = observe.BackendSnapshot{
+				Ready:                 status.Ready,
+				ReleaseBounded:        status.ReleaseBounded,
+				ReleaseInflight:       status.ReleaseInflight,
+				ReleaseSlotsAvailable: status.ReleaseSlotsAvailable,
+				ReleaseMaxConcurrent:  status.ReleaseMaxConcurrent,
+			}
+		}
+		snapshot, err := observe.SnapshotFromRegistry(context.Background(), reg, backendSnapshot)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})

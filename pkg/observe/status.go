@@ -7,19 +7,37 @@ import (
 	"github.com/HeaInSeo/JUMI/pkg/spec"
 )
 
-type StatusSnapshot struct {
-	RunningRuns      int      `json:"runningRuns"`
-	ReleaseWaitNodes int      `json:"releaseWaitNodes"`
-	BackendReady     bool     `json:"backendReady"`
-	RecentErrors     []string `json:"recentErrors,omitempty"`
+type BackendSnapshot struct {
+	Ready                 bool
+	ReleaseBounded        bool
+	ReleaseInflight       int
+	ReleaseSlotsAvailable int
+	ReleaseMaxConcurrent  int
 }
 
-func SnapshotFromRegistry(ctx context.Context, reg registry.Registry, backendReady bool) (StatusSnapshot, error) {
+type StatusSnapshot struct {
+	RunningRuns           int      `json:"runningRuns"`
+	ReleaseWaitNodes      int      `json:"releaseWaitNodes"`
+	BackendReady          bool     `json:"backendReady"`
+	ReleaseBounded        bool     `json:"releaseBounded,omitempty"`
+	ReleaseInflight       int      `json:"releaseInflight,omitempty"`
+	ReleaseSlotsAvailable int      `json:"releaseSlotsAvailable,omitempty"`
+	ReleaseMaxConcurrent  int      `json:"releaseMaxConcurrent,omitempty"`
+	RecentErrors          []string `json:"recentErrors,omitempty"`
+}
+
+func SnapshotFromRegistry(ctx context.Context, reg registry.Registry, backend BackendSnapshot) (StatusSnapshot, error) {
 	runs, err := reg.ListRuns(ctx)
 	if err != nil {
 		return StatusSnapshot{}, err
 	}
-	snapshot := StatusSnapshot{BackendReady: backendReady}
+	snapshot := StatusSnapshot{
+		BackendReady:          backend.Ready,
+		ReleaseBounded:        backend.ReleaseBounded,
+		ReleaseInflight:       backend.ReleaseInflight,
+		ReleaseSlotsAvailable: backend.ReleaseSlotsAvailable,
+		ReleaseMaxConcurrent:  backend.ReleaseMaxConcurrent,
+	}
 	for _, run := range runs {
 		switch run.Status {
 		case spec.RunStatusAdmitted, spec.RunStatusRunning:

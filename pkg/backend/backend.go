@@ -25,6 +25,18 @@ type Adapter interface {
 	CancelNode(ctx context.Context, handle Handle) error
 }
 
+type AdapterStatus struct {
+	Ready                 bool `json:"ready"`
+	ReleaseBounded        bool `json:"releaseBounded"`
+	ReleaseInflight       int  `json:"releaseInflight,omitempty"`
+	ReleaseSlotsAvailable int  `json:"releaseSlotsAvailable,omitempty"`
+	ReleaseMaxConcurrent  int  `json:"releaseMaxConcurrent,omitempty"`
+}
+
+type StatusProvider interface {
+	AdapterStatus() AdapterStatus
+}
+
 type OptionalKueueInfo struct {
 	Observed            bool   `json:"observed"`
 	QueueName           string `json:"queueName,omitempty"`

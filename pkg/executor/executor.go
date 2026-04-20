@@ -382,7 +382,9 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 		return err
 	}
 	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.releasing", OccurredAt: time.Now().UTC(), Level: "info", Message: "bounded release waiting/start in progress"})
+	releaseStartedAt := time.Now().UTC()
 	handle, err := r.adapter.StartNode(ctx, prepared)
+	releaseDelay := time.Since(releaseStartedAt)
 	if err != nil {
 		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &now, FinishedAt: timePtr(time.Now().UTC()), TerminalStopCause: "failed", TerminalFailureReason: "backend_start_error"})
 		return r.failNode(err, attemptID, "failed", "backend_start_error")
@@ -390,6 +392,9 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 	r.registerHandle(handle)
 	defer r.unregisterHandle()
 	startedAt := time.Now().UTC()
+	if releaseDelay >= 200*time.Millisecond {
+		appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.release.waited", OccurredAt: startedAt, Level: "info", Message: fmt.Sprintf("bounded release delayed start by %s", releaseDelay.Truncate(10*time.Millisecond))})
+	}
 	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusStarted, StartedAt: &startedAt})
 	bottleneck := "running"
 	if r.node.Kueue != nil && r.node.Kueue.QueueName != "" {

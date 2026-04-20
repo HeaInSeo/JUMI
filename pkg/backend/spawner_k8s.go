@@ -16,6 +16,7 @@ import (
 type SpawnerK8sAdapter struct {
 	driver   spdriver.Driver
 	observer *spimp.K8sObserver
+	bounded  *spimp.BoundedDriver
 }
 
 type spawnerHandle struct {
@@ -34,10 +35,24 @@ func NewSpawnerK8sAdapterFromKubeconfig(namespace, kubeconfigPath string, maxCon
 		return nil, err
 	}
 	var drv spdriver.Driver = inner
+	var bounded *spimp.BoundedDriver
 	if maxConcurrentRelease > 0 {
-		drv = spimp.NewBoundedDriver(inner, maxConcurrentRelease)
+		bounded = spimp.NewBoundedDriver(inner, maxConcurrentRelease)
+		drv = bounded
 	}
-	return &SpawnerK8sAdapter{driver: drv, observer: observer}, nil
+	return &SpawnerK8sAdapter{driver: drv, observer: observer, bounded: bounded}, nil
+}
+
+func (a *SpawnerK8sAdapter) AdapterStatus() AdapterStatus {
+	status := AdapterStatus{Ready: a.driver != nil}
+	if a.bounded != nil {
+		stats := a.bounded.Stats()
+		status.ReleaseBounded = true
+		status.ReleaseInflight = int(stats.Inflight)
+		status.ReleaseSlotsAvailable = stats.Available
+		status.ReleaseMaxConcurrent = stats.MaxConcurrent
+	}
+	return status
 }
 
 func (a *SpawnerK8sAdapter) PrepareNode(ctx context.Context, run spec.RunRecord, node spec.Node) (PreparedNode, error) {

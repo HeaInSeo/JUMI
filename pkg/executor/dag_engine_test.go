@@ -21,18 +21,26 @@ type fakeHandle struct {
 }
 
 type fakeAdapter struct {
-	mu       sync.Mutex
-	order    []string
-	failOn   map[string]bool
-	waitCh   map[string]chan struct{}
-	canceled map[string]bool
+	mu         sync.Mutex
+	order      []string
+	failOn     map[string]bool
+	waitCh     map[string]chan struct{}
+	canceled   map[string]bool
+	startDelay time.Duration
 }
 
 func (f *fakeAdapter) PrepareNode(_ context.Context, _ spec.RunRecord, node spec.Node) (backend.PreparedNode, error) {
 	return fakePrepared{nodeID: node.NodeID}, nil
 }
 
-func (f *fakeAdapter) StartNode(_ context.Context, prepared backend.PreparedNode) (backend.Handle, error) {
+func (f *fakeAdapter) StartNode(ctx context.Context, prepared backend.PreparedNode) (backend.Handle, error) {
+	if f.startDelay > 0 {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(f.startDelay):
+		}
+	}
 	p := prepared.(fakePrepared)
 	f.mu.Lock()
 	f.order = append(f.order, p.nodeID)
