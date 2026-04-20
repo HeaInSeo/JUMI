@@ -115,6 +115,17 @@ type KueueHints struct {
 	Labels        map[string]string `json:"labels,omitempty"`
 }
 
+type NodeObservation struct {
+	KueueObserved       bool   `json:"kueueObserved,omitempty"`
+	QueueName           string `json:"queueName,omitempty"`
+	WorkloadName        string `json:"workloadName,omitempty"`
+	KueuePendingReason  string `json:"kueuePendingReason,omitempty"`
+	KueueAdmitted       bool   `json:"kueueAdmitted,omitempty"`
+	PodName             string `json:"podName,omitempty"`
+	PodScheduled        bool   `json:"podScheduled,omitempty"`
+	UnschedulableReason string `json:"unschedulableReason,omitempty"`
+}
+
 type RunRecord struct {
 	RunID                     string            `json:"runId"`
 	Status                    RunStatus         `json:"status"`
@@ -139,16 +150,17 @@ type RunCounters struct {
 }
 
 type NodeRecord struct {
-	RunID                     string     `json:"runId"`
-	NodeID                    string     `json:"nodeId"`
-	Status                    NodeStatus `json:"status"`
-	CurrentBottleneckLocation string     `json:"currentBottleneckLocation,omitempty"`
-	TerminalStopCause         string     `json:"terminalStopCause,omitempty"`
-	TerminalFailureReason     string     `json:"terminalFailureReason,omitempty"`
-	AttemptCount              int        `json:"attemptCount,omitempty"`
-	CurrentAttemptID          string     `json:"currentAttemptId,omitempty"`
-	StartedAt                 *time.Time `json:"startedAt,omitempty"`
-	FinishedAt                *time.Time `json:"finishedAt,omitempty"`
+	RunID                     string          `json:"runId"`
+	NodeID                    string          `json:"nodeId"`
+	Status                    NodeStatus      `json:"status"`
+	CurrentBottleneckLocation string          `json:"currentBottleneckLocation,omitempty"`
+	TerminalStopCause         string          `json:"terminalStopCause,omitempty"`
+	TerminalFailureReason     string          `json:"terminalFailureReason,omitempty"`
+	AttemptCount              int             `json:"attemptCount,omitempty"`
+	CurrentAttemptID          string          `json:"currentAttemptId,omitempty"`
+	StartedAt                 *time.Time      `json:"startedAt,omitempty"`
+	FinishedAt                *time.Time      `json:"finishedAt,omitempty"`
+	Observation               NodeObservation `json:"observation,omitempty"`
 }
 
 type AttemptRecord struct {

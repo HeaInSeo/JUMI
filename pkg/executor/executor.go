@@ -394,6 +394,19 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 	bottleneck := "running"
 	if r.node.Kueue != nil && r.node.Kueue.QueueName != "" {
 		if kueueInfo, obsErr := r.adapter.ObserveNode(ctx, handle); obsErr == nil && kueueInfo != nil && kueueInfo.Observed {
+			_ = r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
+				current.Observation = spec.NodeObservation{
+					KueueObserved:       kueueInfo.Observed,
+					QueueName:           kueueInfo.QueueName,
+					WorkloadName:        kueueInfo.WorkloadName,
+					KueuePendingReason:  kueueInfo.PendingReason,
+					KueueAdmitted:       kueueInfo.Admitted,
+					PodName:             kueueInfo.PodName,
+					PodScheduled:        kueueInfo.Scheduled,
+					UnschedulableReason: kueueInfo.UnschedulableReason,
+				}
+				return nil
+			})
 			if !kueueInfo.Admitted {
 				bottleneck = "kueue_pending"
 				appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.kueue.pending", OccurredAt: time.Now().UTC(), Level: "info", Message: firstNonEmpty(kueueInfo.PendingReason, "waiting for Kueue admission")})
