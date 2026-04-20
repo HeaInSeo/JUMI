@@ -79,6 +79,13 @@ func (a *SpawnerK8sAdapter) ObserveNode(ctx context.Context, handle Handle) (*Op
 			info.WorkloadName = obs.WorkloadName
 			info.PendingReason = obs.PendingReason
 			info.Admitted = obs.Admitted
+			if obs.Admitted {
+				if podObs, podErr := a.observer.ObservePod(ctx, h.jobName); podErr == nil {
+					info.PodName = podObs.PodName
+					info.Scheduled = podObs.Scheduled
+					info.UnschedulableReason = podObs.UnschedulableReason
+				}
+			}
 			return info, nil
 		}
 		select {

@@ -26,9 +26,12 @@ type Adapter interface {
 }
 
 type OptionalKueueInfo struct {
-	Observed      bool   `json:"observed"`
-	QueueName     string `json:"queueName,omitempty"`
-	WorkloadName  string `json:"workloadName,omitempty"`
-	PendingReason string `json:"pendingReason,omitempty"`
-	Admitted      bool   `json:"admitted,omitempty"`
+	Observed            bool   `json:"observed"`
+	QueueName           string `json:"queueName,omitempty"`
+	WorkloadName        string `json:"workloadName,omitempty"`
+	PendingReason       string `json:"pendingReason,omitempty"`
+	Admitted            bool   `json:"admitted,omitempty"`
+	PodName             string `json:"podName,omitempty"`
+	Scheduled           bool   `json:"scheduled,omitempty"`
+	UnschedulableReason string `json:"unschedulableReason,omitempty"`
 }

@@ -399,6 +399,11 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 				appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.kueue.pending", OccurredAt: time.Now().UTC(), Level: "info", Message: firstNonEmpty(kueueInfo.PendingReason, "waiting for Kueue admission")})
 			} else {
 				appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.kueue.admitted", OccurredAt: time.Now().UTC(), Level: "info", Message: firstNonEmpty(kueueInfo.WorkloadName, "Kueue admitted workload")})
+				if !kueueInfo.Scheduled && kueueInfo.UnschedulableReason != "" {
+					bottleneck = "scheduler_pending"
+					appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.scheduler.pending", OccurredAt: time.Now().UTC(), Level: "warn", Message: kueueInfo.UnschedulableReason})
+					appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.kueue.pod_observed", OccurredAt: time.Now().UTC(), Level: "info", Message: firstNonEmpty(kueueInfo.PodName, "pod observed")})
+				}
 			}
 		}
 	}
