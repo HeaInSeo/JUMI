@@ -34,3 +34,17 @@ func TestRegistryRender(t *testing.T) {
 		t.Fatalf("missing gauge in render: %s", rendered)
 	}
 }
+
+func TestRegistryRenderZeroInitializedMetrics(t *testing.T) {
+	reg := NewRegistry()
+	reg.EnsureCounter("jumi_jobs_created_total")
+	reg.EnsureGauge("jumi_cleanup_backlog_objects")
+
+	rendered := reg.Render()
+	if !strings.Contains(rendered, "jumi_jobs_created_total 0") {
+		t.Fatalf("missing zero-valued counter in render: %s", rendered)
+	}
+	if !strings.Contains(rendered, "jumi_cleanup_backlog_objects 0") {
+		t.Fatalf("missing zero-valued gauge in render: %s", rendered)
+	}
+}
