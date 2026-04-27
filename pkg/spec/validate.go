@@ -31,6 +31,17 @@ func ValidateExecutableRunSpec(spec ExecutableRunSpec) error {
 		if node.TimeoutPolicy.Seconds < 0 {
 			return fmt.Errorf("node %s: timeoutPolicy.seconds must be >= 0", node.NodeID)
 		}
+		for _, binding := range node.ArtifactBindings {
+			if binding.BindingName == "" {
+				return fmt.Errorf("node %s: artifactBindings[].bindingName is required", node.NodeID)
+			}
+			if binding.ProducerNodeID == "" {
+				return fmt.Errorf("node %s: artifactBinding %s producerNodeId is required", node.NodeID, binding.BindingName)
+			}
+			if binding.ProducerOutputName == "" {
+				return fmt.Errorf("node %s: artifactBinding %s producerOutputName is required", node.NodeID, binding.BindingName)
+			}
+		}
 	}
 
 	adj := make(map[string][]string, len(spec.Graph.Nodes))

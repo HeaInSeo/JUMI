@@ -15,6 +15,7 @@ import (
 	"github.com/HeaInSeo/JUMI/pkg/api"
 	"github.com/HeaInSeo/JUMI/pkg/backend"
 	"github.com/HeaInSeo/JUMI/pkg/executor"
+	"github.com/HeaInSeo/JUMI/pkg/handoff"
 	"github.com/HeaInSeo/JUMI/pkg/observe"
 	"github.com/HeaInSeo/JUMI/pkg/registry"
 	"google.golang.org/grpc"
@@ -30,10 +31,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	engine := executor.NewDagEngine(reg, adapter)
+	handoffClient := newHandoffClientFromEnv()
+	engine := executor.NewDagEngineWithHandoff(reg, adapter, handoffClient)
 	service := api.NewService(reg, engine)
 
-	httpServer := newHTTPServer(reg, adapter)
+	httpServer := newHTTPServer(reg, adapter, engine)
 	grpcServer := grpc.NewServer()
 	api.RegisterRunService(grpcServer, service)
 
@@ -75,7 +77,15 @@ func main() {
 	grpcServer.GracefulStop()
 }
 
-func newHTTPServer(reg registry.Registry, adapter backend.Adapter) *http.Server {
+func newHandoffClientFromEnv() handoff.Client {
+	baseURL := os.Getenv("JUMI_AH_URL")
+	if baseURL == "" {
+		return handoff.NewNoopClient()
+	}
+	return handoff.NewHTTPClient(baseURL, 5*time.Second)
+}
+
+func newHTTPServer(reg registry.Registry, adapter backend.Adapter, engine *executor.DagEngine) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -106,6 +116,7 @@ func newHTTPServer(reg registry.Registry, adapter backend.Adapter) *http.Server 
 		}
 		_ = json.NewEncoder(w).Encode(snapshot)
 	})
+	mux.Handle("/metrics", engine.Metrics().Handler())
 	return &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,

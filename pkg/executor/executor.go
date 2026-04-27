@@ -4,10 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/HeaInSeo/JUMI/pkg/backend"
+	"github.com/HeaInSeo/JUMI/pkg/handoff"
+	"github.com/HeaInSeo/JUMI/pkg/metrics"
 	"github.com/HeaInSeo/JUMI/pkg/registry"
 	"github.com/HeaInSeo/JUMI/pkg/spec"
 	dag "github.com/seoyhaein/dag-go"
@@ -53,13 +58,38 @@ type activeRun struct {
 type DagEngine struct {
 	registry registry.Registry
 	adapter  backend.Adapter
+	handoff  handoff.Client
+	metrics  *metrics.Registry
 
 	activeMu sync.Mutex
 	active   map[string]*activeRun
 }
 
 func NewDagEngine(reg registry.Registry, adapter backend.Adapter) *DagEngine {
-	return &DagEngine{registry: reg, adapter: adapter, active: make(map[string]*activeRun)}
+	return &DagEngine{
+		registry: reg,
+		adapter:  adapter,
+		handoff:  handoff.NewNoopClient(),
+		metrics:  metrics.NewRegistry(),
+		active:   make(map[string]*activeRun),
+	}
+}
+
+func NewDagEngineWithHandoff(reg registry.Registry, adapter backend.Adapter, client handoff.Client) *DagEngine {
+	if client == nil {
+		client = handoff.NewNoopClient()
+	}
+	return &DagEngine{
+		registry: reg,
+		adapter:  adapter,
+		handoff:  client,
+		metrics:  metrics.NewRegistry(),
+		active:   make(map[string]*activeRun),
+	}
+}
+
+func (e *DagEngine) Metrics() *metrics.Registry {
+	return e.metrics
 }
 
 func (e *DagEngine) Admit(ctx context.Context, record spec.RunRecord) error {
@@ -161,7 +191,7 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 	for _, node := range run.Spec.Graph.Nodes {
 		inDegree[node.NodeID] = 0
 		_ = d.CreateNode(node.NodeID)
-		runners[node.NodeID] = &nodeRunner{registry: e.registry, adapter: e.adapter, runID: run.RunID, active: active, node: node}
+		runners[node.NodeID] = &nodeRunner{registry: e.registry, adapter: e.adapter, handoff: e.handoff, metrics: e.metrics, runID: run.RunID, active: active, node: node}
 	}
 	for _, edge := range run.Spec.Graph.Edges {
 		if len(edge) != 2 {
@@ -217,6 +247,7 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 						case firstErr <- fmt.Errorf("node %s failed", node.NodeID):
 						default:
 						}
+						e.metrics.IncCounter("jumi_fast_fail_trigger_total")
 						appendEvent(context.Background(), e.registry, spec.EventRecord{RunID: run.RunID, NodeID: node.NodeID, Type: "run.fast_fail.triggered", OccurredAt: time.Now().UTC(), Level: "warn", StopCause: "failed", FailureReason: firstNonEmpty(node.TerminalFailureReason, "fast_fail")})
 						active.cancel()
 						for _, handle := range e.snapshotHandles(active) {
@@ -324,6 +355,16 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 	}); err != nil {
 		return err
 	}
+	if err := e.handoff.FinalizeSampleRun(ctx, handoff.FinalizeSampleRunRequest{
+		SampleRunID: firstNonEmpty(run.Spec.Run.SampleRunID, runID),
+	}); err == nil {
+		e.metrics.IncCounter("jumi_sample_runs_finalized_total")
+	}
+	if err := e.handoff.EvaluateGC(ctx, handoff.EvaluateGCRequest{
+		SampleRunID: firstNonEmpty(run.Spec.Run.SampleRunID, runID),
+	}); err == nil {
+		e.metrics.IncCounter("jumi_gc_evaluate_requests_total")
+	}
 	appendEvent(ctx, e.registry, spec.EventRecord{RunID: runID, Type: "run.completed", OccurredAt: now, Level: eventLevelForRunStatus(status), StopCause: terminalStopCause, FailureReason: terminalFailureReason, Message: string(status)})
 	return nil
 }
@@ -331,6 +372,8 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 type nodeRunner struct {
 	registry registry.Registry
 	adapter  backend.Adapter
+	handoff  handoff.Client
+	metrics  *metrics.Registry
 	runID    string
 	node     spec.Node
 	active   *activeRun
@@ -361,6 +404,84 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 	}
 	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusPrepared, StartedAt: &now})
 	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.ready", OccurredAt: now, Level: "info", Message: "node became ready for release"})
+	if len(r.node.ArtifactBindings) > 0 {
+		resolvedNode := cloneNode(r.node)
+		if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
+			current.Status = spec.NodeStatusBuildingBindings
+			current.CurrentBottleneckLocation = "building_bindings"
+			return nil
+		}); err != nil {
+			return err
+		}
+		appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.building_bindings", OccurredAt: time.Now().UTC(), Level: "info", Message: "building artifact bindings"})
+		if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
+			current.Status = spec.NodeStatusResolvingInputs
+			current.CurrentBottleneckLocation = "resolving_inputs"
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, binding := range r.node.ArtifactBindings {
+			r.metrics.IncCounter("jumi_input_resolve_requests_total")
+			resolved, err := r.handoff.ResolveBinding(ctx, handoff.ResolveBindingRequest{
+				RunID:              r.runID,
+				SampleRunID:        firstNonEmpty(run.Spec.Run.SampleRunID, r.runID),
+				ChildNodeID:        r.node.NodeID,
+				BindingName:        binding.BindingName,
+				ChildInputName:     binding.ChildInputName,
+				ProducerNodeID:     binding.ProducerNodeID,
+				ProducerOutputName: binding.ProducerOutputName,
+				ArtifactID:         binding.ArtifactID,
+				ConsumePolicy:      binding.ConsumePolicy,
+				ExpectedDigest:     binding.ExpectedDigest,
+				Required:           binding.Required,
+				TargetNodeName:     "",
+			})
+			if err != nil {
+				_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
+					RunID:                 r.runID,
+					NodeID:                r.node.NodeID,
+					AttemptID:             attemptID,
+					Status:                spec.AttemptStatusErrored,
+					StartedAt:             &now,
+					FinishedAt:            timePtr(time.Now().UTC()),
+					TerminalStopCause:     "failed",
+					TerminalFailureReason: "resolve_handoff_error",
+				})
+				return r.failNode(err, attemptID, "failed", "resolve_handoff_error")
+			}
+			appendEvent(context.Background(), r.registry, spec.EventRecord{
+				RunID:      r.runID,
+				NodeID:     r.node.NodeID,
+				AttemptID:  attemptID,
+				Type:       "node.input_resolved",
+				OccurredAt: time.Now().UTC(),
+				Level:      "info",
+				Message:    fmt.Sprintf("binding=%s decision=%s status=%s", binding.BindingName, resolved.Decision, resolved.ResolutionStatus),
+			})
+			if binding.Required && resolved.ResolutionStatus == "MISSING" {
+				_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
+					RunID:                 r.runID,
+					NodeID:                r.node.NodeID,
+					AttemptID:             attemptID,
+					Status:                spec.AttemptStatusErrored,
+					StartedAt:             &now,
+					FinishedAt:            timePtr(time.Now().UTC()),
+					TerminalStopCause:     "failed",
+					TerminalFailureReason: "input_resolution_missing",
+				})
+				return r.failNode(fmt.Errorf("required binding %s missing", binding.BindingName), attemptID, "failed", "input_resolution_missing")
+			}
+			if resolved.Decision == "remote_fetch" {
+				r.metrics.IncCounter("jumi_input_remote_fetch_total")
+			}
+			if resolved.RequiresMaterialization {
+				r.metrics.IncCounter("jumi_input_materializations_total")
+			}
+			injectResolvedBindingEnv(&resolvedNode, binding, resolved)
+		}
+		r.node = resolvedNode
+	}
 	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusStarting
 		current.CurrentBottleneckLocation = "backend_prepare"
@@ -389,6 +510,8 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &now, FinishedAt: timePtr(time.Now().UTC()), TerminalStopCause: "failed", TerminalFailureReason: "backend_start_error"})
 		return r.failNode(err, attemptID, "failed", "backend_start_error")
 	}
+	r.metrics.IncCounter("jumi_jobs_created_total")
+	r.metrics.SetGauge("jumi_cleanup_backlog_objects", 0)
 	r.registerHandle(handle)
 	defer r.unregisterHandle()
 	startedAt := time.Now().UTC()
@@ -445,14 +568,19 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 	finishedAt := time.Now().UTC()
 	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusCompleted, StartedAt: &startedAt, FinishedAt: &finishedAt, TerminalStopCause: firstNonEmpty(result.TerminalStopCause, "finished"), TerminalFailureReason: result.TerminalFailureReason})
 	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.succeeded", OccurredAt: finishedAt, Level: "info", StopCause: firstNonEmpty(result.TerminalStopCause, "finished")})
-	return r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
+	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusSucceeded
 		current.TerminalStopCause = firstNonEmpty(result.TerminalStopCause, "finished")
 		current.TerminalFailureReason = result.TerminalFailureReason
 		current.CurrentBottleneckLocation = ""
 		current.FinishedAt = &finishedAt
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	r.registerNodeOutputs(context.Background())
+	r.notifyNodeTerminal(context.Background(), "Succeeded")
+	return nil
 }
 
 func (r *nodeRunner) failNode(cause error, attemptID string, terminalStopCause string, failureReason string) error {
@@ -469,6 +597,7 @@ func (r *nodeRunner) failNode(cause error, attemptID string, terminalStopCause s
 		current.FinishedAt = &finishedAt
 		return nil
 	})
+	r.notifyNodeTerminal(context.Background(), "Failed")
 	return cause
 }
 
@@ -476,14 +605,18 @@ func (r *nodeRunner) cancelNode(attemptID string, reason string) error {
 	finishedAt := time.Now().UTC()
 	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, FinishedAt: &finishedAt, TerminalStopCause: "canceled", TerminalFailureReason: firstNonEmpty(reason, "cancellation_requested")})
 	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.canceled", OccurredAt: finishedAt, Level: "warn", StopCause: "canceled", FailureReason: firstNonEmpty(reason, "cancellation_requested")})
-	return r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
+	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusCanceled
 		current.TerminalStopCause = "canceled"
 		current.TerminalFailureReason = firstNonEmpty(reason, "cancellation_requested")
 		current.CurrentBottleneckLocation = ""
 		current.FinishedAt = &finishedAt
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	r.notifyNodeTerminal(context.Background(), "Canceled")
+	return nil
 }
 
 func (r *nodeRunner) isRunCanceled() bool {
@@ -504,6 +637,109 @@ func (r *nodeRunner) unregisterHandle() {
 	r.active.mu.Lock()
 	defer r.active.mu.Unlock()
 	delete(r.active.handles, r.node.NodeID)
+}
+
+func (r *nodeRunner) notifyNodeTerminal(ctx context.Context, terminalState string) {
+	_ = r.handoff.NotifyNodeTerminal(ctx, handoff.NotifyNodeTerminalRequest{
+		SampleRunID:   firstNonEmpty(r.sampleRunID(ctx), r.runID),
+		NodeID:        r.node.NodeID,
+		TerminalState: terminalState,
+	})
+}
+
+func (r *nodeRunner) registerNodeOutputs(ctx context.Context) {
+	if len(r.node.Outputs) == 0 {
+		return
+	}
+	sampleRunID := firstNonEmpty(r.sampleRunID(ctx), r.runID)
+	for _, outputName := range r.node.Outputs {
+		if outputName == "" {
+			continue
+		}
+		if err := r.handoff.RegisterArtifact(ctx, handoff.RegisterArtifactRequest{
+			SampleRunID:    sampleRunID,
+			ProducerNodeID: r.node.NodeID,
+			OutputName:     outputName,
+			ArtifactID:     fmt.Sprintf("%s:%s:%s", sampleRunID, r.node.NodeID, outputName),
+			URI:            artifactOutputURI(r.runID, r.node.NodeID, outputName),
+		}); err == nil {
+			r.metrics.IncCounter("jumi_artifacts_registered_total")
+		}
+	}
+}
+
+func cloneNode(node spec.Node) spec.Node {
+	cloned := node
+	if node.Env != nil {
+		cloned.Env = make(map[string]string, len(node.Env))
+		for k, v := range node.Env {
+			cloned.Env[k] = v
+		}
+	}
+	if node.Metadata != nil {
+		cloned.Metadata = make(map[string]string, len(node.Metadata))
+		for k, v := range node.Metadata {
+			cloned.Metadata[k] = v
+		}
+	}
+	return cloned
+}
+
+func injectResolvedBindingEnv(node *spec.Node, binding spec.ArtifactBinding, resolved handoff.ResolveBindingResponse) {
+	if node.Env == nil {
+		node.Env = make(map[string]string)
+	}
+	keyBase := sanitizeEnvSegment(firstNonEmpty(binding.ChildInputName, binding.BindingName, binding.ProducerOutputName))
+	node.Env["JUMI_INPUT_"+keyBase+"_STATUS"] = resolved.ResolutionStatus
+	node.Env["JUMI_INPUT_"+keyBase+"_DECISION"] = resolved.Decision
+	node.Env["JUMI_INPUT_"+keyBase+"_URI"] = resolved.ArtifactURI
+	node.Env["JUMI_INPUT_"+keyBase+"_SOURCE_NODE"] = resolved.SourceNodeName
+	if resolved.RequiresMaterialization {
+		node.Env["JUMI_INPUT_"+keyBase+"_REQUIRES_MATERIALIZATION"] = "true"
+	} else {
+		node.Env["JUMI_INPUT_"+keyBase+"_REQUIRES_MATERIALIZATION"] = "false"
+	}
+}
+
+func sanitizeEnvSegment(value string) string {
+	if value == "" {
+		return "UNSPECIFIED"
+	}
+	var b strings.Builder
+	prevUnderscore := false
+	for _, r := range value {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(unicode.ToUpper(r))
+			prevUnderscore = false
+		default:
+			if !prevUnderscore {
+				b.WriteByte('_')
+				prevUnderscore = true
+			}
+		}
+	}
+	result := strings.Trim(b.String(), "_")
+	if result == "" {
+		return "UNSPECIFIED"
+	}
+	return result
+}
+
+func (r *nodeRunner) sampleRunID(ctx context.Context) string {
+	run, err := r.registry.GetRun(ctx, r.runID)
+	if err != nil {
+		return ""
+	}
+	return run.Spec.Run.SampleRunID
+}
+
+func artifactOutputURI(runID, nodeID, outputName string) string {
+	return fmt.Sprintf("jumi://runs/%s/nodes/%s/outputs/%s",
+		url.PathEscape(runID),
+		url.PathEscape(nodeID),
+		url.PathEscape(outputName),
+	)
 }
 
 func (e *DagEngine) registerActiveRun(runID string, active *activeRun) {

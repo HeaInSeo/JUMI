@@ -44,6 +44,7 @@ ExecutableRunSpec
 ### 3.1 최상위 필드
 
 - `run.runId`
+- `run.sampleRunId`
 - `run.submittedAt`
 - `run.failurePolicy`
 - `graph.nodes`
@@ -63,6 +64,7 @@ ExecutableRunSpec
 
 ### 4.2 권장 필드
 
+- `sampleRunId`
 - `requesterId`
 - `traceId`
 - `sourceSystem`
@@ -75,6 +77,8 @@ ExecutableRunSpec
   - JUMI 내부에서 run을 식별하는 유일 키다.
 - `submittedAt`
   - 외부 계층이 run을 제출한 시각이다.
+- `sampleRunId`
+  - artifact handoff와 lifecycle/GC 경계를 구분하는 run scope 키다.
 - `failurePolicy`
   - failure propagation의 기본 동작을 정한다.
 
@@ -84,6 +88,7 @@ ExecutableRunSpec
 {
   "run": {
     "runId": "run-20260418-001",
+    "sampleRunId": "sample-20260418-001",
     "submittedAt": "2026-04-18T09:00:00Z",
     "failurePolicy": {
       "mode": "fail-fast"
@@ -154,6 +159,7 @@ ExecutableRunSpec
 - `mounts`
 - `inputs`
 - `outputs`
+- `artifactBindings`
 - `workingDir`
 - `serviceAccountName`
 - `metadata`
@@ -177,6 +183,9 @@ ExecutableRunSpec
   - node 단위 attempt 재시도 허용 여부와 한도
 - `inputs`, `outputs`
   - 외부 authored 의미론이 아니라 실행 입출력 힌트
+- `artifactBindings`
+  - parent output과 child input 사이의 artifact-aware handoff seam을 명시한다.
+  - 존재하면 JUMI는 실행 전에 AH resolve 경로를 먼저 호출한다.
 - `kueue`
   - optional Kueue 연동 시 사용할 부가 정보
 
@@ -199,7 +208,17 @@ ExecutableRunSpec
   "retryPolicy": {
     "maxAttempts": 1
   },
-  "inputs": ["a.txt"],
+  "artifactBindings": [
+    {
+      "bindingName": "input-a",
+      "childInputName": "a.txt",
+      "producerNodeId": "a",
+      "producerOutputName": "a.txt",
+      "artifactId": "sample-20260418-001:a:a.txt",
+      "consumePolicy": "RemoteOK",
+      "required": true
+    }
+  ],
   "outputs": ["b.txt"]
 }
 ```
@@ -365,6 +384,7 @@ Validation 실패는 등록 실패다.
 {
   "run": {
     "runId": "run-20260418-001",
+    "sampleRunId": "sample-20260418-001",
     "submittedAt": "2026-04-18T09:00:00Z",
     "failurePolicy": {
       "mode": "fail-fast"
@@ -401,7 +421,17 @@ Validation 실패는 등록 실패다.
         "image": "busybox:1.36",
         "command": ["sh", "-c"],
         "args": ["cat /work/a.txt > /out/b.txt"],
-        "inputs": ["a.txt"],
+        "artifactBindings": [
+          {
+            "bindingName": "input-a",
+            "childInputName": "a.txt",
+            "producerNodeId": "a",
+            "producerOutputName": "a.txt",
+            "artifactId": "sample-20260418-001:a:a.txt",
+            "consumePolicy": "RemoteOK",
+            "required": true
+          }
+        ],
         "outputs": ["b.txt"],
         "kueue": {
           "queueName": "standard"

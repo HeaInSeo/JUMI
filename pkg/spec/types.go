@@ -18,6 +18,8 @@ type NodeStatus string
 const (
 	NodeStatusPending   NodeStatus = "Pending"
 	NodeStatusReady     NodeStatus = "Ready"
+	NodeStatusBuildingBindings NodeStatus = "BuildingBindings"
+	NodeStatusResolvingInputs  NodeStatus = "ResolvingInputs"
 	NodeStatusReleasing NodeStatus = "Releasing"
 	NodeStatusStarting  NodeStatus = "Starting"
 	NodeStatusRunning   NodeStatus = "Running"
@@ -45,6 +47,7 @@ type ExecutableRunSpec struct {
 
 type RunMetadata struct {
 	RunID         string        `json:"runId"`
+	SampleRunID   string        `json:"sampleRunId,omitempty"`
 	SubmittedAt   time.Time     `json:"submittedAt"`
 	FailurePolicy FailurePolicy `json:"failurePolicy"`
 	RequesterID   string        `json:"requesterId,omitempty"`
@@ -74,6 +77,7 @@ type Node struct {
 	Mounts             []Mount           `json:"mounts,omitempty"`
 	Inputs             []string          `json:"inputs,omitempty"`
 	Outputs            []string          `json:"outputs,omitempty"`
+	ArtifactBindings   []ArtifactBinding `json:"artifactBindings,omitempty"`
 	WorkingDir         string            `json:"workingDir,omitempty"`
 	ServiceAccountName string            `json:"serviceAccountName,omitempty"`
 	Metadata           map[string]string `json:"metadata,omitempty"`
@@ -107,6 +111,17 @@ type Mount struct {
 	Source string `json:"source"`
 	Target string `json:"target"`
 	Mode   string `json:"mode,omitempty"`
+}
+
+type ArtifactBinding struct {
+	BindingName        string `json:"bindingName"`
+	ChildInputName     string `json:"childInputName,omitempty"`
+	ProducerNodeID     string `json:"producerNodeId"`
+	ProducerOutputName string `json:"producerOutputName"`
+	ArtifactID         string `json:"artifactId,omitempty"`
+	Required           bool   `json:"required,omitempty"`
+	ConsumePolicy      string `json:"consumePolicy,omitempty"`
+	ExpectedDigest     string `json:"expectedDigest,omitempty"`
 }
 
 type KueueHints struct {
