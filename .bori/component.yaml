@@ -1,0 +1,4 @@
+name: jumi
+port: 8080
+metrics_path: /metrics
+namespace: jumi-ah-dev

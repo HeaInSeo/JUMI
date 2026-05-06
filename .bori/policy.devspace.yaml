@@ -1,0 +1,33 @@
+# JUMI kube-slint policy — devspace profile
+# 메트릭은 /metrics 엔드포인트에서 raw prometheus 이름을 그대로 사용합니다.
+# bori adapter가 smoke 전후 delta를 계산하여 slint-gate에 전달합니다.
+#
+# JUMI는 AH(artifact-handoff)와 함께 동작합니다.
+# smoke-cmd로 실제 job을 실행해야 delta가 의미있는 값이 됩니다.
+# 예: BORI_SMOKE_CMD="kubectl exec -n jumi-ah-dev deploy/jumi -- /usr/local/bin/jumi smoke"
+
+thresholds:
+  - name: "JUMI alive (job creation gate functional)"
+    metric: jumi_jobs_created_total
+    operator: ">="
+    value: 0
+
+  - name: "JUMI artifact registration functional"
+    metric: jumi_artifacts_registered_total
+    operator: ">="
+    value: 0
+
+  - name: "JUMI GC backlog not excessive"
+    metric: jumi_cleanup_backlog_objects
+    operator: "<="
+    value: 100
+
+regression:
+  enabled: false
+  tolerance_percent: 10
+
+reliability:
+  required: false
+
+fail_on:
+  - threshold_miss

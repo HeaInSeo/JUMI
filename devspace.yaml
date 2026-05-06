@@ -1,0 +1,58 @@
+version: v2beta1
+name: jumi
+
+vars:
+  IMAGE_REGISTRY:
+    source: env
+    default: "localhost:5000/heainseo"
+  NAMESPACE:
+    source: env
+    default: "jumi-ah-dev"
+  BORI_SMOKE_CMD:
+    source: env
+    default: ""
+  BORI_SMOKE_WAIT:
+    source: env
+    default: "15s"
+
+images:
+  jumi:
+    image: ${IMAGE_REGISTRY}/jumi
+    dockerfile: Containerfile
+    context: .
+
+deployments:
+  jumi:
+    kubectl:
+      kustomize: true
+      manifests:
+        - deploy/k8s/
+
+dev:
+  jumi:
+    imageSelector: ${IMAGE_REGISTRY}/jumi
+    sync:
+      - path: ./
+        excludePaths:
+          - .git/
+          - bin/
+          - deploy/
+          - "**/*_test.go"
+    ports:
+      - port: "8080:8080"
+      - port: "9090:9090"
+    logs: {}
+
+hooks:
+  - events: ["after:deploy"]
+    command: "bori-devspace"
+    args:
+      - "--profile"
+      - "devspace"
+      - "--apps-dir"
+      - ".."
+      - "--smoke-cmd"
+      - "${BORI_SMOKE_CMD}"
+      - "--smoke-wait"
+      - "${BORI_SMOKE_WAIT}"
+      - "--v"
