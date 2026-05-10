@@ -22,6 +22,16 @@ thresholds:
     operator: "<="
     value: 100
 
+  - name: "JUMI handoff resolve functional"
+    metric: jumi_handoff_resolve_total
+    operator: ">="
+    value: 0
+
+  - name: "JUMI k8s node prepare functional"
+    metric: jumi_k8s_node_prepare_total
+    operator: ">="
+    value: 0
+
 regression:
   enabled: false
   tolerance_percent: 10

@@ -39,6 +39,10 @@ func main() {
 	}
 	defer closeIfPossible(handoffClient)
 	engine := executor.NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	adapter.SetMetrics(engine.Metrics())
+	if gc, ok := handoffClient.(*handoff.GRPCClient); ok {
+		gc.SetMetrics(engine.Metrics())
+	}
 	service := api.NewService(reg, engine)
 
 	httpServer := newHTTPServer(reg, adapter, engine)

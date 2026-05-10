@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/HeaInSeo/JUMI/pkg/metrics"
 	"github.com/HeaInSeo/JUMI/pkg/provenance"
 	"github.com/HeaInSeo/JUMI/pkg/spec"
 	spimp "github.com/seoyhaein/spawner/cmd/imp"
@@ -34,6 +35,11 @@ type SpawnerK8sAdapter struct {
 	ns         string
 	clientset  kubernetes.Interface
 	restConfig *rest.Config
+	metrics    *metrics.Registry
+}
+
+func (a *SpawnerK8sAdapter) SetMetrics(reg *metrics.Registry) {
+	a.metrics = reg
 }
 
 type spawnerHandle struct {
@@ -88,20 +94,35 @@ func (a *SpawnerK8sAdapter) AdapterStatus() AdapterStatus {
 }
 
 func (a *SpawnerK8sAdapter) PrepareNode(ctx context.Context, run spec.RunRecord, node spec.Node) (PreparedNode, error) {
+	if a.metrics != nil {
+		a.metrics.IncCounter("jumi_k8s_node_prepare_total")
+	}
 	prepared, err := a.driver.Prepare(ctx, toSpawnerRunSpec(run, node))
 	if err != nil {
+		if a.metrics != nil {
+			a.metrics.IncCounter("jumi_k8s_node_prepare_errors_total")
+		}
 		return nil, err
 	}
 	return prepared, nil
 }
 
 func (a *SpawnerK8sAdapter) StartNode(ctx context.Context, prepared PreparedNode) (Handle, error) {
+	if a.metrics != nil {
+		a.metrics.IncCounter("jumi_k8s_node_start_total")
+	}
 	spPrepared, ok := prepared.(spdriver.Prepared)
 	if !ok {
+		if a.metrics != nil {
+			a.metrics.IncCounter("jumi_k8s_node_start_errors_total")
+		}
 		return nil, fmt.Errorf("unexpected prepared type %T", prepared)
 	}
 	handle, err := a.driver.Start(ctx, spPrepared)
 	if err != nil {
+		if a.metrics != nil {
+			a.metrics.IncCounter("jumi_k8s_node_start_errors_total")
+		}
 		return nil, err
 	}
 	jobName, _ := extractHandleJobName(handle)
@@ -162,13 +183,22 @@ func (a *SpawnerK8sAdapter) WaitNode(ctx context.Context, handle Handle) (Execut
 	case spapi.StateSucceeded:
 		result.Succeeded = true
 		result.TerminalStopCause = "finished"
+		if a.metrics != nil {
+			a.metrics.IncCounter("jumi_k8s_node_succeeded_total")
+		}
 	case spapi.StateCancelled:
 		result.TerminalStopCause = "canceled"
 		result.TerminalFailureReason = "cancellation_propagated"
+		if a.metrics != nil {
+			a.metrics.IncCounter("jumi_k8s_node_canceled_total")
+		}
 		return result, fmt.Errorf("node canceled")
 	case spapi.StateFailed:
 		result.TerminalStopCause = "failed"
 		result.TerminalFailureReason = "backend_wait_error"
+		if a.metrics != nil {
+			a.metrics.IncCounter("jumi_k8s_node_failed_total")
+		}
 		if strings.TrimSpace(event.Message) != "" {
 			return result, fmt.Errorf("node failed: %s", event.Message)
 		}
@@ -182,6 +212,9 @@ func (a *SpawnerK8sAdapter) WaitNode(ctx context.Context, handle Handle) (Execut
 }
 
 func (a *SpawnerK8sAdapter) CancelNode(ctx context.Context, handle Handle) error {
+	if a.metrics != nil {
+		a.metrics.IncCounter("jumi_k8s_node_cancel_total")
+	}
 	h, ok := handle.(spawnerHandle)
 	if !ok {
 		return fmt.Errorf("unexpected handle type %T", handle)

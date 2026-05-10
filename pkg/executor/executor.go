@@ -69,7 +69,7 @@ type DagEngine struct {
 	active   map[string]*activeRun
 }
 
-func newMetricsRegistry() *metrics.Registry {
+func NewMetricsRegistry() *metrics.Registry {
 	reg := metrics.NewRegistry()
 	for _, name := range []string{
 		"jumi_jobs_created_total",
@@ -80,12 +80,29 @@ func newMetricsRegistry() *metrics.Registry {
 		"jumi_input_materializations_total",
 		"jumi_sample_runs_finalized_total",
 		"jumi_gc_evaluate_requests_total",
+		"jumi_handoff_resolve_total",
+		"jumi_handoff_resolve_errors_total",
+		"jumi_handoff_register_artifact_total",
+		"jumi_handoff_register_artifact_errors_total",
+		"jumi_handoff_notify_terminal_total",
+		"jumi_handoff_finalize_total",
+		"jumi_handoff_gc_evaluate_total",
+		"jumi_k8s_node_prepare_total",
+		"jumi_k8s_node_prepare_errors_total",
+		"jumi_k8s_node_start_total",
+		"jumi_k8s_node_start_errors_total",
+		"jumi_k8s_node_succeeded_total",
+		"jumi_k8s_node_failed_total",
+		"jumi_k8s_node_canceled_total",
+		"jumi_k8s_node_cancel_total",
 	} {
 		reg.EnsureCounter(name)
 	}
 	reg.EnsureGauge("jumi_cleanup_backlog_objects")
 	return reg
 }
+
+func newMetricsRegistry() *metrics.Registry { return NewMetricsRegistry() }
 
 func NewDagEngine(reg registry.Registry, adapter backend.Adapter) *DagEngine {
 	return &DagEngine{
