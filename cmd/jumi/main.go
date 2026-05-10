@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -31,7 +33,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	handoffClient := newHandoffClientFromEnv()
+	handoffClient, err := newHandoffClientFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer closeIfPossible(handoffClient)
 	engine := executor.NewDagEngineWithHandoff(reg, adapter, handoffClient)
 	service := api.NewService(reg, engine)
 
@@ -77,12 +83,32 @@ func main() {
 	grpcServer.GracefulStop()
 }
 
-func newHandoffClientFromEnv() handoff.Client {
+func newHandoffClientFromEnv() (handoff.Client, error) {
+	grpcTarget := os.Getenv("JUMI_AH_GRPC_TARGET")
+	if grpcTarget != "" {
+		client, err := handoff.NewGRPCClient(grpcTarget)
+		if err != nil {
+			return nil, fmt.Errorf("initialize handoff grpc client for %s: %w", grpcTarget, err)
+		}
+		return client, nil
+	}
 	baseURL := os.Getenv("JUMI_AH_URL")
 	if baseURL == "" {
-		return handoff.NewNoopClient()
+		if envBoolOrDefault("JUMI_ALLOW_NOOP_HANDOFF", false) {
+			log.Printf("jumi using noop handoff client because JUMI_ALLOW_NOOP_HANDOFF=true")
+			return handoff.NewNoopClient(), nil
+		}
+		return nil, fmt.Errorf("missing handoff configuration: set JUMI_AH_GRPC_TARGET or JUMI_AH_URL, or set JUMI_ALLOW_NOOP_HANDOFF=true for development-only noop mode")
 	}
-	return handoff.NewHTTPClient(baseURL, 5*time.Second)
+	return handoff.NewHTTPClient(baseURL, 5*time.Second), nil
+}
+
+func closeIfPossible(client handoff.Client) {
+	closer, ok := client.(io.Closer)
+	if !ok {
+		return
+	}
+	_ = closer.Close()
 }
 
 func newHTTPServer(reg registry.Registry, adapter backend.Adapter, engine *executor.DagEngine) *http.Server {
@@ -136,6 +162,18 @@ func envIntOrDefault(key string, fallback int) int {
 		return fallback
 	}
 	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envBoolOrDefault(key string, fallback bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
 	if err != nil {
 		return fallback
 	}

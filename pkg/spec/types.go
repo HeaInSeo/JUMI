@@ -16,17 +16,17 @@ const (
 type NodeStatus string
 
 const (
-	NodeStatusPending   NodeStatus = "Pending"
-	NodeStatusReady     NodeStatus = "Ready"
+	NodeStatusPending          NodeStatus = "Pending"
+	NodeStatusReady            NodeStatus = "Ready"
 	NodeStatusBuildingBindings NodeStatus = "BuildingBindings"
 	NodeStatusResolvingInputs  NodeStatus = "ResolvingInputs"
-	NodeStatusReleasing NodeStatus = "Releasing"
-	NodeStatusStarting  NodeStatus = "Starting"
-	NodeStatusRunning   NodeStatus = "Running"
-	NodeStatusSucceeded NodeStatus = "Succeeded"
-	NodeStatusFailed    NodeStatus = "Failed"
-	NodeStatusCanceled  NodeStatus = "Canceled"
-	NodeStatusSkipped   NodeStatus = "Skipped"
+	NodeStatusReleasing        NodeStatus = "Releasing"
+	NodeStatusStarting         NodeStatus = "Starting"
+	NodeStatusRunning          NodeStatus = "Running"
+	NodeStatusSucceeded        NodeStatus = "Succeeded"
+	NodeStatusFailed           NodeStatus = "Failed"
+	NodeStatusCanceled         NodeStatus = "Canceled"
+	NodeStatusSkipped          NodeStatus = "Skipped"
 )
 
 type AttemptStatus string
@@ -80,6 +80,8 @@ type Node struct {
 	ArtifactBindings   []ArtifactBinding `json:"artifactBindings,omitempty"`
 	WorkingDir         string            `json:"workingDir,omitempty"`
 	ServiceAccountName string            `json:"serviceAccountName,omitempty"`
+	Placement          *PlacementHints   `json:"placement,omitempty"`
+	CleanupPolicy      CleanupPolicy     `json:"cleanupPolicy,omitempty"`
 	Metadata           map[string]string `json:"metadata,omitempty"`
 	Kueue              *KueueHints       `json:"kueue,omitempty"`
 }
@@ -89,6 +91,8 @@ type Defaults struct {
 	ResourceProfile ResourceProfile `json:"resourceProfile,omitempty"`
 	TimeoutPolicy   TimeoutPolicy   `json:"timeoutPolicy,omitempty"`
 	RetryPolicy     RetryPolicy     `json:"retryPolicy,omitempty"`
+	CleanupPolicy   CleanupPolicy   `json:"cleanupPolicy,omitempty"`
+	Placement       *PlacementHints `json:"placement,omitempty"`
 	Namespace       string          `json:"namespace,omitempty"`
 }
 
@@ -105,6 +109,14 @@ type RetryPolicy struct {
 	MaxAttempts     int      `json:"maxAttempts,omitempty"`
 	RetryablePhases []string `json:"retryablePhases,omitempty"`
 	RetryDelayHint  string   `json:"retryDelayHint,omitempty"`
+}
+
+type CleanupPolicy struct {
+	TTLSecondsAfterFinished int32 `json:"ttlSecondsAfterFinished,omitempty"`
+}
+
+type PlacementHints struct {
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 }
 
 type Mount struct {

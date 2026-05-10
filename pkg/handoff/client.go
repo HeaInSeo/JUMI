@@ -55,6 +55,7 @@ type RegisterArtifactRequest struct {
 	Digest         string `json:"digest,omitempty"`
 	NodeName       string `json:"nodeName,omitempty"`
 	URI            string `json:"uri,omitempty"`
+	SizeBytes      int64  `json:"sizeBytes,omitempty"`
 }
 
 type Client interface {
@@ -172,6 +173,7 @@ func (c *HTTPClient) RegisterArtifact(ctx context.Context, req RegisterArtifactR
 		Digest         string `json:"digest,omitempty"`
 		NodeName       string `json:"nodeName,omitempty"`
 		URI            string `json:"uri,omitempty"`
+		SizeBytes      int64  `json:"sizeBytes,omitempty"`
 	}{
 		SampleRunID:    req.SampleRunID,
 		ProducerNodeID: req.ProducerNodeID,
@@ -180,6 +182,7 @@ func (c *HTTPClient) RegisterArtifact(ctx context.Context, req RegisterArtifactR
 		Digest:         req.Digest,
 		NodeName:       req.NodeName,
 		URI:            req.URI,
+		SizeBytes:      req.SizeBytes,
 	})
 	if err != nil {
 		return err

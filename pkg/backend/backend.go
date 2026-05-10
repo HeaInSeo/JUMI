@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 
 	"github.com/HeaInSeo/JUMI/pkg/spec"
 )
@@ -9,6 +10,8 @@ import (
 type PreparedNode any
 
 type Handle any
+
+var ErrOutputMetadataUnavailable = errors.New("output metadata unavailable")
 
 type ExecutionResult struct {
 	Succeeded             bool               `json:"succeeded"`
@@ -23,6 +26,17 @@ type Adapter interface {
 	ObserveNode(ctx context.Context, handle Handle) (*OptionalKueueInfo, error)
 	WaitNode(ctx context.Context, handle Handle) (ExecutionResult, error)
 	CancelNode(ctx context.Context, handle Handle) error
+}
+
+type OutputMetadata struct {
+	OutputName string `json:"outputName"`
+	URI        string `json:"uri,omitempty"`
+	Digest     string `json:"digest,omitempty"`
+	SizeBytes  int64  `json:"sizeBytes,omitempty"`
+}
+
+type OutputMetadataProvider interface {
+	CollectOutputMetadata(ctx context.Context, handle Handle, node spec.Node) (map[string]OutputMetadata, error)
 }
 
 type AdapterStatus struct {

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +18,8 @@ import (
 	"github.com/HeaInSeo/JUMI/pkg/registry"
 	"github.com/HeaInSeo/JUMI/pkg/spec"
 	dag "github.com/seoyhaein/dag-go"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type Engine interface {
@@ -375,12 +379,58 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 	}
 	if err := e.handoff.FinalizeSampleRun(ctx, handoff.FinalizeSampleRunRequest{
 		SampleRunID: firstNonEmpty(run.Spec.Run.SampleRunID, runID),
-	}); err == nil {
+	}); err != nil {
+		appendEvent(ctx, e.registry, spec.EventRecord{
+			RunID:         runID,
+			Type:          "run.handoff.finalize_failed",
+			OccurredAt:    time.Now().UTC(),
+			Level:         "error",
+			StopCause:     "failed",
+			FailureReason: "handoff_finalize_error",
+			Message:       err.Error(),
+		})
+		if status == spec.RunStatusSucceeded {
+			status = spec.RunStatusFailed
+			terminalStopCause = "failed"
+			terminalFailureReason = "handoff_finalize_error"
+			if err := e.registry.UpdateRun(ctx, runID, func(current *spec.RunRecord) error {
+				current.Status = status
+				current.TerminalStopCause = terminalStopCause
+				current.TerminalFailureReason = terminalFailureReason
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+	} else {
 		e.metrics.IncCounter("jumi_sample_runs_finalized_total")
 	}
 	if err := e.handoff.EvaluateGC(ctx, handoff.EvaluateGCRequest{
 		SampleRunID: firstNonEmpty(run.Spec.Run.SampleRunID, runID),
-	}); err == nil {
+	}); err != nil {
+		appendEvent(ctx, e.registry, spec.EventRecord{
+			RunID:         runID,
+			Type:          "run.handoff.gc_evaluate_failed",
+			OccurredAt:    time.Now().UTC(),
+			Level:         "error",
+			StopCause:     "failed",
+			FailureReason: "handoff_gc_evaluate_error",
+			Message:       err.Error(),
+		})
+		if status == spec.RunStatusSucceeded {
+			status = spec.RunStatusFailed
+			terminalStopCause = "failed"
+			terminalFailureReason = "handoff_gc_evaluate_error"
+			if err := e.registry.UpdateRun(ctx, runID, func(current *spec.RunRecord) error {
+				current.Status = status
+				current.TerminalStopCause = terminalStopCause
+				current.TerminalFailureReason = terminalFailureReason
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+	} else {
 		e.metrics.IncCounter("jumi_gc_evaluate_requests_total")
 	}
 	appendEvent(ctx, e.registry, spec.EventRecord{RunID: runID, Type: "run.completed", OccurredAt: now, Level: eventLevelForRunStatus(status), StopCause: terminalStopCause, FailureReason: terminalFailureReason, Message: string(status)})
@@ -396,6 +446,11 @@ type nodeRunner struct {
 	node     spec.Node
 	active   *activeRun
 }
+
+const (
+	resolveBindingMaxAttempts = 3
+	resolveBindingRetryDelay  = 100 * time.Millisecond
+)
 
 func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 	if r.node.TimeoutPolicy.Seconds > 0 {
@@ -441,7 +496,7 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 		}
 		for _, binding := range r.node.ArtifactBindings {
 			r.metrics.IncCounter("jumi_input_resolve_requests_total")
-			resolved, err := r.handoff.ResolveBinding(ctx, handoff.ResolveBindingRequest{
+			resolved, err := r.resolveBindingWithRetry(ctx, handoff.ResolveBindingRequest{
 				RunID:              r.runID,
 				SampleRunID:        firstNonEmpty(run.Spec.Run.SampleRunID, r.runID),
 				ChildNodeID:        r.node.NodeID,
@@ -454,7 +509,7 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 				ExpectedDigest:     binding.ExpectedDigest,
 				Required:           binding.Required,
 				TargetNodeName:     "",
-			})
+			}, attemptID, binding.BindingName)
 			if err != nil {
 				_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
 					RunID:                 r.runID,
@@ -478,6 +533,7 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 				Message:    fmt.Sprintf("binding=%s decision=%s status=%s", binding.BindingName, resolved.Decision, resolved.ResolutionStatus),
 			})
 			if binding.Required && resolved.ResolutionStatus == "MISSING" {
+				failureReason := missingBindingFailureReason(resolved)
 				_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
 					RunID:                 r.runID,
 					NodeID:                r.node.NodeID,
@@ -486,9 +542,9 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 					StartedAt:             &now,
 					FinishedAt:            timePtr(time.Now().UTC()),
 					TerminalStopCause:     "failed",
-					TerminalFailureReason: "input_resolution_missing",
+					TerminalFailureReason: failureReason,
 				})
-				return r.failNode(fmt.Errorf("required binding %s missing", binding.BindingName), attemptID, "failed", "input_resolution_missing")
+				return r.failNode(fmt.Errorf("required binding %s missing", binding.BindingName), attemptID, "failed", failureReason)
 			}
 			if resolved.Decision == "remote_fetch" {
 				r.metrics.IncCounter("jumi_input_remote_fetch_total")
@@ -586,6 +642,32 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 	finishedAt := time.Now().UTC()
 	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusCompleted, StartedAt: &startedAt, FinishedAt: &finishedAt, TerminalStopCause: firstNonEmpty(result.TerminalStopCause, "finished"), TerminalFailureReason: result.TerminalFailureReason})
 	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.succeeded", OccurredAt: finishedAt, Level: "info", StopCause: firstNonEmpty(result.TerminalStopCause, "finished")})
+	if err := r.registerNodeOutputs(context.Background(), handle); err != nil {
+		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
+			RunID:                 r.runID,
+			NodeID:                r.node.NodeID,
+			AttemptID:             attemptID,
+			Status:                spec.AttemptStatusErrored,
+			StartedAt:             &startedAt,
+			FinishedAt:            &finishedAt,
+			TerminalStopCause:     "failed",
+			TerminalFailureReason: "register_artifact_error",
+		})
+		return r.failNode(err, attemptID, "failed", "register_artifact_error")
+	}
+	if err := r.notifyNodeTerminal(context.Background(), "Succeeded"); err != nil {
+		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
+			RunID:                 r.runID,
+			NodeID:                r.node.NodeID,
+			AttemptID:             attemptID,
+			Status:                spec.AttemptStatusErrored,
+			StartedAt:             &startedAt,
+			FinishedAt:            &finishedAt,
+			TerminalStopCause:     "failed",
+			TerminalFailureReason: "notify_node_terminal_error",
+		})
+		return r.failNode(err, attemptID, "failed", "notify_node_terminal_error")
+	}
 	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusSucceeded
 		current.TerminalStopCause = firstNonEmpty(result.TerminalStopCause, "finished")
@@ -596,8 +678,6 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 	}); err != nil {
 		return err
 	}
-	r.registerNodeOutputs(context.Background())
-	r.notifyNodeTerminal(context.Background(), "Succeeded")
 	return nil
 }
 
@@ -615,26 +695,64 @@ func (r *nodeRunner) failNode(cause error, attemptID string, terminalStopCause s
 		current.FinishedAt = &finishedAt
 		return nil
 	})
-	r.notifyNodeTerminal(context.Background(), "Failed")
+	if err := r.notifyNodeTerminal(context.Background(), "Failed"); err != nil {
+		appendEvent(context.Background(), r.registry, spec.EventRecord{
+			RunID:         r.runID,
+			NodeID:        r.node.NodeID,
+			AttemptID:     attemptID,
+			Type:          "node.handoff.notify_failed",
+			OccurredAt:    time.Now().UTC(),
+			Level:         "error",
+			StopCause:     "failed",
+			FailureReason: "notify_node_terminal_error",
+			Message:       err.Error(),
+		})
+	}
 	return cause
 }
 
 func (r *nodeRunner) cancelNode(attemptID string, reason string) error {
 	finishedAt := time.Now().UTC()
-	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, FinishedAt: &finishedAt, TerminalStopCause: "canceled", TerminalFailureReason: firstNonEmpty(reason, "cancellation_requested")})
-	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.canceled", OccurredAt: finishedAt, Level: "warn", StopCause: "canceled", FailureReason: firstNonEmpty(reason, "cancellation_requested")})
+	terminalReason := r.effectiveCancellationReason(reason)
+	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, FinishedAt: &finishedAt, TerminalStopCause: "canceled", TerminalFailureReason: terminalReason})
+	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.canceled", OccurredAt: finishedAt, Level: "warn", StopCause: "canceled", FailureReason: terminalReason})
 	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusCanceled
 		current.TerminalStopCause = "canceled"
-		current.TerminalFailureReason = firstNonEmpty(reason, "cancellation_requested")
+		current.TerminalFailureReason = terminalReason
 		current.CurrentBottleneckLocation = ""
 		current.FinishedAt = &finishedAt
 		return nil
 	}); err != nil {
 		return err
 	}
-	r.notifyNodeTerminal(context.Background(), "Canceled")
+	if err := r.notifyNodeTerminal(context.Background(), "Canceled"); err != nil {
+		appendEvent(context.Background(), r.registry, spec.EventRecord{
+			RunID:         r.runID,
+			NodeID:        r.node.NodeID,
+			AttemptID:     attemptID,
+			Type:          "node.handoff.notify_failed",
+			OccurredAt:    time.Now().UTC(),
+			Level:         "error",
+			StopCause:     "canceled",
+			FailureReason: "notify_node_terminal_error",
+			Message:       err.Error(),
+		})
+	}
 	return nil
+}
+
+func (r *nodeRunner) effectiveCancellationReason(reason string) string {
+	if reason != "" && reason != "cancellation_requested" {
+		return reason
+	}
+	run, err := r.registry.GetRun(context.Background(), r.runID)
+	if err == nil {
+		if run.TerminalFailureReason != "" && run.TerminalFailureReason != "cancellation_requested" {
+			return run.TerminalFailureReason
+		}
+	}
+	return firstNonEmpty(reason, "cancellation_requested")
 }
 
 func (r *nodeRunner) isRunCanceled() bool {
@@ -657,33 +775,58 @@ func (r *nodeRunner) unregisterHandle() {
 	delete(r.active.handles, r.node.NodeID)
 }
 
-func (r *nodeRunner) notifyNodeTerminal(ctx context.Context, terminalState string) {
-	_ = r.handoff.NotifyNodeTerminal(ctx, handoff.NotifyNodeTerminalRequest{
+func (r *nodeRunner) notifyNodeTerminal(ctx context.Context, terminalState string) error {
+	return r.handoff.NotifyNodeTerminal(ctx, handoff.NotifyNodeTerminalRequest{
 		SampleRunID:   firstNonEmpty(r.sampleRunID(ctx), r.runID),
 		NodeID:        r.node.NodeID,
 		TerminalState: terminalState,
 	})
 }
 
-func (r *nodeRunner) registerNodeOutputs(ctx context.Context) {
+func (r *nodeRunner) registerNodeOutputs(ctx context.Context, handle backend.Handle) error {
 	if len(r.node.Outputs) == 0 {
-		return
+		return nil
+	}
+	outputMetadata, err := r.collectOutputMetadata(ctx, handle)
+	if err != nil {
+		return err
 	}
 	sampleRunID := firstNonEmpty(r.sampleRunID(ctx), r.runID)
 	for _, outputName := range r.node.Outputs {
 		if outputName == "" {
 			continue
 		}
+		metadata := outputMetadata[outputName]
+		uri := firstNonEmpty(metadata.URI, artifactOutputURI(r.runID, r.node.NodeID, outputName))
 		if err := r.handoff.RegisterArtifact(ctx, handoff.RegisterArtifactRequest{
 			SampleRunID:    sampleRunID,
 			ProducerNodeID: r.node.NodeID,
 			OutputName:     outputName,
 			ArtifactID:     fmt.Sprintf("%s:%s:%s", sampleRunID, r.node.NodeID, outputName),
-			URI:            artifactOutputURI(r.runID, r.node.NodeID, outputName),
-		}); err == nil {
-			r.metrics.IncCounter("jumi_artifacts_registered_total")
+			Digest:         metadata.Digest,
+			URI:            uri,
+			SizeBytes:      metadata.SizeBytes,
+		}); err != nil {
+			return fmt.Errorf("register artifact %s for node %s: %w", outputName, r.node.NodeID, err)
 		}
+		r.metrics.IncCounter("jumi_artifacts_registered_total")
 	}
+	return nil
+}
+
+func (r *nodeRunner) collectOutputMetadata(ctx context.Context, handle backend.Handle) (map[string]backend.OutputMetadata, error) {
+	provider, ok := r.adapter.(backend.OutputMetadataProvider)
+	if !ok {
+		return nil, nil
+	}
+	metadata, err := provider.CollectOutputMetadata(ctx, handle, r.node)
+	if err != nil {
+		if errors.Is(err, backend.ErrOutputMetadataUnavailable) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("collect output metadata for node %s: %w", r.node.NodeID, err)
+	}
+	return metadata, nil
 }
 
 func cloneNode(node spec.Node) spec.Node {
@@ -719,6 +862,13 @@ func injectResolvedBindingEnv(node *spec.Node, binding spec.ArtifactBinding, res
 	}
 }
 
+func missingBindingFailureReason(resolved handoff.ResolveBindingResponse) string {
+	if resolved.Decision == "producer_failed" {
+		return "input_resolution_producer_failed"
+	}
+	return "input_resolution_missing"
+}
+
 func sanitizeEnvSegment(value string) string {
 	if value == "" {
 		return "UNSPECIFIED"
@@ -750,6 +900,92 @@ func (r *nodeRunner) sampleRunID(ctx context.Context) string {
 		return ""
 	}
 	return run.Spec.Run.SampleRunID
+}
+
+func (r *nodeRunner) resolveBindingWithRetry(ctx context.Context, req handoff.ResolveBindingRequest, attemptID string, bindingName string) (handoff.ResolveBindingResponse, error) {
+	var lastErr error
+	for attempt := 1; attempt <= resolveBindingMaxAttempts; attempt++ {
+		resolved, err := r.handoff.ResolveBinding(ctx, req)
+		if err == nil {
+			return resolved, nil
+		}
+		lastErr = err
+		if !isTransientResolveBindingError(err) {
+			return handoff.ResolveBindingResponse{}, err
+		}
+		appendEvent(context.Background(), r.registry, spec.EventRecord{
+			RunID:         r.runID,
+			NodeID:        r.node.NodeID,
+			AttemptID:     attemptID,
+			Type:          "node.input_resolve_retry",
+			OccurredAt:    time.Now().UTC(),
+			Level:         "warn",
+			FailureReason: "resolve_handoff_error",
+			Message:       fmt.Sprintf("binding=%s attempt=%d/%d error=%s", bindingName, attempt, resolveBindingMaxAttempts, err.Error()),
+		})
+		if attempt == resolveBindingMaxAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return handoff.ResolveBindingResponse{}, ctx.Err()
+		case <-time.After(resolveBindingRetryDelay):
+		}
+	}
+	return handoff.ResolveBindingResponse{}, lastErr
+}
+
+func isTransientResolveBindingError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted, codes.Aborted, codes.Internal:
+		return true
+	case codes.InvalidArgument, codes.NotFound, codes.FailedPrecondition, codes.PermissionDenied, codes.Unauthenticated, codes.Unimplemented:
+		return false
+	}
+	if httpStatus, ok := handoffHTTPStatus(err); ok {
+		switch httpStatus {
+		case 408, 425, 429, 500, 502, 503, 504:
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func handoffHTTPStatus(err error) (int, bool) {
+	msg := err.Error()
+	const marker = "handoff resolve failed with status "
+	idx := strings.Index(msg, marker)
+	if idx < 0 {
+		return 0, false
+	}
+	codeText := msg[idx+len(marker):]
+	end := strings.IndexFunc(codeText, func(r rune) bool { return r < '0' || r > '9' })
+	if end >= 0 {
+		codeText = codeText[:end]
+	}
+	if codeText == "" {
+		return 0, false
+	}
+	code, convErr := strconv.Atoi(codeText)
+	if convErr != nil {
+		return 0, false
+	}
+	return code, true
 }
 
 func artifactOutputURI(runID, nodeID, outputName string) string {

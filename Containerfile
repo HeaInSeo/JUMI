@@ -8,6 +8,7 @@ RUN go mod download
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/jumi ./cmd/jumi
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/jumi-output-helper ./cmd/jumi-output-helper
 
 FROM debian:bookworm-slim
 
@@ -16,6 +17,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /out/jumi /usr/local/bin/jumi
+COPY --from=builder /out/jumi-output-helper /usr/local/bin/jumi-output-helper
 
 EXPOSE 8080 9090
 

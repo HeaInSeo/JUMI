@@ -12,6 +12,8 @@ import (
 	"github.com/HeaInSeo/JUMI/pkg/handoff"
 	"github.com/HeaInSeo/JUMI/pkg/registry"
 	"github.com/HeaInSeo/JUMI/pkg/spec"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type fakePrepared struct {
@@ -29,26 +31,39 @@ type fakeAdapter struct {
 	waitCh     map[string]chan struct{}
 	canceled   map[string]bool
 	prepared   map[string]spec.Node
+	outputs    map[string]map[string]backend.OutputMetadata
 	startDelay time.Duration
 }
 
 type fakeHandoffClient struct {
-	mu                 sync.Mutex
-	requests           []handoff.ResolveBindingRequest
-	registerRequests   []handoff.RegisterArtifactRequest
-	notifyRequests     []handoff.NotifyNodeTerminalRequest
-	finalizeRequests   []handoff.FinalizeSampleRunRequest
-	evaluateRequests   []handoff.EvaluateGCRequest
-	response           handoff.ResolveBindingResponse
-	err                error
+	mu               sync.Mutex
+	requests         []handoff.ResolveBindingRequest
+	registerRequests []handoff.RegisterArtifactRequest
+	notifyRequests   []handoff.NotifyNodeTerminalRequest
+	finalizeRequests []handoff.FinalizeSampleRunRequest
+	evaluateRequests []handoff.EvaluateGCRequest
+	response         handoff.ResolveBindingResponse
+	resolveErr       error
+	resolveErrs      []error
+	registerErr      error
+	notifyErr        error
+	finalizeErr      error
+	evaluateErr      error
 }
 
 func (f *fakeHandoffClient) ResolveBinding(_ context.Context, req handoff.ResolveBindingRequest) (handoff.ResolveBindingResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, req)
-	if f.err != nil {
-		return handoff.ResolveBindingResponse{}, f.err
+	if len(f.resolveErrs) > 0 {
+		err := f.resolveErrs[0]
+		f.resolveErrs = f.resolveErrs[1:]
+		if err != nil {
+			return handoff.ResolveBindingResponse{}, err
+		}
+	}
+	if f.resolveErr != nil {
+		return handoff.ResolveBindingResponse{}, f.resolveErr
 	}
 	if f.response.ResolutionStatus == "" {
 		return handoff.ResolveBindingResponse{ResolutionStatus: "RESOLVED", Decision: "remote_fetch", RequiresMaterialization: true}, nil
@@ -60,28 +75,28 @@ func (f *fakeHandoffClient) RegisterArtifact(_ context.Context, req handoff.Regi
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.registerRequests = append(f.registerRequests, req)
-	return nil
+	return f.registerErr
 }
 
 func (f *fakeHandoffClient) NotifyNodeTerminal(_ context.Context, req handoff.NotifyNodeTerminalRequest) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.notifyRequests = append(f.notifyRequests, req)
-	return nil
+	return f.notifyErr
 }
 
 func (f *fakeHandoffClient) FinalizeSampleRun(_ context.Context, req handoff.FinalizeSampleRunRequest) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.finalizeRequests = append(f.finalizeRequests, req)
-	return nil
+	return f.finalizeErr
 }
 
 func (f *fakeHandoffClient) EvaluateGC(_ context.Context, req handoff.EvaluateGCRequest) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.evaluateRequests = append(f.evaluateRequests, req)
-	return nil
+	return f.evaluateErr
 }
 
 func (f *fakeAdapter) PrepareNode(_ context.Context, _ spec.RunRecord, node spec.Node) (backend.PreparedNode, error) {
@@ -207,9 +222,509 @@ func TestDagEngineRegistersNodeOutputsOnSuccess(t *testing.T) {
 	if handoffClient.registerRequests[0].URI == "" {
 		t.Fatal("expected non-empty output URI")
 	}
+	if handoffClient.registerRequests[0].SizeBytes != 0 {
+		t.Fatalf("sizeBytes = %d, want 0 without metadata provider data", handoffClient.registerRequests[0].SizeBytes)
+	}
 	if got := engine.Metrics().Render(); !strings.Contains(got, "jumi_artifacts_registered_total 2") {
 		t.Fatalf("expected artifact register metric in render: %s", got)
 	}
+}
+
+func TestDagEngineRegistersOutputMetadataWhenAvailable(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{
+		failOn: map[string]bool{},
+		outputs: map[string]map[string]backend.OutputMetadata{
+			"producer": {
+				"result.json": {
+					URI:       "jumi://runs/run-outputs-meta/nodes/producer/outputs/result.json",
+					Digest:    "sha256:abc",
+					SizeBytes: 4096,
+				},
+			},
+		},
+	}
+	handoffClient := &fakeHandoffClient{}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run: spec.RunMetadata{RunID: "run-outputs-meta", SampleRunID: "sample-out-meta", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{
+			Nodes: []spec.Node{
+				{NodeID: "producer", Image: "busybox:1.36", Outputs: []string{"result.json"}},
+			},
+		},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "producer", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusSucceeded)
+	handoffClient.mu.Lock()
+	defer handoffClient.mu.Unlock()
+	if len(handoffClient.registerRequests) != 1 {
+		t.Fatalf("register artifact calls = %d, want 1", len(handoffClient.registerRequests))
+	}
+	req := handoffClient.registerRequests[0]
+	if req.Digest != "sha256:abc" {
+		t.Fatalf("digest = %q, want sha256:abc", req.Digest)
+	}
+	if req.SizeBytes != 4096 {
+		t.Fatalf("sizeBytes = %d, want 4096", req.SizeBytes)
+	}
+}
+
+func TestDagEngineFailsRunWhenArtifactRegistrationFails(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{failOn: map[string]bool{}}
+	handoffClient := &fakeHandoffClient{registerErr: fmt.Errorf("register down")}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run: spec.RunMetadata{RunID: "run-register-fail", SampleRunID: "sample-register-fail", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{
+			Nodes: []spec.Node{
+				{NodeID: "producer", Image: "busybox:1.36", Outputs: []string{"result.json"}},
+			},
+		},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "producer", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusFailed)
+
+	run, err := reg.GetRun(context.Background(), record.RunID)
+	if err != nil {
+		t.Fatalf("GetRun() error = %v", err)
+	}
+	if run.TerminalFailureReason != "register_artifact_error" {
+		t.Fatalf("TerminalFailureReason = %q, want register_artifact_error", run.TerminalFailureReason)
+	}
+	if got := engine.Metrics().Render(); strings.Contains(got, "jumi_artifacts_registered_total 1") {
+		t.Fatalf("unexpected artifact register metric in render: %s", got)
+	}
+}
+
+func TestDagEngineFailsSuccessfulRunWhenFinalizeFails(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{failOn: map[string]bool{}}
+	handoffClient := &fakeHandoffClient{finalizeErr: fmt.Errorf("finalize down")}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run: spec.RunMetadata{RunID: "run-finalize-fail", SampleRunID: "sample-finalize-fail", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{
+			Nodes: []spec.Node{
+				{NodeID: "producer", Image: "busybox:1.36"},
+			},
+		},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "producer", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusFailed)
+
+	run, err := reg.GetRun(context.Background(), record.RunID)
+	if err != nil {
+		t.Fatalf("GetRun() error = %v", err)
+	}
+	if run.TerminalFailureReason != "handoff_finalize_error" {
+		t.Fatalf("TerminalFailureReason = %q, want handoff_finalize_error", run.TerminalFailureReason)
+	}
+	if got := engine.Metrics().Render(); strings.Contains(got, "jumi_sample_runs_finalized_total 1") {
+		t.Fatalf("unexpected finalize metric in render: %s", got)
+	}
+}
+
+func TestDagEngineFailsSuccessfulRunWhenEvaluateGCFails(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{failOn: map[string]bool{}}
+	handoffClient := &fakeHandoffClient{evaluateErr: fmt.Errorf("gc down")}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run: spec.RunMetadata{RunID: "run-gc-fail", SampleRunID: "sample-gc-fail", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{
+			Nodes: []spec.Node{
+				{NodeID: "producer", Image: "busybox:1.36"},
+			},
+		},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "producer", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusFailed)
+
+	run, err := reg.GetRun(context.Background(), record.RunID)
+	if err != nil {
+		t.Fatalf("GetRun() error = %v", err)
+	}
+	if run.TerminalFailureReason != "handoff_gc_evaluate_error" {
+		t.Fatalf("TerminalFailureReason = %q, want handoff_gc_evaluate_error", run.TerminalFailureReason)
+	}
+	if got := engine.Metrics().Render(); strings.Contains(got, "jumi_gc_evaluate_requests_total 1") {
+		t.Fatalf("unexpected gc evaluate metric in render: %s", got)
+	}
+}
+
+func TestDagEngineFailsNodeWhenResolveBindingErrors(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{failOn: map[string]bool{}}
+	handoffClient := &fakeHandoffClient{resolveErr: fmt.Errorf("handoff unavailable")}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run: spec.RunMetadata{RunID: "run-resolve-error", SampleRunID: "sample-resolve-error", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{
+			Nodes: []spec.Node{
+				{NodeID: "a", Image: "busybox:1.36", Outputs: []string{"output"}},
+				{NodeID: "b", Image: "busybox:1.36", ArtifactBindings: []spec.ArtifactBinding{{
+					BindingName:        "dataset",
+					ChildInputName:     "dataset",
+					ProducerNodeID:     "a",
+					ProducerOutputName: "output",
+					ConsumePolicy:      "RemoteOK",
+					Required:           true,
+				}}},
+			},
+			Edges: [][]string{{"a", "b"}},
+		},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "a", Status: spec.NodeStatusPending}, {RunID: record.RunID, NodeID: "b", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusFailed)
+
+	runNodes, err := reg.ListNodes(context.Background(), record.RunID)
+	if err != nil {
+		t.Fatalf("ListNodes() error = %v", err)
+	}
+	statuses := map[string]spec.NodeStatus{}
+	reasons := map[string]string{}
+	for _, node := range runNodes {
+		statuses[node.NodeID] = node.Status
+		reasons[node.NodeID] = node.TerminalFailureReason
+	}
+	if statuses["b"] != spec.NodeStatusFailed {
+		t.Fatalf("node b status = %q, want Failed", statuses["b"])
+	}
+	if reasons["b"] != "resolve_handoff_error" {
+		t.Fatalf("node b failureReason = %q, want resolve_handoff_error", reasons["b"])
+	}
+}
+
+func TestDagEngineFailsNodeWhenRequiredBindingMissing(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{failOn: map[string]bool{}}
+	handoffClient := &fakeHandoffClient{
+		response: handoff.ResolveBindingResponse{ResolutionStatus: "MISSING", Decision: "unavailable"},
+	}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run: spec.RunMetadata{RunID: "run-binding-missing", SampleRunID: "sample-binding-missing", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{
+			Nodes: []spec.Node{
+				{NodeID: "a", Image: "busybox:1.36", Outputs: []string{"output"}},
+				{NodeID: "b", Image: "busybox:1.36", ArtifactBindings: []spec.ArtifactBinding{{
+					BindingName:        "dataset",
+					ChildInputName:     "dataset",
+					ProducerNodeID:     "a",
+					ProducerOutputName: "output",
+					ConsumePolicy:      "RemoteOK",
+					Required:           true,
+				}}},
+			},
+			Edges: [][]string{{"a", "b"}},
+		},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "a", Status: spec.NodeStatusPending}, {RunID: record.RunID, NodeID: "b", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusFailed)
+
+	runNodes, err := reg.ListNodes(context.Background(), record.RunID)
+	if err != nil {
+		t.Fatalf("ListNodes() error = %v", err)
+	}
+	for _, node := range runNodes {
+		if node.NodeID == "b" && node.TerminalFailureReason != "input_resolution_missing" {
+			t.Fatalf("node b failureReason = %q, want input_resolution_missing", node.TerminalFailureReason)
+		}
+	}
+}
+
+func TestDagEngineFailsNodeWhenProducerFailedBindingIsMissing(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{failOn: map[string]bool{}}
+	handoffClient := &fakeHandoffClient{
+		response: handoff.ResolveBindingResponse{ResolutionStatus: "MISSING", Decision: "producer_failed"},
+	}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run: spec.RunMetadata{RunID: "run-binding-producer-failed", SampleRunID: "sample-binding-producer-failed", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{
+			Nodes: []spec.Node{
+				{NodeID: "a", Image: "busybox:1.36", Outputs: []string{"output"}},
+				{NodeID: "b", Image: "busybox:1.36", ArtifactBindings: []spec.ArtifactBinding{{
+					BindingName:        "dataset",
+					ChildInputName:     "dataset",
+					ProducerNodeID:     "a",
+					ProducerOutputName: "output",
+					ConsumePolicy:      "RemoteOK",
+					Required:           true,
+				}}},
+			},
+			Edges: [][]string{{"a", "b"}},
+		},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "a", Status: spec.NodeStatusPending}, {RunID: record.RunID, NodeID: "b", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusFailed)
+
+	runNodes, err := reg.ListNodes(context.Background(), record.RunID)
+	if err != nil {
+		t.Fatalf("ListNodes() error = %v", err)
+	}
+	for _, node := range runNodes {
+		if node.NodeID == "b" && node.TerminalFailureReason != "input_resolution_producer_failed" {
+			t.Fatalf("node b failureReason = %q, want input_resolution_producer_failed", node.TerminalFailureReason)
+		}
+	}
+}
+
+func TestDagEngineFailsSuccessfulNodeWhenNotifyNodeTerminalFails(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{failOn: map[string]bool{}}
+	handoffClient := &fakeHandoffClient{notifyErr: fmt.Errorf("notify down")}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run:   spec.RunMetadata{RunID: "run-notify-success-fail", SampleRunID: "sample-notify-success-fail", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{Nodes: []spec.Node{{NodeID: "a", Image: "busybox:1.36"}}},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "a", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusFailed)
+
+	run, err := reg.GetRun(context.Background(), record.RunID)
+	if err != nil {
+		t.Fatalf("GetRun() error = %v", err)
+	}
+	if run.TerminalFailureReason != "notify_node_terminal_error" {
+		t.Fatalf("run failureReason = %q, want notify_node_terminal_error", run.TerminalFailureReason)
+	}
+	runNodes, err := reg.ListNodes(context.Background(), record.RunID)
+	if err != nil {
+		t.Fatalf("ListNodes() error = %v", err)
+	}
+	for _, node := range runNodes {
+		if node.NodeID == "a" && node.TerminalFailureReason != "notify_node_terminal_error" {
+			t.Fatalf("node a failureReason = %q, want notify_node_terminal_error", node.TerminalFailureReason)
+		}
+	}
+}
+
+func TestDagEngineRetriesResolveBindingBeforeSuccess(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{failOn: map[string]bool{}}
+	handoffClient := &fakeHandoffClient{
+		resolveErrs: []error{status.Error(codes.Unavailable, "temporary handoff error"), nil},
+		response:    handoff.ResolveBindingResponse{ResolutionStatus: "RESOLVED", Decision: "remote_fetch", RequiresMaterialization: true},
+	}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run: spec.RunMetadata{RunID: "run-resolve-retry-success", SampleRunID: "sample-resolve-retry-success", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{
+			Nodes: []spec.Node{
+				{NodeID: "a", Image: "busybox:1.36", Outputs: []string{"output"}},
+				{NodeID: "b", Image: "busybox:1.36", ArtifactBindings: []spec.ArtifactBinding{{
+					BindingName:        "dataset",
+					ChildInputName:     "dataset",
+					ProducerNodeID:     "a",
+					ProducerOutputName: "output",
+					ConsumePolicy:      "RemoteOK",
+					Required:           true,
+				}}},
+			},
+			Edges: [][]string{{"a", "b"}},
+		},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "a", Status: spec.NodeStatusPending}, {RunID: record.RunID, NodeID: "b", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusSucceeded)
+	handoffClient.mu.Lock()
+	defer handoffClient.mu.Unlock()
+	if len(handoffClient.requests) != 2 {
+		t.Fatalf("resolve binding calls = %d, want 2", len(handoffClient.requests))
+	}
+}
+
+func TestDagEngineFailsAfterResolveBindingRetryBudgetExhausted(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{failOn: map[string]bool{}}
+	handoffClient := &fakeHandoffClient{
+		resolveErrs: []error{
+			status.Error(codes.Unavailable, "temporary handoff error"),
+			status.Error(codes.Unavailable, "temporary handoff error"),
+			status.Error(codes.Unavailable, "temporary handoff error"),
+		},
+	}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run: spec.RunMetadata{RunID: "run-resolve-retry-fail", SampleRunID: "sample-resolve-retry-fail", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{
+			Nodes: []spec.Node{
+				{NodeID: "a", Image: "busybox:1.36", Outputs: []string{"output"}},
+				{NodeID: "b", Image: "busybox:1.36", ArtifactBindings: []spec.ArtifactBinding{{
+					BindingName:        "dataset",
+					ChildInputName:     "dataset",
+					ProducerNodeID:     "a",
+					ProducerOutputName: "output",
+					ConsumePolicy:      "RemoteOK",
+					Required:           true,
+				}}},
+			},
+			Edges: [][]string{{"a", "b"}},
+		},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "a", Status: spec.NodeStatusPending}, {RunID: record.RunID, NodeID: "b", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusFailed)
+	handoffClient.mu.Lock()
+	defer handoffClient.mu.Unlock()
+	if len(handoffClient.requests) != resolveBindingMaxAttempts {
+		t.Fatalf("resolve binding calls = %d, want %d", len(handoffClient.requests), resolveBindingMaxAttempts)
+	}
+}
+
+func TestDagEngineDoesNotRetryResolveBindingForNonTransientError(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{failOn: map[string]bool{}}
+	handoffClient := &fakeHandoffClient{
+		resolveErr: status.Error(codes.NotFound, "sample run lifecycle not found"),
+	}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run: spec.RunMetadata{RunID: "run-resolve-no-retry", SampleRunID: "sample-resolve-no-retry", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{
+			Nodes: []spec.Node{
+				{NodeID: "a", Image: "busybox:1.36", Outputs: []string{"output"}},
+				{NodeID: "b", Image: "busybox:1.36", ArtifactBindings: []spec.ArtifactBinding{{
+					BindingName:        "dataset",
+					ChildInputName:     "dataset",
+					ProducerNodeID:     "a",
+					ProducerOutputName: "output",
+					ConsumePolicy:      "RemoteOK",
+					Required:           true,
+				}}},
+			},
+			Edges: [][]string{{"a", "b"}},
+		},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "a", Status: spec.NodeStatusPending}, {RunID: record.RunID, NodeID: "b", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusFailed)
+	handoffClient.mu.Lock()
+	defer handoffClient.mu.Unlock()
+	if len(handoffClient.requests) != 1 {
+		t.Fatalf("resolve binding calls = %d, want 1", len(handoffClient.requests))
+	}
+	assertEventAbsent(t, reg, record.RunID, "node.input_resolve_retry")
+}
+
+func TestDagEngineRetriesResolveBindingForHTTP503(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{failOn: map[string]bool{}}
+	handoffClient := &fakeHandoffClient{
+		resolveErrs: []error{fmt.Errorf("handoff resolve failed with status 503"), nil},
+		response:    handoff.ResolveBindingResponse{ResolutionStatus: "RESOLVED", Decision: "remote_fetch", RequiresMaterialization: true},
+	}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run: spec.RunMetadata{RunID: "run-resolve-http503-retry", SampleRunID: "sample-resolve-http503-retry", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{
+			Nodes: []spec.Node{
+				{NodeID: "a", Image: "busybox:1.36", Outputs: []string{"output"}},
+				{NodeID: "b", Image: "busybox:1.36", ArtifactBindings: []spec.ArtifactBinding{{
+					BindingName:        "dataset",
+					ChildInputName:     "dataset",
+					ProducerNodeID:     "a",
+					ProducerOutputName: "output",
+					ConsumePolicy:      "RemoteOK",
+					Required:           true,
+				}}},
+			},
+			Edges: [][]string{{"a", "b"}},
+		},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "a", Status: spec.NodeStatusPending}, {RunID: record.RunID, NodeID: "b", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusSucceeded)
+	handoffClient.mu.Lock()
+	defer handoffClient.mu.Unlock()
+	if len(handoffClient.requests) != 2 {
+		t.Fatalf("resolve binding calls = %d, want 2", len(handoffClient.requests))
+	}
+	assertEventPresent(t, reg, record.RunID, "node.input_resolve_retry", "resolve_handoff_error")
 }
 
 func (f *fakeAdapter) StartNode(ctx context.Context, prepared backend.PreparedNode) (backend.Handle, error) {
@@ -262,6 +777,24 @@ func (f *fakeAdapter) CancelNode(_ context.Context, handle backend.Handle) error
 		}
 	}
 	return nil
+}
+
+func (f *fakeAdapter) CollectOutputMetadata(_ context.Context, handle backend.Handle, _ spec.Node) (map[string]backend.OutputMetadata, error) {
+	h := handle.(fakeHandle)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.outputs == nil {
+		return nil, backend.ErrOutputMetadataUnavailable
+	}
+	metadata, ok := f.outputs[h.nodeID]
+	if !ok {
+		return nil, backend.ErrOutputMetadataUnavailable
+	}
+	out := make(map[string]backend.OutputMetadata, len(metadata))
+	for k, v := range metadata {
+		out[k] = v
+	}
+	return out, nil
 }
 
 func (f *fakeAdapter) channelFor(nodeID string) chan struct{} {
@@ -339,6 +872,44 @@ func TestDagEngineSkipsDownstreamOnFailure(t *testing.T) {
 	}
 }
 
+func TestDagEngineKeepsOriginalFailureReasonWhenNotifyNodeTerminalFailsOnFailedNode(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{failOn: map[string]bool{"a": true}}
+	handoffClient := &fakeHandoffClient{notifyErr: fmt.Errorf("notify down")}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run:   spec.RunMetadata{RunID: "run-notify-failed-node", SampleRunID: "sample-notify-failed-node", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{Nodes: []spec.Node{{NodeID: "a", Image: "busybox:1.36"}}},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "a", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusFailed)
+
+	run, err := reg.GetRun(context.Background(), record.RunID)
+	if err != nil {
+		t.Fatalf("GetRun() error = %v", err)
+	}
+	if run.TerminalFailureReason != "backend_wait_error" {
+		t.Fatalf("run failureReason = %q, want backend_wait_error", run.TerminalFailureReason)
+	}
+	runNodes, err := reg.ListNodes(context.Background(), record.RunID)
+	if err != nil {
+		t.Fatalf("ListNodes() error = %v", err)
+	}
+	for _, node := range runNodes {
+		if node.NodeID == "a" && node.TerminalFailureReason != "backend_wait_error" {
+			t.Fatalf("node a failureReason = %q, want backend_wait_error", node.TerminalFailureReason)
+		}
+	}
+	assertEventPresent(t, reg, record.RunID, "node.handoff.notify_failed", "notify_node_terminal_error")
+}
+
 func TestDagEngineCancelRunningNode(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
 	adapter := &fakeAdapter{
@@ -369,6 +940,52 @@ func TestDagEngineCancelRunningNode(t *testing.T) {
 	if !adapter.canceled["a"] {
 		t.Fatal("expected adapter cancel for node a")
 	}
+}
+
+func TestDagEngineKeepsCancellationReasonWhenNotifyNodeTerminalFailsOnCanceledNode(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{
+		failOn: map[string]bool{},
+		waitCh: map[string]chan struct{}{"a": make(chan struct{})},
+	}
+	handoffClient := &fakeHandoffClient{notifyErr: fmt.Errorf("notify down")}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run:   spec.RunMetadata{RunID: "run-notify-canceled-node", SampleRunID: "sample-notify-canceled-node", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{Nodes: []spec.Node{{NodeID: "a", Image: "busybox:1.36"}}},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "a", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForNodeStatus(t, reg, record.RunID, "a", spec.NodeStatusRunning)
+	if err := engine.Cancel(context.Background(), record.RunID, "user_request"); err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusCanceled)
+	waitForNodeStatus(t, reg, record.RunID, "a", spec.NodeStatusCanceled)
+
+	run, err := reg.GetRun(context.Background(), record.RunID)
+	if err != nil {
+		t.Fatalf("GetRun() error = %v", err)
+	}
+	if run.TerminalFailureReason != "user_request" {
+		t.Fatalf("run failureReason = %q, want user_request", run.TerminalFailureReason)
+	}
+	runNodes, err := reg.ListNodes(context.Background(), record.RunID)
+	if err != nil {
+		t.Fatalf("ListNodes() error = %v", err)
+	}
+	for _, node := range runNodes {
+		if node.NodeID == "a" && node.TerminalFailureReason != "user_request" {
+			t.Fatalf("node a failureReason = %q, want user_request", node.TerminalFailureReason)
+		}
+	}
+	assertEventPresent(t, reg, record.RunID, "node.handoff.notify_failed", "notify_node_terminal_error")
 }
 
 func waitForRunStatus(t *testing.T, reg registry.Registry, runID string, want spec.RunStatus) {
@@ -412,4 +1029,31 @@ func waitForNodeStatus(t *testing.T, reg registry.Registry, runID, nodeID string
 		}
 	}
 	t.Fatalf("node %s not found", nodeID)
+}
+
+func assertEventPresent(t *testing.T, reg registry.Registry, runID string, eventType string, failureReason string) {
+	t.Helper()
+	events, err := reg.ListEvents(context.Background(), runID, 0)
+	if err != nil {
+		t.Fatalf("ListEvents() error = %v", err)
+	}
+	for _, event := range events {
+		if event.Type == eventType && event.FailureReason == failureReason {
+			return
+		}
+	}
+	t.Fatalf("event type=%q failureReason=%q not found", eventType, failureReason)
+}
+
+func assertEventAbsent(t *testing.T, reg registry.Registry, runID string, eventType string) {
+	t.Helper()
+	events, err := reg.ListEvents(context.Background(), runID, 0)
+	if err != nil {
+		t.Fatalf("ListEvents() error = %v", err)
+	}
+	for _, event := range events {
+		if event.Type == eventType {
+			t.Fatalf("unexpected event type=%q found", eventType)
+		}
+	}
 }
