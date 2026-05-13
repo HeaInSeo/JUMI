@@ -1,0 +1,41 @@
+{
+  "runId": "vm-lab-jumi-ah-smoke-20260422",
+  "startedAt": "2026-04-22T10:11:40Z",
+  "finishedAt": "2026-04-22T10:12:00Z",
+  "method": "OutsideSnapshot",
+  "tags": {
+    "env": "vm-lab",
+    "profile": "jumi-ah-smoke",
+    "source": "JUMI"
+  },
+  "evidencePaths": {
+    "smoke_result_doc": "docs/status/VM_LAB_JUMI_AH_SMOKE_RESULT_2026-04-22.md",
+    "smoke_fixture": "JUMI/deploy/devspace/fixtures/jumi-handoff-smoke.json"
+  },
+  "startMetrics": {
+    "jumi_jobs_created_total": 0,
+    "jumi_artifacts_registered_total": 0,
+    "jumi_input_resolve_requests_total": 0,
+    "jumi_input_remote_fetch_total": 0,
+    "jumi_input_materializations_total": 0,
+    "jumi_sample_runs_finalized_total": 0,
+    "jumi_gc_evaluate_requests_total": 0,
+    "ah_artifacts_registered_total": 0,
+    "ah_resolve_requests_total": 0,
+    "ah_fallback_total": 0,
+    "ah_gc_backlog_bytes": 0
+  },
+  "endMetrics": {
+    "jumi_jobs_created_total": 2,
+    "jumi_artifacts_registered_total": 1,
+    "jumi_input_resolve_requests_total": 1,
+    "jumi_input_remote_fetch_total": 1,
+    "jumi_input_materializations_total": 1,
+    "jumi_sample_runs_finalized_total": 1,
+    "jumi_gc_evaluate_requests_total": 1,
+    "ah_artifacts_registered_total": 1,
+    "ah_resolve_requests_total": 1,
+    "ah_fallback_total": 1,
+    "ah_gc_backlog_bytes": 0
+  }
+}

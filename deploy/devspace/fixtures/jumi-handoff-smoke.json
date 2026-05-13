@@ -1,0 +1,57 @@
+{
+  "run": {
+    "runId": "vm-lab-smoke-20260422",
+    "sampleRunId": "vm-lab-smoke-sample-20260422",
+    "submittedAt": "2026-04-22T10:05:00Z",
+    "failurePolicy": {
+      "mode": "fail-fast"
+    },
+    "requesterId": "batch-integration",
+    "sourceSystem": "vm-lab-smoke"
+  },
+  "graph": {
+    "nodes": [
+      {
+        "nodeId": "produce",
+        "image": "harbor.10.113.24.96.nip.io/batch-int/jumi:serviceaccountfix-20260512-124505",
+        "command": [
+          "sh",
+          "-c",
+          "mkdir -p /out && echo produce-ok > /out/report && cat /out/report"
+        ],
+        "serviceAccountName": "jumi",
+        "outputs": [
+          "report"
+        ],
+        "metadata": {
+          "jumi.outputManifestMode": "runtime-helper"
+        }
+      },
+      {
+        "nodeId": "consume",
+        "image": "busybox:1.36",
+        "command": [
+          "sh",
+          "-c",
+          "echo status=$JUMI_INPUT_DATASET_STATUS decision=$JUMI_INPUT_DATASET_DECISION uri=$JUMI_INPUT_DATASET_URI source=$JUMI_INPUT_DATASET_SOURCE_NODE materialize=$JUMI_INPUT_DATASET_REQUIRES_MATERIALIZATION"
+        ],
+        "artifactBindings": [
+          {
+            "bindingName": "dataset",
+            "childInputName": "dataset",
+            "producerNodeId": "produce",
+            "producerOutputName": "report",
+            "consumePolicy": "RemoteOK",
+            "required": true
+          }
+        ]
+      }
+    ],
+    "edges": [
+      [
+        "produce",
+        "consume"
+      ]
+    ]
+  }
+}

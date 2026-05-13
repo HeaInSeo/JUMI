@@ -1,0 +1,83 @@
+schema_version: "slint.policy.v1"
+metadata:
+  name: "jumi-ah-smoke-thresholds"
+  owner: "JUMI"
+
+thresholds:
+  - name: "jumi_jobs_created_smoke"
+    metric: "jumi_jobs_created_smoke"
+    operator: ">="
+    value: 2
+    severity: "fail"
+  - name: "jumi_artifacts_registered_smoke"
+    metric: "jumi_artifacts_registered_smoke"
+    operator: ">="
+    value: 1
+    severity: "fail"
+  - name: "jumi_input_resolve_requests_smoke"
+    metric: "jumi_input_resolve_requests_smoke"
+    operator: ">="
+    value: 1
+    severity: "fail"
+  - name: "jumi_input_remote_fetch_smoke"
+    metric: "jumi_input_remote_fetch_smoke"
+    operator: ">="
+    value: 1
+    severity: "fail"
+  - name: "jumi_input_materializations_smoke"
+    metric: "jumi_input_materializations_smoke"
+    operator: ">="
+    value: 1
+    severity: "fail"
+  - name: "jumi_sample_runs_finalized_smoke"
+    metric: "jumi_sample_runs_finalized_smoke"
+    operator: ">="
+    value: 1
+    severity: "fail"
+  - name: "jumi_gc_evaluate_requests_smoke"
+    metric: "jumi_gc_evaluate_requests_smoke"
+    operator: ">="
+    value: 1
+    severity: "fail"
+  - name: "ah_artifacts_registered_smoke"
+    metric: "ah_artifacts_registered_smoke"
+    operator: ">="
+    value: 1
+    severity: "fail"
+  - name: "ah_resolve_requests_smoke"
+    metric: "ah_resolve_requests_smoke"
+    operator: ">="
+    value: 1
+    severity: "fail"
+  - name: "ah_fallback_smoke"
+    metric: "ah_fallback_smoke"
+    operator: ">="
+    value: 1
+    severity: "fail"
+  - name: "ah_gc_backlog_bytes_smoke"
+    metric: "ah_gc_backlog_bytes_smoke"
+    operator: "<="
+    value: 0
+    severity: "fail"
+
+regression:
+  enabled: false
+  mode: "percent_delta"
+  tolerance_percent: 5
+
+reliability:
+  required: true
+  min_level: "complete"
+
+first_run:
+  default_result: "pass"
+  evaluate_thresholds: true
+  evaluate_regression: false
+
+baseline:
+  required: false
+  on_unavailable: "pass"
+  on_corrupt: "no_grade"
+
+fail_on:
+  - "threshold_miss"

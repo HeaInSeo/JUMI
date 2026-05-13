@@ -1,0 +1,12 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jumi
+spec:
+  template:
+    spec:
+      containers:
+        - name: jumi
+          env:
+            - name: JUMI_AH_GRPC_TARGET
+              value: "artifact-handoff.jumi-ah-dev.svc.cluster.local:9090"
