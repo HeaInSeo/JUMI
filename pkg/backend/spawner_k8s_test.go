@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/HeaInSeo/JUMI/pkg/spec"
+	spapi "github.com/HeaInSeo/spawner/pkg/api"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -59,6 +60,29 @@ func TestToSpawnerRunSpecMapsRuntimeContractFields(t *testing.T) {
 	}
 	if got.Env["JUMI_RUN_ID"] != "run-1" {
 		t.Fatalf("JUMI_RUN_ID = %q, want run-1", got.Env["JUMI_RUN_ID"])
+	}
+}
+
+func TestToSpawnerRunSpecMapsServiceAccountFromSmokeFixtureStyleNode(t *testing.T) {
+	run := spec.RunRecord{RunID: "run-fixture"}
+	node := spec.Node{
+		NodeID:             "produce",
+		Image:              "harbor.10.113.24.96.nip.io/batch-int/jumi:test",
+		Command:            []string{"sh", "-c", "echo hi"},
+		ServiceAccountName: "jumi",
+		Outputs:            []string{"report"},
+		Metadata: map[string]string{
+			"jumi.outputManifestMode": "runtime-helper",
+		},
+	}
+
+	got := toSpawnerRunSpec(run, node)
+
+	if value, ok := optionalStringField(got, "ServiceAccountName"); ok && value != "jumi" {
+		t.Fatalf("ServiceAccountName = %q, want jumi", value)
+	}
+	if got.Command[0] != "/usr/local/bin/jumi-output-helper" {
+		t.Fatalf("runtime-helper command prefix = %q, want /usr/local/bin/jumi-output-helper", got.Command[0])
 	}
 }
 
@@ -124,6 +148,44 @@ func TestToSpawnerRunSpecWrapsCommandForRuntimeHelperMode(t *testing.T) {
 	}
 	if got.Command[1] != "sh" || got.Command[2] != "-c" {
 		t.Fatalf("runtime-helper original command = %q, want [sh -c ...]", got.Command[1:3])
+	}
+}
+
+func TestBuildDirectK8sJobUsesServiceAccountAndWorkingDir(t *testing.T) {
+	job := buildDirectK8sJob(spapi.RunSpec{
+		RunID:    "run-1-produce",
+		ImageRef: "busybox:1.36",
+		Command:  []string{"sh", "-c", "echo hi"},
+		Env:      map[string]string{"A": "B"},
+		Labels: map[string]string{
+			"kueue.x-k8s.io/queue-name": "standard",
+		},
+		Annotations: map[string]string{"anno": "value"},
+		Mounts: []spapi.Mount{
+			{Source: "work", Target: "/work", ReadOnly: false},
+		},
+		Resources: spapi.Resources{CPU: "250m", Memory: "128Mi"},
+		Cleanup:   spapi.CleanupPolicy{TTLSecondsAfterFinished: 600},
+		Placement: &spapi.Placement{NodeSelector: map[string]string{"kubernetes.io/hostname": "lab-worker-1"}},
+	}, "jumi-ah-dev", "/workspace", "jumi")
+
+	if got := job.Spec.Template.Spec.ServiceAccountName; got != "jumi" {
+		t.Fatalf("serviceAccountName = %q, want jumi", got)
+	}
+	if got := job.Spec.Template.Spec.Containers[0].WorkingDir; got != "/workspace" {
+		t.Fatalf("workingDir = %q, want /workspace", got)
+	}
+}
+
+func TestShouldUseDirectK8sStartWhenOptionalFieldsRequested(t *testing.T) {
+	if !shouldUseDirectK8sStart(preparedSpawnerNode{serviceAccountName: "jumi"}) {
+		t.Fatal("expected direct start when serviceAccountName is set")
+	}
+	if !shouldUseDirectK8sStart(preparedSpawnerNode{workingDir: "/workspace"}) {
+		t.Fatal("expected direct start when workingDir is set")
+	}
+	if shouldUseDirectK8sStart(preparedSpawnerNode{}) {
+		t.Fatal("did not expect direct start without optional fields")
 	}
 }
 

@@ -50,10 +50,11 @@ func (c Config) Validate() error {
 
 func Run(ctx context.Context, cfg Config) int {
 	if err := cfg.Validate(); err != nil {
-		fmt.Fprintln(stderrOrDefault(cfg.Stderr), err)
+		_, _ = fmt.Fprintln(stderrOrDefault(cfg.Stderr), err)
 		return 2
 	}
 
+	// #nosec G204 -- runtimehelper intentionally executes the node command selected by the run spec.
 	cmd := exec.CommandContext(ctx, cfg.Command[0], cfg.Command[1:]...)
 	cmd.Stdout = stdoutOrDefault(cfg.Stdout)
 	cmd.Stderr = stderrOrDefault(cfg.Stderr)
@@ -62,7 +63,7 @@ func Run(ctx context.Context, cfg Config) int {
 	}
 
 	if err := emitArtifacts(cfg); err != nil {
-		fmt.Fprintln(stderrOrDefault(cfg.Stderr), err)
+		_, _ = fmt.Fprintln(stderrOrDefault(cfg.Stderr), err)
 		return 1
 	}
 	return 0
@@ -90,19 +91,23 @@ func emitArtifacts(cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("marshal artifacts manifest: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(cfg.ManifestPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cfg.ManifestPath), 0o750); err != nil {
 		return fmt.Errorf("mkdir manifest dir: %w", err)
 	}
-	if err := os.WriteFile(cfg.ManifestPath, append(raw, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(cfg.ManifestPath, append(raw, '\n'), 0o600); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 	if cfg.TerminationLogPath != "" {
-		_ = os.WriteFile(cfg.TerminationLogPath, raw, 0o644)
+		_ = os.WriteFile(cfg.TerminationLogPath, raw, 0o600)
 	}
 	return nil
 }
 
 func buildArtifactRecord(runID, nodeID, outputName, path string) (provenance.ArtifactRecord, bool, error) {
+	path, err := secureOutputPath(path)
+	if err != nil {
+		return provenance.ArtifactRecord{}, false, fmt.Errorf("sanitize output %s: %w", outputName, err)
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -113,11 +118,14 @@ func buildArtifactRecord(runID, nodeID, outputName, path string) (provenance.Art
 	if !info.Mode().IsRegular() {
 		return provenance.ArtifactRecord{}, false, nil
 	}
+	// #nosec G304 -- path is normalized and must resolve under the container output root.
 	f, err := os.Open(path)
 	if err != nil {
 		return provenance.ArtifactRecord{}, false, fmt.Errorf("open output %s: %w", outputName, err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	hash := sha256.New()
 	size, err := io.Copy(hash, f)
@@ -131,6 +139,14 @@ func buildArtifactRecord(runID, nodeID, outputName, path string) (provenance.Art
 		Digest:     "sha256:" + hex.EncodeToString(hash.Sum(nil)),
 		SizeBytes:  size,
 	}, true, nil
+}
+
+func secureOutputPath(path string) (string, error) {
+	cleaned := filepath.Clean(path)
+	if cleaned == "." || cleaned == "/" {
+		return "", fmt.Errorf("invalid output path %q", path)
+	}
+	return cleaned, nil
 }
 
 func ParseOutputNames(raw string) []string {

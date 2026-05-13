@@ -13,11 +13,11 @@ import (
 type GRPCClient struct {
 	conn    *grpc.ClientConn
 	client  ahv1.ArtifactHandoffResolverClient
-	metrics *metrics.Registry
+	metrics *metrics.Metrics
 }
 
-func (c *GRPCClient) SetMetrics(reg *metrics.Registry) {
-	c.metrics = reg
+func (c *GRPCClient) SetMetrics(m *metrics.Metrics) {
+	c.metrics = m
 }
 
 func NewGRPCClient(target string) (*GRPCClient, error) {
@@ -42,7 +42,7 @@ func (c *GRPCClient) Close() error {
 
 func (c *GRPCClient) ResolveBinding(ctx context.Context, req ResolveBindingRequest) (ResolveBindingResponse, error) {
 	if c.metrics != nil {
-		c.metrics.IncCounter("jumi_handoff_resolve_total")
+		c.metrics.IncHandoffResolve()
 	}
 	resp, err := c.client.ResolveHandoff(ctx, &ahv1.ResolveHandoffRequest{
 		Binding: &ahv1.ArtifactBinding{
@@ -61,7 +61,7 @@ func (c *GRPCClient) ResolveBinding(ctx context.Context, req ResolveBindingReque
 	})
 	if err != nil {
 		if c.metrics != nil {
-			c.metrics.IncCounter("jumi_handoff_resolve_errors_total")
+			c.metrics.IncHandoffResolveErrors()
 		}
 		return ResolveBindingResponse{}, err
 	}
@@ -76,7 +76,7 @@ func (c *GRPCClient) ResolveBinding(ctx context.Context, req ResolveBindingReque
 
 func (c *GRPCClient) RegisterArtifact(ctx context.Context, req RegisterArtifactRequest) error {
 	if c.metrics != nil {
-		c.metrics.IncCounter("jumi_handoff_register_artifact_total")
+		c.metrics.IncHandoffRegisterArtifact()
 	}
 	if _, err := c.client.RegisterArtifact(ctx, &ahv1.RegisterArtifactRequest{
 		Artifact: &ahv1.ArtifactRef{
@@ -91,7 +91,7 @@ func (c *GRPCClient) RegisterArtifact(ctx context.Context, req RegisterArtifactR
 		},
 	}); err != nil {
 		if c.metrics != nil {
-			c.metrics.IncCounter("jumi_handoff_register_artifact_errors_total")
+			c.metrics.IncHandoffRegisterArtifactErrors()
 		}
 		return fmt.Errorf("handoff register artifact failed: %w", err)
 	}
@@ -100,7 +100,7 @@ func (c *GRPCClient) RegisterArtifact(ctx context.Context, req RegisterArtifactR
 
 func (c *GRPCClient) NotifyNodeTerminal(ctx context.Context, req NotifyNodeTerminalRequest) error {
 	if c.metrics != nil {
-		c.metrics.IncCounter("jumi_handoff_notify_terminal_total")
+		c.metrics.IncHandoffNotifyTerminal()
 	}
 	if _, err := c.client.NotifyNodeTerminal(ctx, &ahv1.NotifyNodeTerminalRequest{
 		SampleRunId:   req.SampleRunID,
@@ -114,7 +114,7 @@ func (c *GRPCClient) NotifyNodeTerminal(ctx context.Context, req NotifyNodeTermi
 
 func (c *GRPCClient) FinalizeSampleRun(ctx context.Context, req FinalizeSampleRunRequest) error {
 	if c.metrics != nil {
-		c.metrics.IncCounter("jumi_handoff_finalize_total")
+		c.metrics.IncHandoffFinalize()
 	}
 	if _, err := c.client.FinalizeSampleRun(ctx, &ahv1.FinalizeSampleRunRequest{
 		SampleRunId: req.SampleRunID,
@@ -126,7 +126,7 @@ func (c *GRPCClient) FinalizeSampleRun(ctx context.Context, req FinalizeSampleRu
 
 func (c *GRPCClient) EvaluateGC(ctx context.Context, req EvaluateGCRequest) error {
 	if c.metrics != nil {
-		c.metrics.IncCounter("jumi_handoff_gc_evaluate_total")
+		c.metrics.IncHandoffGCEvaluate()
 	}
 	if _, err := c.client.EvaluateGC(ctx, &ahv1.EvaluateGCRequest{
 		SampleRunId: req.SampleRunID,

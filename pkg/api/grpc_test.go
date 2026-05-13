@@ -38,7 +38,9 @@ func TestRunServiceGRPCSubmitAndReadbacks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("grpc.NewClient() error = %v", err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	client := NewRunServiceClient(conn)
 	resp, err := client.SubmitRun(ctx, &SubmitRunRequest{Spec: spec.ExecutableRunSpec{

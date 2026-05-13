@@ -12,10 +12,12 @@ import (
 	"github.com/HeaInSeo/JUMI/pkg/metrics"
 	"github.com/HeaInSeo/JUMI/pkg/provenance"
 	"github.com/HeaInSeo/JUMI/pkg/spec"
-	spimp "github.com/seoyhaein/spawner/cmd/imp"
-	spapi "github.com/seoyhaein/spawner/pkg/api"
-	spdriver "github.com/seoyhaein/spawner/pkg/driver"
+	spimp "github.com/HeaInSeo/spawner/cmd/imp"
+	spapi "github.com/HeaInSeo/spawner/pkg/api"
+	spdriver "github.com/HeaInSeo/spawner/pkg/driver"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -35,16 +37,29 @@ type SpawnerK8sAdapter struct {
 	ns         string
 	clientset  kubernetes.Interface
 	restConfig *rest.Config
-	metrics    *metrics.Registry
+	metrics    *metrics.Metrics
 }
 
-func (a *SpawnerK8sAdapter) SetMetrics(reg *metrics.Registry) {
-	a.metrics = reg
+func (a *SpawnerK8sAdapter) SetMetrics(m *metrics.Metrics) {
+	a.metrics = m
 }
 
 type spawnerHandle struct {
 	inner     spdriver.Handle
 	jobName   string
+	queueName string
+}
+
+type preparedSpawnerNode struct {
+	inner              spdriver.Prepared
+	runSpec            spapi.RunSpec
+	workingDir         string
+	serviceAccountName string
+}
+
+type directK8sHandle struct {
+	jobName   string
+	ns        string
 	queueName string
 }
 
@@ -95,33 +110,52 @@ func (a *SpawnerK8sAdapter) AdapterStatus() AdapterStatus {
 
 func (a *SpawnerK8sAdapter) PrepareNode(ctx context.Context, run spec.RunRecord, node spec.Node) (PreparedNode, error) {
 	if a.metrics != nil {
-		a.metrics.IncCounter("jumi_k8s_node_prepare_total")
+		a.metrics.IncK8sNodePrepare()
 	}
-	prepared, err := a.driver.Prepare(ctx, toSpawnerRunSpec(run, node))
+	runSpec := toSpawnerRunSpec(run, node)
+	prepared, err := a.driver.Prepare(ctx, runSpec)
 	if err != nil {
 		if a.metrics != nil {
-			a.metrics.IncCounter("jumi_k8s_node_prepare_errors_total")
+			a.metrics.IncK8sNodePrepareErrors()
 		}
 		return nil, err
 	}
-	return prepared, nil
+	return preparedSpawnerNode{
+		inner:              prepared,
+		runSpec:            runSpec,
+		workingDir:         node.WorkingDir,
+		serviceAccountName: node.ServiceAccountName,
+	}, nil
 }
 
 func (a *SpawnerK8sAdapter) StartNode(ctx context.Context, prepared PreparedNode) (Handle, error) {
 	if a.metrics != nil {
-		a.metrics.IncCounter("jumi_k8s_node_start_total")
+		a.metrics.IncK8sNodeStart()
+	}
+	if wrapped, ok := prepared.(preparedSpawnerNode); ok && shouldUseDirectK8sStart(wrapped) {
+		handle, err := a.startDirectK8sNode(ctx, wrapped)
+		if err != nil {
+			if a.metrics != nil {
+				a.metrics.IncK8sNodeStartErrors()
+			}
+			return nil, err
+		}
+		return handle, nil
+	}
+	if wrapped, ok := prepared.(preparedSpawnerNode); ok {
+		prepared = wrapped.inner
 	}
 	spPrepared, ok := prepared.(spdriver.Prepared)
 	if !ok {
 		if a.metrics != nil {
-			a.metrics.IncCounter("jumi_k8s_node_start_errors_total")
+			a.metrics.IncK8sNodeStartErrors()
 		}
 		return nil, fmt.Errorf("unexpected prepared type %T", prepared)
 	}
 	handle, err := a.driver.Start(ctx, spPrepared)
 	if err != nil {
 		if a.metrics != nil {
-			a.metrics.IncCounter("jumi_k8s_node_start_errors_total")
+			a.metrics.IncK8sNodeStartErrors()
 		}
 		return nil, err
 	}
@@ -131,7 +165,16 @@ func (a *SpawnerK8sAdapter) StartNode(ctx context.Context, prepared PreparedNode
 }
 
 func (a *SpawnerK8sAdapter) ObserveNode(ctx context.Context, handle Handle) (*OptionalKueueInfo, error) {
-	h, ok := handle.(spawnerHandle)
+	var h spawnerHandle
+	switch typed := handle.(type) {
+	case spawnerHandle:
+		h = typed
+	case directK8sHandle:
+		h = spawnerHandle{jobName: typed.jobName, queueName: typed.queueName}
+	default:
+		return nil, nil
+	}
+	ok := true
 	if !ok {
 		return nil, nil
 	}
@@ -166,6 +209,9 @@ func (a *SpawnerK8sAdapter) ObserveNode(ctx context.Context, handle Handle) (*Op
 }
 
 func (a *SpawnerK8sAdapter) WaitNode(ctx context.Context, handle Handle) (ExecutionResult, error) {
+	if h, ok := handle.(directK8sHandle); ok {
+		return a.waitDirectK8sNode(ctx, h)
+	}
 	h, ok := handle.(spawnerHandle)
 	if !ok {
 		return ExecutionResult{TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"}, fmt.Errorf("unexpected handle type %T", handle)
@@ -184,20 +230,20 @@ func (a *SpawnerK8sAdapter) WaitNode(ctx context.Context, handle Handle) (Execut
 		result.Succeeded = true
 		result.TerminalStopCause = "finished"
 		if a.metrics != nil {
-			a.metrics.IncCounter("jumi_k8s_node_succeeded_total")
+			a.metrics.IncK8sNodeSucceeded()
 		}
 	case spapi.StateCancelled:
 		result.TerminalStopCause = "canceled"
 		result.TerminalFailureReason = "cancellation_propagated"
 		if a.metrics != nil {
-			a.metrics.IncCounter("jumi_k8s_node_canceled_total")
+			a.metrics.IncK8sNodeCanceled()
 		}
 		return result, fmt.Errorf("node canceled")
 	case spapi.StateFailed:
 		result.TerminalStopCause = "failed"
 		result.TerminalFailureReason = "backend_wait_error"
 		if a.metrics != nil {
-			a.metrics.IncCounter("jumi_k8s_node_failed_total")
+			a.metrics.IncK8sNodeFailed()
 		}
 		if strings.TrimSpace(event.Message) != "" {
 			return result, fmt.Errorf("node failed: %s", event.Message)
@@ -213,7 +259,13 @@ func (a *SpawnerK8sAdapter) WaitNode(ctx context.Context, handle Handle) (Execut
 
 func (a *SpawnerK8sAdapter) CancelNode(ctx context.Context, handle Handle) error {
 	if a.metrics != nil {
-		a.metrics.IncCounter("jumi_k8s_node_cancel_total")
+		a.metrics.IncK8sNodeCancel()
+	}
+	if h, ok := handle.(directK8sHandle); ok {
+		propagation := metav1.DeletePropagationBackground
+		return a.clientset.BatchV1().Jobs(h.ns).Delete(ctx, h.jobName, metav1.DeleteOptions{
+			PropagationPolicy: &propagation,
+		})
 	}
 	h, ok := handle.(spawnerHandle)
 	if !ok {
@@ -538,6 +590,245 @@ func setOptionalStringField(target *spapi.RunSpec, fieldName string, value strin
 		return
 	}
 	field.SetString(value)
+}
+
+func shouldUseDirectK8sStart(prepared preparedSpawnerNode) bool {
+	return prepared.serviceAccountName != "" || prepared.workingDir != ""
+}
+
+func (a *SpawnerK8sAdapter) startDirectK8sNode(ctx context.Context, prepared preparedSpawnerNode) (Handle, error) {
+	if a.clientset == nil {
+		return nil, fmt.Errorf("direct k8s start requires clientset")
+	}
+	job := buildDirectK8sJob(prepared.runSpec, a.ns, prepared.workingDir, prepared.serviceAccountName)
+	created, err := a.clientset.BatchV1().Jobs(a.ns).Create(ctx, job, metav1.CreateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("create direct job %s: %w", job.Name, err)
+	}
+	return directK8sHandle{
+		jobName:   created.Name,
+		ns:        created.Namespace,
+		queueName: extractQueueName(created.Labels),
+	}, nil
+}
+
+func buildDirectK8sJob(runSpec spapi.RunSpec, ns, workingDir, serviceAccountName string) *batchv1.Job {
+	container := corev1.Container{
+		Name:            "main",
+		Image:           runSpec.ImageRef,
+		Command:         runSpec.Command,
+		WorkingDir:      workingDir,
+		Env:             buildDirectEnvVars(runSpec.Env, runSpec.EnvFieldRefs),
+		Resources:       buildDirectResources(runSpec.Resources),
+		ImagePullPolicy: corev1.PullIfNotPresent,
+	}
+
+	volumes, volumeMounts := buildDirectVolumes(runSpec.Mounts)
+	container.VolumeMounts = volumeMounts
+
+	labels := make(map[string]string, len(runSpec.Labels)+1)
+	labels["pipeline-lite/run-id"] = runSpec.RunID
+	for k, v := range runSpec.Labels {
+		labels[k] = v
+	}
+
+	annotations := make(map[string]string, len(runSpec.Annotations)+1)
+	for k, v := range runSpec.Annotations {
+		annotations[k] = v
+	}
+	if runSpec.CorrelationID != "" {
+		annotations["spawner.correlation-id"] = runSpec.CorrelationID
+	}
+
+	_, useKueue := labels["kueue.x-k8s.io/queue-name"]
+	suspend := useKueue
+	backoffLimit := int32(0)
+	var ttlSecondsAfterFinished *int32
+	if runSpec.Cleanup.TTLSecondsAfterFinished > 0 {
+		ttl := runSpec.Cleanup.TTLSecondsAfterFinished
+		ttlSecondsAfterFinished = &ttl
+	}
+
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        directSanitizeName(runSpec.RunID),
+			Namespace:   ns,
+			Labels:      labels,
+			Annotations: annotations,
+		},
+		Spec: batchv1.JobSpec{
+			Suspend:                 &suspend,
+			BackoffLimit:            &backoffLimit,
+			TTLSecondsAfterFinished: ttlSecondsAfterFinished,
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      labels,
+					Annotations: annotations,
+				},
+				Spec: corev1.PodSpec{
+					ServiceAccountName: serviceAccountName,
+					RestartPolicy:      corev1.RestartPolicyNever,
+					Containers:         []corev1.Container{container},
+					Volumes:            volumes,
+					NodeSelector:       buildDirectNodeSelector(runSpec.Placement),
+				},
+			},
+		},
+	}
+}
+
+func buildDirectEnvVars(env map[string]string, fieldRefs map[string]string) []corev1.EnvVar {
+	vars := make([]corev1.EnvVar, 0, len(env)+len(fieldRefs))
+	for k, v := range env {
+		vars = append(vars, corev1.EnvVar{Name: k, Value: v})
+	}
+	for k, path := range fieldRefs {
+		vars = append(vars, corev1.EnvVar{
+			Name: k,
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: path},
+			},
+		})
+	}
+	return vars
+}
+
+func buildDirectResources(r spapi.Resources) corev1.ResourceRequirements {
+	req := corev1.ResourceList{}
+	lim := corev1.ResourceList{}
+	if r.CPU != "" {
+		q := resource.MustParse(r.CPU)
+		req[corev1.ResourceCPU] = q
+		lim[corev1.ResourceCPU] = q
+	}
+	if r.Memory != "" {
+		q := resource.MustParse(r.Memory)
+		req[corev1.ResourceMemory] = q
+		lim[corev1.ResourceMemory] = q
+	}
+	return corev1.ResourceRequirements{Requests: req, Limits: lim}
+}
+
+func buildDirectVolumes(mounts []spapi.Mount) ([]corev1.Volume, []corev1.VolumeMount) {
+	volumes := make([]corev1.Volume, 0, len(mounts))
+	volumeMounts := make([]corev1.VolumeMount, 0, len(mounts))
+	for i, m := range mounts {
+		volName := fmt.Sprintf("vol-%d", i)
+		volumes = append(volumes, corev1.Volume{
+			Name: volName,
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: m.Source,
+					ReadOnly:  m.ReadOnly,
+				},
+			},
+		})
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      volName,
+			MountPath: m.Target,
+			ReadOnly:  m.ReadOnly,
+		})
+	}
+	return volumes, volumeMounts
+}
+
+func buildDirectNodeSelector(p *spapi.Placement) map[string]string {
+	if p == nil || len(p.NodeSelector) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(p.NodeSelector))
+	for k, v := range p.NodeSelector {
+		out[k] = v
+	}
+	return out
+}
+
+func directSanitizeName(id string) string {
+	s := strings.ToLower(id)
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	name := strings.Trim(b.String(), "-")
+	if len(name) > 63 {
+		name = name[:63]
+	}
+	return name
+}
+
+func extractQueueName(labels map[string]string) string {
+	if labels == nil {
+		return ""
+	}
+	return labels["kueue.x-k8s.io/queue-name"]
+}
+
+func (a *SpawnerK8sAdapter) waitDirectK8sNode(ctx context.Context, h directK8sHandle) (ExecutionResult, error) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ExecutionResult{TerminalStopCause: "canceled", TerminalFailureReason: "cancellation_requested"}, ctx.Err()
+		case <-ticker.C:
+			job, err := a.clientset.BatchV1().Jobs(h.ns).Get(ctx, h.jobName, metav1.GetOptions{})
+			if err != nil {
+				return ExecutionResult{TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"}, fmt.Errorf("get direct job %s: %w", h.jobName, err)
+			}
+			if directJobSucceeded(job) {
+				if a.metrics != nil {
+					a.metrics.IncK8sNodeSucceeded()
+				}
+				return ExecutionResult{Succeeded: true, TerminalStopCause: "finished"}, nil
+			}
+			if directJobFailed(job) {
+				if a.metrics != nil {
+					a.metrics.IncK8sNodeFailed()
+				}
+				msg := directJobFailureMessage(job)
+				result := ExecutionResult{TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"}
+				if strings.TrimSpace(msg) != "" {
+					return result, fmt.Errorf("node failed: %s", msg)
+				}
+				return result, fmt.Errorf("node failed")
+			}
+		}
+	}
+}
+
+func directJobSucceeded(job *batchv1.Job) bool {
+	for _, c := range job.Status.Conditions {
+		if c.Type == batchv1.JobComplete && c.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+func directJobFailed(job *batchv1.Job) bool {
+	for _, c := range job.Status.Conditions {
+		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+func directJobFailureMessage(job *batchv1.Job) string {
+	for _, c := range job.Status.Conditions {
+		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
+			if strings.TrimSpace(c.Message) != "" {
+				return c.Message
+			}
+			return c.Reason
+		}
+	}
+	return ""
 }
 
 func extractHandleJobName(handle spdriver.Handle) (string, bool) {

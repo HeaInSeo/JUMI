@@ -29,7 +29,9 @@ func TestGRPCClientRoundTrip(t *testing.T) {
 		t.Fatalf("grpc.NewClient() error = %v", err)
 	}
 	client := &GRPCClient{conn: conn, client: ahv1.NewArtifactHandoffResolverClient(conn)}
-	defer client.Close()
+	defer func() {
+		_ = client.Close()
+	}()
 
 	resolved, err := client.ResolveBinding(context.Background(), ResolveBindingRequest{
 		SampleRunID:        "sample-1",

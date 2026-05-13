@@ -6,13 +6,16 @@ import (
 )
 
 func TestRegistryRender(t *testing.T) {
-	reg := NewRegistry()
-	reg.IncCounter("jumi_jobs_created_total")
-	reg.IncCounter("jumi_artifacts_registered_total")
-	reg.IncCounter("jumi_input_resolve_requests_total")
-	reg.IncCounter("jumi_sample_runs_finalized_total")
-	reg.IncCounter("jumi_gc_evaluate_requests_total")
-	reg.SetGauge("jumi_cleanup_backlog_objects", 2)
+	reg, err := New()
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	reg.IncJobsCreated()
+	reg.IncArtifactsRegistered()
+	reg.IncInputResolveRequests()
+	reg.IncSampleRunsFinalized()
+	reg.IncGCEvaluateRequests()
+	reg.SetCleanupBacklogObjects(2)
 
 	rendered := reg.Render()
 	if !strings.Contains(rendered, "jumi_jobs_created_total 1") {
@@ -35,16 +38,17 @@ func TestRegistryRender(t *testing.T) {
 	}
 }
 
-func TestRegistryRenderZeroInitializedMetrics(t *testing.T) {
-	reg := NewRegistry()
-	reg.EnsureCounter("jumi_jobs_created_total")
-	reg.EnsureGauge("jumi_cleanup_backlog_objects")
+func TestRegistryRenderOmitsUntouchedMetrics(t *testing.T) {
+	reg, err := New()
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
 
 	rendered := reg.Render()
-	if !strings.Contains(rendered, "jumi_jobs_created_total 0") {
-		t.Fatalf("missing zero-valued counter in render: %s", rendered)
+	if strings.Contains(rendered, "jumi_jobs_created_total") {
+		t.Fatalf("unexpected untouched counter in render: %s", rendered)
 	}
-	if !strings.Contains(rendered, "jumi_cleanup_backlog_objects 0") {
-		t.Fatalf("missing zero-valued gauge in render: %s", rendered)
+	if strings.Contains(rendered, "jumi_cleanup_backlog_objects") {
+		t.Fatalf("unexpected untouched gauge in render: %s", rendered)
 	}
 }

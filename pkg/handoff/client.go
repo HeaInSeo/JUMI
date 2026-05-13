@@ -106,11 +106,16 @@ func NewHTTPClient(baseURL string, timeout time.Duration) *HTTPClient {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
+	return NewHTTPClientWithClient(baseURL, &http.Client{Timeout: timeout})
+}
+
+func NewHTTPClientWithClient(baseURL string, client *http.Client) *HTTPClient {
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
 	return &HTTPClient{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		httpClient: &http.Client{
-			Timeout: timeout,
-		},
+		baseURL:    strings.TrimRight(baseURL, "/"),
+		httpClient: client,
 	}
 }
 
@@ -153,7 +158,9 @@ func (c *HTTPClient) ResolveBinding(ctx context.Context, req ResolveBindingReque
 	if err != nil {
 		return ResolveBindingResponse{}, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode >= 300 {
 		return ResolveBindingResponse{}, fmt.Errorf("handoff resolve failed with status %d", resp.StatusCode)
 	}
@@ -196,7 +203,9 @@ func (c *HTTPClient) RegisterArtifact(ctx context.Context, req RegisterArtifactR
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("handoff register artifact failed with status %d", resp.StatusCode)
 	}
@@ -217,7 +226,9 @@ func (c *HTTPClient) NotifyNodeTerminal(ctx context.Context, req NotifyNodeTermi
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("handoff notify node terminal failed with status %d", resp.StatusCode)
 	}
@@ -238,7 +249,9 @@ func (c *HTTPClient) FinalizeSampleRun(ctx context.Context, req FinalizeSampleRu
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("handoff finalize sample run failed with status %d", resp.StatusCode)
 	}
@@ -259,7 +272,9 @@ func (c *HTTPClient) EvaluateGC(ctx context.Context, req EvaluateGCRequest) erro
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("handoff evaluate gc failed with status %d", resp.StatusCode)
 	}

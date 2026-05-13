@@ -2,6 +2,20 @@
 
 Policy-agnostic in-cluster execution data-plane app for Kubernetes, built on a Kubernetes native baseline and integrated with Kueue without making core execution semantics depend on it.
 
+## Commands
+
+- `make test`: run the root-module unit test suite
+- `make test-regression`: rerun the AH seam, executor, metrics, and observe regression packages
+- `make coverage`: generate `reports/cover.out` and `reports/coverage.txt`
+- `make lint`: fail gate for root-module code
+- `make lint-security`: report-only `gosec` observation
+- `make vuln`: report-only `govulncheck` observation
+- `make vuln-all`: report-only `govulncheck` over all packages
+
+Notes:
+- `GOLANGCI_LINT=/path/to/golangci-lint make lint` can be used to reuse an existing local binary instead of bootstrapping `./bin/golangci-lint`.
+- `make lint-security` is intentionally observation-only; current findings should be triaged separately from the fail gate.
+
 ## Documents
 
 - [JUMI Final Development Goal](docs/JUMI_FINAL_DEVELOPMENT_GOAL.ko.md)

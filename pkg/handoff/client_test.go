@@ -2,27 +2,26 @@ package handoff
 
 import (
 	"context"
+	"io"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
 func TestHTTPClientResolveBinding(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/handoffs:resolve":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"resolutionStatus":"RESOLVED","decision":"remote_fetch","sourceNodeName":"node-a","artifactURI":"http://artifact.local/a","requiresMaterialization":true}`))
-		case "/v1/nodes:notifyTerminal", "/v1/sampleRuns:finalize", "/v1/sampleRuns:evaluateGC":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"accepted":true}`))
-		default:
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-
-	client := NewHTTPClient(server.URL, 0)
+	client := NewHTTPClientWithClient("http://artifact-handoff.test", &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			switch r.URL.Path {
+			case "/v1/handoffs:resolve":
+				return jsonResponse(http.StatusOK, `{"resolutionStatus":"RESOLVED","decision":"remote_fetch","sourceNodeName":"node-a","artifactURI":"http://artifact.local/a","requiresMaterialization":true}`), nil
+			case "/v1/nodes:notifyTerminal", "/v1/sampleRuns:finalize", "/v1/sampleRuns:evaluateGC":
+				return jsonResponse(http.StatusOK, `{"accepted":true}`), nil
+			default:
+				t.Fatalf("unexpected path: %s", r.URL.Path)
+				return nil, nil
+			}
+		}),
+	})
 	resp, err := client.ResolveBinding(context.Background(), ResolveBindingRequest{
 		SampleRunID:        "sample-1",
 		ChildNodeID:        "child-a",
@@ -66,5 +65,19 @@ func TestHTTPClientResolveBinding(t *testing.T) {
 		SampleRunID: "sample-1",
 	}); err != nil {
 		t.Fatalf("EvaluateGC() error = %v", err)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return fn(r)
+}
+
+func jsonResponse(statusCode int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: statusCode,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
 	}
 }

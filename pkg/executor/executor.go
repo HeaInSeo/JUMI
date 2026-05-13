@@ -63,53 +63,26 @@ type DagEngine struct {
 	registry registry.Registry
 	adapter  backend.Adapter
 	handoff  handoff.Client
-	metrics  *metrics.Registry
+	metrics  *metrics.Metrics
 
 	activeMu sync.Mutex
 	active   map[string]*activeRun
 }
 
-func NewMetricsRegistry() *metrics.Registry {
-	reg := metrics.NewRegistry()
-	for _, name := range []string{
-		"jumi_jobs_created_total",
-		"jumi_fast_fail_trigger_total",
-		"jumi_artifacts_registered_total",
-		"jumi_input_resolve_requests_total",
-		"jumi_input_remote_fetch_total",
-		"jumi_input_materializations_total",
-		"jumi_sample_runs_finalized_total",
-		"jumi_gc_evaluate_requests_total",
-		"jumi_handoff_resolve_total",
-		"jumi_handoff_resolve_errors_total",
-		"jumi_handoff_register_artifact_total",
-		"jumi_handoff_register_artifact_errors_total",
-		"jumi_handoff_notify_terminal_total",
-		"jumi_handoff_finalize_total",
-		"jumi_handoff_gc_evaluate_total",
-		"jumi_k8s_node_prepare_total",
-		"jumi_k8s_node_prepare_errors_total",
-		"jumi_k8s_node_start_total",
-		"jumi_k8s_node_start_errors_total",
-		"jumi_k8s_node_succeeded_total",
-		"jumi_k8s_node_failed_total",
-		"jumi_k8s_node_canceled_total",
-		"jumi_k8s_node_cancel_total",
-	} {
-		reg.EnsureCounter(name)
+func newMetrics() *metrics.Metrics {
+	m, err := metrics.New()
+	if err != nil {
+		panic(fmt.Sprintf("jumi: metrics init failed: %v", err))
 	}
-	reg.EnsureGauge("jumi_cleanup_backlog_objects")
-	return reg
+	return m
 }
-
-func newMetricsRegistry() *metrics.Registry { return NewMetricsRegistry() }
 
 func NewDagEngine(reg registry.Registry, adapter backend.Adapter) *DagEngine {
 	return &DagEngine{
 		registry: reg,
 		adapter:  adapter,
 		handoff:  handoff.NewNoopClient(),
-		metrics:  newMetricsRegistry(),
+		metrics:  newMetrics(),
 		active:   make(map[string]*activeRun),
 	}
 }
@@ -122,12 +95,12 @@ func NewDagEngineWithHandoff(reg registry.Registry, adapter backend.Adapter, cli
 		registry: reg,
 		adapter:  adapter,
 		handoff:  client,
-		metrics:  newMetricsRegistry(),
+		metrics:  newMetrics(),
 		active:   make(map[string]*activeRun),
 	}
 }
 
-func (e *DagEngine) Metrics() *metrics.Registry {
+func (e *DagEngine) Metrics() *metrics.Metrics {
 	return e.metrics
 }
 
@@ -142,7 +115,9 @@ func (e *DagEngine) Admit(ctx context.Context, record spec.RunRecord) error {
 		return err
 	}
 	appendEvent(ctx, e.registry, spec.EventRecord{RunID: record.RunID, Type: "run.admitted", OccurredAt: now, Level: "info", Message: "run admitted to dag executor"})
-	go e.executeRun(record.RunID)
+	runCtx := context.WithoutCancel(ctx)
+	// #nosec G118 -- run execution must outlive the request context once the run is admitted.
+	go e.executeRun(runCtx, record.RunID)
 	return nil
 }
 
@@ -200,8 +175,10 @@ func (e *DagEngine) Cancel(ctx context.Context, runID string, reason string) err
 	return nil
 }
 
-func (e *DagEngine) executeRun(runID string) {
-	ctx := context.Background()
+func (e *DagEngine) executeRun(ctx context.Context, runID string) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	run, err := e.registry.GetRun(ctx, runID)
 	if err != nil {
 		return
@@ -261,12 +238,12 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 		return fmt.Errorf("failed to initialize dag worker pool")
 	}
 	now := time.Now().UTC()
-	_ = e.registry.UpdateRun(context.Background(), run.RunID, func(current *spec.RunRecord) error {
+	_ = e.registry.UpdateRun(ctx, run.RunID, func(current *spec.RunRecord) error {
 		current.Status = spec.RunStatusRunning
 		current.CurrentBottleneckLocation = "running"
 		return nil
 	})
-	appendEvent(context.Background(), e.registry, spec.EventRecord{RunID: run.RunID, Type: "run.running", OccurredAt: now, Level: "info", Message: "run execution started"})
+	appendEvent(ctx, e.registry, spec.EventRecord{RunID: run.RunID, Type: "run.running", OccurredAt: now, Level: "info", Message: "run execution started"})
 	firstErr := make(chan error, 1)
 	go func() {
 		ticker := time.NewTicker(10 * time.Millisecond)
@@ -276,7 +253,7 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				nodes, err := e.registry.ListNodes(context.Background(), run.RunID)
+				nodes, err := e.registry.ListNodes(ctx, run.RunID)
 				if err != nil {
 					continue
 				}
@@ -286,11 +263,11 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 						case firstErr <- fmt.Errorf("node %s failed", node.NodeID):
 						default:
 						}
-						e.metrics.IncCounter("jumi_fast_fail_trigger_total")
-						appendEvent(context.Background(), e.registry, spec.EventRecord{RunID: run.RunID, NodeID: node.NodeID, Type: "run.fast_fail.triggered", OccurredAt: time.Now().UTC(), Level: "warn", StopCause: "failed", FailureReason: firstNonEmpty(node.TerminalFailureReason, "fast_fail")})
+						e.metrics.IncFastFailTrigger()
+						appendEvent(ctx, e.registry, spec.EventRecord{RunID: run.RunID, NodeID: node.NodeID, Type: "run.fast_fail.triggered", OccurredAt: time.Now().UTC(), Level: "warn", StopCause: "failed", FailureReason: firstNonEmpty(node.TerminalFailureReason, "fast_fail")})
 						active.cancel()
 						for _, handle := range e.snapshotHandles(active) {
-							_ = e.adapter.CancelNode(context.Background(), handle)
+							_ = e.adapter.CancelNode(ctx, handle)
 						}
 						return
 					}
@@ -344,7 +321,7 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 	}
 	now := time.Now().UTC()
 	counters := spec.RunCounters{TotalNodes: len(nodes)}
-	status := spec.RunStatusSucceeded
+	runStatus := spec.RunStatusSucceeded
 	terminalStopCause := "finished"
 	terminalFailureReason := ""
 	for _, node := range nodes {
@@ -353,15 +330,15 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 			counters.SucceededNodes++
 		case spec.NodeStatusFailed:
 			counters.FailedNodes++
-			status = spec.RunStatusFailed
+			runStatus = spec.RunStatusFailed
 			terminalStopCause = "failed"
 			if terminalFailureReason == "" {
 				terminalFailureReason = node.TerminalFailureReason
 			}
 		case spec.NodeStatusCanceled:
 			counters.CanceledNodes++
-			if status != spec.RunStatusFailed {
-				status = spec.RunStatusCanceled
+			if runStatus != spec.RunStatusFailed {
+				runStatus = spec.RunStatusCanceled
 				terminalStopCause = "canceled"
 				terminalFailureReason = firstNonEmpty(node.TerminalFailureReason, terminalFailureReason)
 			}
@@ -372,19 +349,19 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 		}
 	}
 	if run.Status == spec.RunStatusCanceled {
-		status = spec.RunStatusCanceled
+		runStatus = spec.RunStatusCanceled
 		terminalStopCause = "canceled"
 		terminalFailureReason = firstNonEmpty(run.TerminalFailureReason, terminalFailureReason, reason, "cancellation_requested")
 	}
-	if !succeeded && status == spec.RunStatusSucceeded {
-		status = spec.RunStatusFailed
+	if !succeeded && runStatus == spec.RunStatusSucceeded {
+		runStatus = spec.RunStatusFailed
 		terminalStopCause = "failed"
 		if terminalFailureReason == "" {
 			terminalFailureReason = reason
 		}
 	}
 	if err := e.registry.UpdateRun(ctx, runID, func(current *spec.RunRecord) error {
-		current.Status = status
+		current.Status = runStatus
 		current.FinishedAt = &now
 		current.Counters = counters
 		current.TerminalStopCause = terminalStopCause
@@ -406,12 +383,12 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 			FailureReason: "handoff_finalize_error",
 			Message:       err.Error(),
 		})
-		if status == spec.RunStatusSucceeded {
-			status = spec.RunStatusFailed
+		if runStatus == spec.RunStatusSucceeded {
+			runStatus = spec.RunStatusFailed
 			terminalStopCause = "failed"
 			terminalFailureReason = "handoff_finalize_error"
 			if err := e.registry.UpdateRun(ctx, runID, func(current *spec.RunRecord) error {
-				current.Status = status
+				current.Status = runStatus
 				current.TerminalStopCause = terminalStopCause
 				current.TerminalFailureReason = terminalFailureReason
 				return nil
@@ -420,7 +397,7 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 			}
 		}
 	} else {
-		e.metrics.IncCounter("jumi_sample_runs_finalized_total")
+		e.metrics.IncSampleRunsFinalized()
 	}
 	if err := e.handoff.EvaluateGC(ctx, handoff.EvaluateGCRequest{
 		SampleRunID: firstNonEmpty(run.Spec.Run.SampleRunID, runID),
@@ -434,12 +411,12 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 			FailureReason: "handoff_gc_evaluate_error",
 			Message:       err.Error(),
 		})
-		if status == spec.RunStatusSucceeded {
-			status = spec.RunStatusFailed
+		if runStatus == spec.RunStatusSucceeded {
+			runStatus = spec.RunStatusFailed
 			terminalStopCause = "failed"
 			terminalFailureReason = "handoff_gc_evaluate_error"
 			if err := e.registry.UpdateRun(ctx, runID, func(current *spec.RunRecord) error {
-				current.Status = status
+				current.Status = runStatus
 				current.TerminalStopCause = terminalStopCause
 				current.TerminalFailureReason = terminalFailureReason
 				return nil
@@ -448,9 +425,9 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 			}
 		}
 	} else {
-		e.metrics.IncCounter("jumi_gc_evaluate_requests_total")
+		e.metrics.IncGCEvaluateRequests()
 	}
-	appendEvent(ctx, e.registry, spec.EventRecord{RunID: runID, Type: "run.completed", OccurredAt: now, Level: eventLevelForRunStatus(status), StopCause: terminalStopCause, FailureReason: terminalFailureReason, Message: string(status)})
+	appendEvent(ctx, e.registry, spec.EventRecord{RunID: runID, Type: "run.completed", OccurredAt: now, Level: eventLevelForRunStatus(runStatus), StopCause: terminalStopCause, FailureReason: terminalFailureReason, Message: string(runStatus)})
 	return nil
 }
 
@@ -458,7 +435,7 @@ type nodeRunner struct {
 	registry registry.Registry
 	adapter  backend.Adapter
 	handoff  handoff.Client
-	metrics  *metrics.Registry
+	metrics  *metrics.Metrics
 	runID    string
 	node     spec.Node
 	active   *activeRun
@@ -512,7 +489,7 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 			return err
 		}
 		for _, binding := range r.node.ArtifactBindings {
-			r.metrics.IncCounter("jumi_input_resolve_requests_total")
+			r.metrics.IncInputResolveRequests()
 			resolved, err := r.resolveBindingWithRetry(ctx, handoff.ResolveBindingRequest{
 				RunID:              r.runID,
 				SampleRunID:        firstNonEmpty(run.Spec.Run.SampleRunID, r.runID),
@@ -564,10 +541,10 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 				return r.failNode(fmt.Errorf("required binding %s missing", binding.BindingName), attemptID, "failed", failureReason)
 			}
 			if resolved.Decision == "remote_fetch" {
-				r.metrics.IncCounter("jumi_input_remote_fetch_total")
+				r.metrics.IncInputRemoteFetch()
 			}
 			if resolved.RequiresMaterialization {
-				r.metrics.IncCounter("jumi_input_materializations_total")
+				r.metrics.IncInputMaterializations()
 			}
 			injectResolvedBindingEnv(&resolvedNode, binding, resolved)
 		}
@@ -601,8 +578,8 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &now, FinishedAt: timePtr(time.Now().UTC()), TerminalStopCause: "failed", TerminalFailureReason: "backend_start_error"})
 		return r.failNode(err, attemptID, "failed", "backend_start_error")
 	}
-	r.metrics.IncCounter("jumi_jobs_created_total")
-	r.metrics.SetGauge("jumi_cleanup_backlog_objects", 0)
+	r.metrics.IncJobsCreated()
+	r.metrics.SetCleanupBacklogObjects(0)
 	r.registerHandle(handle)
 	defer r.unregisterHandle()
 	startedAt := time.Now().UTC()
@@ -826,7 +803,7 @@ func (r *nodeRunner) registerNodeOutputs(ctx context.Context, handle backend.Han
 		}); err != nil {
 			return fmt.Errorf("register artifact %s for node %s: %w", outputName, r.node.NodeID, err)
 		}
-		r.metrics.IncCounter("jumi_artifacts_registered_total")
+		r.metrics.IncArtifactsRegistered()
 	}
 	return nil
 }
@@ -1084,8 +1061,8 @@ func appendEvent(ctx context.Context, reg registry.Registry, event spec.EventRec
 	_ = reg.AppendEvent(ctx, event)
 }
 
-func eventLevelForRunStatus(status spec.RunStatus) string {
-	switch status {
+func eventLevelForRunStatus(runStatus spec.RunStatus) string {
+	switch runStatus {
 	case spec.RunStatusSucceeded:
 		return "info"
 	case spec.RunStatusCanceled:

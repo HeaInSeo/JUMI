@@ -29,6 +29,7 @@ func TestRunWritesManifestAndTerminationLog(t *testing.T) {
 		t.Fatalf("Run() exitCode = %d, want 0", exitCode)
 	}
 
+	// #nosec G304 -- manifestPath is created under t.TempDir for this test.
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
@@ -51,6 +52,7 @@ func TestRunWritesManifestAndTerminationLog(t *testing.T) {
 		t.Fatal("digest = empty, want sha256")
 	}
 
+	// #nosec G304 -- terminationPath is created under t.TempDir for this test.
 	terminationRaw, err := os.ReadFile(terminationPath)
 	if err != nil {
 		t.Fatalf("read termination log: %v", err)

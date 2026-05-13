@@ -739,7 +739,7 @@ func (f *fakeAdapter) StartNode(ctx context.Context, prepared backend.PreparedNo
 	f.mu.Lock()
 	f.order = append(f.order, p.nodeID)
 	f.mu.Unlock()
-	return fakeHandle{nodeID: p.nodeID}, nil
+	return fakeHandle(p), nil
 }
 
 func (f *fakeAdapter) ObserveNode(_ context.Context, _ backend.Handle) (*backend.OptionalKueueInfo, error) {

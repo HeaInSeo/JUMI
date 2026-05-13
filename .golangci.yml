@@ -1,0 +1,57 @@
+version: "2"
+
+run:
+  allow-parallel-runners: true
+
+linters:
+  default: none
+  enable:
+    - depguard
+    - errcheck
+    - govet
+    - ineffassign
+    - misspell
+    - revive
+    - staticcheck
+    - unused
+  settings:
+    depguard:
+      rules:
+        no_k8s_outside_backend:
+          files:
+            - "cmd/*.go"
+            - "cmd/**/*.go"
+            - "pkg/api/*.go"
+            - "pkg/api/**/*.go"
+            - "pkg/executor/*.go"
+            - "pkg/executor/**/*.go"
+            - "pkg/handoff/*.go"
+            - "pkg/handoff/**/*.go"
+            - "pkg/metrics/*.go"
+            - "pkg/metrics/**/*.go"
+            - "pkg/observe/*.go"
+            - "pkg/observe/**/*.go"
+            - "pkg/provenance/*.go"
+            - "pkg/provenance/**/*.go"
+            - "pkg/registry/*.go"
+            - "pkg/registry/**/*.go"
+            - "pkg/runtimehelper/*.go"
+            - "pkg/runtimehelper/**/*.go"
+            - "pkg/spec/*.go"
+            - "pkg/spec/**/*.go"
+          deny:
+            - pkg: "k8s.io/**"
+              desc: "only pkg/backend may depend directly on Kubernetes packages"
+            - pkg: "sigs.k8s.io/**"
+              desc: "only pkg/backend may depend directly on controller-runtime style packages"
+    revive:
+      rules:
+        - name: comment-spacings
+        - name: import-shadowing
+  exclusions:
+    generated: lax
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
