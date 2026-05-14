@@ -17,6 +17,8 @@ type ResolveBindingRequest struct {
 	BindingName        string `json:"bindingName"`
 	ChildInputName     string `json:"childInputName,omitempty"`
 	ProducerNodeID     string `json:"producerNodeId"`
+	ProducerAttemptID  string `json:"producerAttemptId,omitempty"`
+	ChildAttemptID     string `json:"childAttemptId,omitempty"`
 	ProducerOutputName string `json:"producerOutputName"`
 	ArtifactID         string `json:"artifactId,omitempty"`
 	ConsumePolicy      string `json:"consumePolicy,omitempty"`
@@ -25,17 +27,35 @@ type ResolveBindingRequest struct {
 	TargetNodeName     string `json:"targetNodeName,omitempty"`
 }
 
+type PlacementIntent struct {
+	Mode     string `json:"mode,omitempty"`
+	NodeName string `json:"nodeName,omitempty"`
+}
+
+type MaterializationPlan struct {
+	Mode           string `json:"mode,omitempty"`
+	URI            string `json:"uri,omitempty"`
+	ExpectedDigest string `json:"expectedDigest,omitempty"`
+}
+
 type ResolveBindingResponse struct {
-	ResolutionStatus        string `json:"resolutionStatus"`
-	Decision                string `json:"decision"`
-	SourceNodeName          string `json:"sourceNodeName"`
-	ArtifactURI             string `json:"artifactURI"`
-	RequiresMaterialization bool   `json:"requiresMaterialization"`
+	ResolutionStatus    string              `json:"resolutionStatus"`
+	Decision            string              `json:"decision"`
+	PlacementIntent     PlacementIntent     `json:"placementIntent"`
+	MaterializationPlan MaterializationPlan `json:"materializationPlan"`
+	Reason              string              `json:"reason,omitempty"`
+	Retryable           bool                `json:"retryable,omitempty"`
+
+	// Legacy HTTP shim fields kept for backward-compatible decoding.
+	SourceNodeName          string `json:"sourceNodeName,omitempty"`
+	ArtifactURI             string `json:"artifactURI,omitempty"`
+	RequiresMaterialization bool   `json:"requiresMaterialization,omitempty"`
 }
 
 type NotifyNodeTerminalRequest struct {
 	SampleRunID   string `json:"sampleRunId"`
 	NodeID        string `json:"nodeId"`
+	AttemptID     string `json:"attemptId,omitempty"`
 	TerminalState string `json:"terminalState"`
 }
 
@@ -48,14 +68,15 @@ type EvaluateGCRequest struct {
 }
 
 type RegisterArtifactRequest struct {
-	SampleRunID    string `json:"sampleRunId"`
-	ProducerNodeID string `json:"producerNodeId"`
-	OutputName     string `json:"outputName"`
-	ArtifactID     string `json:"artifactId,omitempty"`
-	Digest         string `json:"digest,omitempty"`
-	NodeName       string `json:"nodeName,omitempty"`
-	URI            string `json:"uri,omitempty"`
-	SizeBytes      int64  `json:"sizeBytes,omitempty"`
+	SampleRunID       string `json:"sampleRunId"`
+	ProducerNodeID    string `json:"producerNodeId"`
+	ProducerAttemptID string `json:"producerAttemptId,omitempty"`
+	OutputName        string `json:"outputName"`
+	ArtifactID        string `json:"artifactId,omitempty"`
+	Digest            string `json:"digest,omitempty"`
+	NodeName          string `json:"nodeName,omitempty"`
+	URI               string `json:"uri,omitempty"`
+	SizeBytes         int64  `json:"sizeBytes,omitempty"`
 }
 
 type Client interface {
@@ -73,12 +94,15 @@ func NewNoopClient() *NoopClient {
 }
 
 func (c *NoopClient) ResolveBinding(_ context.Context, req ResolveBindingRequest) (ResolveBindingResponse, error) {
-	return ResolveBindingResponse{
-		ResolutionStatus:        "RESOLVED",
-		Decision:                "noop",
-		SourceNodeName:          firstNonEmpty(req.TargetNodeName, req.ProducerNodeID),
-		RequiresMaterialization: false,
-	}, nil
+	return normalizeResolveBindingResponse(ResolveBindingResponse{
+		ResolutionStatus: "RESOLVED",
+		Decision:         "noop",
+		PlacementIntent: PlacementIntent{
+			Mode:     "preferred_node",
+			NodeName: firstNonEmpty(req.TargetNodeName, req.ProducerNodeID),
+		},
+		MaterializationPlan: MaterializationPlan{Mode: "none"},
+	}), nil
 }
 
 func (c *NoopClient) RegisterArtifact(_ context.Context, _ RegisterArtifactRequest) error {
@@ -127,6 +151,8 @@ func (c *HTTPClient) ResolveBinding(ctx context.Context, req ResolveBindingReque
 			ChildNodeID        string `json:"childNodeId"`
 			ChildInputName     string `json:"childInputName,omitempty"`
 			ProducerNodeID     string `json:"producerNodeId"`
+			ProducerAttemptID  string `json:"producerAttemptId,omitempty"`
+			ChildAttemptID     string `json:"childAttemptId,omitempty"`
 			ProducerOutputName string `json:"producerOutputName"`
 			ArtifactID         string `json:"artifactId,omitempty"`
 			ConsumePolicy      string `json:"consumePolicy,omitempty"`
@@ -140,6 +166,8 @@ func (c *HTTPClient) ResolveBinding(ctx context.Context, req ResolveBindingReque
 	body.Binding.ChildNodeID = req.ChildNodeID
 	body.Binding.ChildInputName = req.ChildInputName
 	body.Binding.ProducerNodeID = req.ProducerNodeID
+	body.Binding.ProducerAttemptID = req.ProducerAttemptID
+	body.Binding.ChildAttemptID = req.ChildAttemptID
 	body.Binding.ProducerOutputName = req.ProducerOutputName
 	body.Binding.ArtifactID = req.ArtifactID
 	body.Binding.ConsumePolicy = req.ConsumePolicy
@@ -168,29 +196,33 @@ func (c *HTTPClient) ResolveBinding(ctx context.Context, req ResolveBindingReque
 	if err := json.NewDecoder(resp.Body).Decode(&resolved); err != nil {
 		return ResolveBindingResponse{}, err
 	}
-	return resolved, nil
+	return normalizeResolveBindingResponse(resolved), nil
 }
 
 func (c *HTTPClient) RegisterArtifact(ctx context.Context, req RegisterArtifactRequest) error {
-	payload, err := json.Marshal(struct {
-		SampleRunID    string `json:"sampleRunId"`
-		ProducerNodeID string `json:"producerNodeId"`
-		OutputName     string `json:"outputName"`
-		ArtifactID     string `json:"artifactId,omitempty"`
-		Digest         string `json:"digest,omitempty"`
-		NodeName       string `json:"nodeName,omitempty"`
-		URI            string `json:"uri,omitempty"`
-		SizeBytes      int64  `json:"sizeBytes,omitempty"`
-	}{
-		SampleRunID:    req.SampleRunID,
-		ProducerNodeID: req.ProducerNodeID,
-		OutputName:     req.OutputName,
-		ArtifactID:     req.ArtifactID,
-		Digest:         req.Digest,
-		NodeName:       req.NodeName,
-		URI:            req.URI,
-		SizeBytes:      req.SizeBytes,
-	})
+	var body struct {
+		Artifact struct {
+			SampleRunID       string `json:"sampleRunId"`
+			ProducerNodeID    string `json:"producerNodeId"`
+			ProducerAttemptID string `json:"producerAttemptId,omitempty"`
+			OutputName        string `json:"outputName"`
+			ArtifactID        string `json:"artifactId,omitempty"`
+			Digest            string `json:"digest,omitempty"`
+			NodeName          string `json:"nodeName,omitempty"`
+			URI               string `json:"uri,omitempty"`
+			SizeBytes         int64  `json:"sizeBytes,omitempty"`
+		} `json:"artifact"`
+	}
+	body.Artifact.SampleRunID = req.SampleRunID
+	body.Artifact.ProducerNodeID = req.ProducerNodeID
+	body.Artifact.ProducerAttemptID = req.ProducerAttemptID
+	body.Artifact.OutputName = req.OutputName
+	body.Artifact.ArtifactID = req.ArtifactID
+	body.Artifact.Digest = req.Digest
+	body.Artifact.NodeName = req.NodeName
+	body.Artifact.URI = req.URI
+	body.Artifact.SizeBytes = req.SizeBytes
+	payload, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
@@ -288,4 +320,27 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func normalizeResolveBindingResponse(resolved ResolveBindingResponse) ResolveBindingResponse {
+	if resolved.PlacementIntent.NodeName == "" && resolved.SourceNodeName != "" {
+		resolved.PlacementIntent.NodeName = resolved.SourceNodeName
+	}
+	if resolved.PlacementIntent.Mode == "" && resolved.PlacementIntent.NodeName != "" {
+		resolved.PlacementIntent.Mode = "required_node"
+	}
+	if resolved.MaterializationPlan.URI == "" && resolved.ArtifactURI != "" {
+		resolved.MaterializationPlan.URI = resolved.ArtifactURI
+	}
+	if resolved.MaterializationPlan.Mode == "" {
+		switch {
+		case resolved.RequiresMaterialization:
+			resolved.MaterializationPlan.Mode = "remote_fetch"
+		case resolved.MaterializationPlan.URI != "":
+			resolved.MaterializationPlan.Mode = "remote_fetch"
+		default:
+			resolved.MaterializationPlan.Mode = "none"
+		}
+	}
+	return resolved
 }

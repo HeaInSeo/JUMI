@@ -51,6 +51,8 @@ func (c *GRPCClient) ResolveBinding(ctx context.Context, req ResolveBindingReque
 			ChildNodeId:        req.ChildNodeID,
 			ChildInputName:     req.ChildInputName,
 			ProducerNodeId:     req.ProducerNodeID,
+			ProducerAttemptId:  req.ProducerAttemptID,
+			ChildAttemptId:     req.ChildAttemptID,
 			ProducerOutputName: req.ProducerOutputName,
 			ArtifactId:         req.ArtifactID,
 			ConsumePolicy:      req.ConsumePolicy,
@@ -65,13 +67,21 @@ func (c *GRPCClient) ResolveBinding(ctx context.Context, req ResolveBindingReque
 		}
 		return ResolveBindingResponse{}, err
 	}
-	return ResolveBindingResponse{
-		ResolutionStatus:        resp.GetResolutionStatus(),
-		Decision:                resp.GetDecision(),
-		SourceNodeName:          resp.GetSourceNodeName(),
-		ArtifactURI:             resp.GetArtifactUri(),
-		RequiresMaterialization: resp.GetRequiresMaterialization(),
-	}, nil
+	return normalizeResolveBindingResponse(ResolveBindingResponse{
+		ResolutionStatus: resp.GetResolutionStatus(),
+		Decision:         resp.GetDecision(),
+		PlacementIntent: PlacementIntent{
+			Mode:     resp.GetPlacementIntent().GetMode(),
+			NodeName: resp.GetPlacementIntent().GetNodeName(),
+		},
+		MaterializationPlan: MaterializationPlan{
+			Mode:           resp.GetMaterializationPlan().GetMode(),
+			URI:            resp.GetMaterializationPlan().GetUri(),
+			ExpectedDigest: resp.GetMaterializationPlan().GetExpectedDigest(),
+		},
+		Reason:    resp.GetReason(),
+		Retryable: resp.GetRetryable(),
+	}), nil
 }
 
 func (c *GRPCClient) RegisterArtifact(ctx context.Context, req RegisterArtifactRequest) error {
@@ -80,14 +90,15 @@ func (c *GRPCClient) RegisterArtifact(ctx context.Context, req RegisterArtifactR
 	}
 	if _, err := c.client.RegisterArtifact(ctx, &ahv1.RegisterArtifactRequest{
 		Artifact: &ahv1.ArtifactRef{
-			SampleRunId:    req.SampleRunID,
-			ProducerNodeId: req.ProducerNodeID,
-			OutputName:     req.OutputName,
-			ArtifactId:     req.ArtifactID,
-			Digest:         req.Digest,
-			NodeName:       req.NodeName,
-			Uri:            req.URI,
-			SizeBytes:      req.SizeBytes,
+			SampleRunId:       req.SampleRunID,
+			ProducerNodeId:    req.ProducerNodeID,
+			ProducerAttemptId: req.ProducerAttemptID,
+			OutputName:        req.OutputName,
+			ArtifactId:        req.ArtifactID,
+			Digest:            req.Digest,
+			NodeName:          req.NodeName,
+			Uri:               req.URI,
+			SizeBytes:         req.SizeBytes,
 		},
 	}); err != nil {
 		if c.metrics != nil {
@@ -105,6 +116,7 @@ func (c *GRPCClient) NotifyNodeTerminal(ctx context.Context, req NotifyNodeTermi
 	if _, err := c.client.NotifyNodeTerminal(ctx, &ahv1.NotifyNodeTerminalRequest{
 		SampleRunId:   req.SampleRunID,
 		NodeId:        req.NodeID,
+		AttemptId:     req.AttemptID,
 		TerminalState: req.TerminalState,
 	}); err != nil {
 		return fmt.Errorf("handoff notify node terminal failed: %w", err)
