@@ -66,7 +66,19 @@ func (f *fakeHandoffClient) ResolveBinding(_ context.Context, req handoff.Resolv
 		return handoff.ResolveBindingResponse{}, f.resolveErr
 	}
 	if f.response.ResolutionStatus == "" {
-		return handoff.ResolveBindingResponse{ResolutionStatus: "RESOLVED", Decision: "remote_fetch", RequiresMaterialization: true}, nil
+		return handoff.ResolveBindingResponse{
+			ResolutionStatus: "RESOLVED",
+			Decision:         "remote_fetch",
+			PlacementIntent: handoff.PlacementIntent{
+				Mode:     "required_node",
+				NodeName: "node-a",
+			},
+			MaterializationPlan: handoff.MaterializationPlan{
+				Mode:           "remote_fetch",
+				URI:            "http://artifact.local/output",
+				ExpectedDigest: "sha256:abc",
+			},
+		}, nil
 	}
 	return f.response, nil
 }
@@ -113,7 +125,15 @@ func TestDagEngineResolvesArtifactBindingsBeforeStart(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
 	adapter := &fakeAdapter{failOn: map[string]bool{}}
 	handoffClient := &fakeHandoffClient{
-		response: handoff.ResolveBindingResponse{ResolutionStatus: "RESOLVED", Decision: "remote_fetch", RequiresMaterialization: true},
+		response: handoff.ResolveBindingResponse{
+			ResolutionStatus: "RESOLVED",
+			Decision:         "remote_fetch",
+			PlacementIntent:  handoff.PlacementIntent{Mode: "required_node", NodeName: "node-a"},
+			MaterializationPlan: handoff.MaterializationPlan{
+				Mode: "remote_fetch",
+				URI:  "http://artifact.local/output",
+			},
+		},
 	}
 	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
 	specInput := spec.ExecutableRunSpec{
@@ -154,6 +174,12 @@ func TestDagEngineResolvesArtifactBindingsBeforeStart(t *testing.T) {
 	if handoffClient.requests[0].ArtifactID != "sample-1:a:output" {
 		t.Fatalf("artifactID = %q, want sample-1:a:output", handoffClient.requests[0].ArtifactID)
 	}
+	if handoffClient.requests[0].ProducerAttemptID == "" {
+		t.Fatal("expected producerAttemptID to be populated")
+	}
+	if handoffClient.requests[0].ChildAttemptID == "" {
+		t.Fatal("expected childAttemptID to be populated")
+	}
 	adapter.mu.Lock()
 	preparedNode, ok := adapter.prepared["b"]
 	adapter.mu.Unlock()
@@ -166,6 +192,12 @@ func TestDagEngineResolvesArtifactBindingsBeforeStart(t *testing.T) {
 	if preparedNode.Env["JUMI_INPUT_DATASET_DECISION"] != "remote_fetch" {
 		t.Fatalf("resolved decision env = %q, want remote_fetch", preparedNode.Env["JUMI_INPUT_DATASET_DECISION"])
 	}
+	if preparedNode.Env["JUMI_INPUT_DATASET_SOURCE_NODE"] != "node-a" {
+		t.Fatalf("source node env = %q, want node-a", preparedNode.Env["JUMI_INPUT_DATASET_SOURCE_NODE"])
+	}
+	if preparedNode.Env["JUMI_INPUT_DATASET_URI"] != "http://artifact.local/output" {
+		t.Fatalf("uri env = %q, want http://artifact.local/output", preparedNode.Env["JUMI_INPUT_DATASET_URI"])
+	}
 	if preparedNode.Env["JUMI_INPUT_DATASET_REQUIRES_MATERIALIZATION"] != "true" {
 		t.Fatalf("requires materialization env = %q, want true", preparedNode.Env["JUMI_INPUT_DATASET_REQUIRES_MATERIALIZATION"])
 	}
@@ -174,6 +206,9 @@ func TestDagEngineResolvesArtifactBindingsBeforeStart(t *testing.T) {
 	}
 	if len(handoffClient.notifyRequests) == 0 {
 		t.Fatal("expected node terminal notification")
+	}
+	if handoffClient.notifyRequests[0].AttemptID == "" {
+		t.Fatal("expected node terminal attemptID to be populated")
 	}
 	if len(handoffClient.finalizeRequests) != 1 {
 		t.Fatalf("finalize sample run calls = %d, want 1", len(handoffClient.finalizeRequests))
@@ -218,6 +253,9 @@ func TestDagEngineRegistersNodeOutputsOnSuccess(t *testing.T) {
 	}
 	if handoffClient.registerRequests[0].ProducerNodeID != "producer" {
 		t.Fatalf("producerNodeID = %q, want producer", handoffClient.registerRequests[0].ProducerNodeID)
+	}
+	if handoffClient.registerRequests[0].ProducerAttemptID == "" {
+		t.Fatal("expected producerAttemptID to be populated")
 	}
 	if handoffClient.registerRequests[0].URI == "" {
 		t.Fatal("expected non-empty output URI")
@@ -564,7 +602,15 @@ func TestDagEngineRetriesResolveBindingBeforeSuccess(t *testing.T) {
 	adapter := &fakeAdapter{failOn: map[string]bool{}}
 	handoffClient := &fakeHandoffClient{
 		resolveErrs: []error{status.Error(codes.Unavailable, "temporary handoff error"), nil},
-		response:    handoff.ResolveBindingResponse{ResolutionStatus: "RESOLVED", Decision: "remote_fetch", RequiresMaterialization: true},
+		response: handoff.ResolveBindingResponse{
+			ResolutionStatus: "RESOLVED",
+			Decision:         "remote_fetch",
+			PlacementIntent:  handoff.PlacementIntent{Mode: "required_node", NodeName: "node-a"},
+			MaterializationPlan: handoff.MaterializationPlan{
+				Mode: "remote_fetch",
+				URI:  "http://artifact.local/output",
+			},
+		},
 	}
 	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
 	specInput := spec.ExecutableRunSpec{
@@ -690,7 +736,15 @@ func TestDagEngineRetriesResolveBindingForHTTP503(t *testing.T) {
 	adapter := &fakeAdapter{failOn: map[string]bool{}}
 	handoffClient := &fakeHandoffClient{
 		resolveErrs: []error{fmt.Errorf("handoff resolve failed with status 503"), nil},
-		response:    handoff.ResolveBindingResponse{ResolutionStatus: "RESOLVED", Decision: "remote_fetch", RequiresMaterialization: true},
+		response: handoff.ResolveBindingResponse{
+			ResolutionStatus: "RESOLVED",
+			Decision:         "remote_fetch",
+			PlacementIntent:  handoff.PlacementIntent{Mode: "required_node", NodeName: "node-a"},
+			MaterializationPlan: handoff.MaterializationPlan{
+				Mode: "remote_fetch",
+				URI:  "http://artifact.local/output",
+			},
+		},
 	}
 	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
 	specInput := spec.ExecutableRunSpec{

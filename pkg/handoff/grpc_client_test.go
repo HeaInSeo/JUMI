@@ -45,11 +45,18 @@ func TestGRPCClientRoundTrip(t *testing.T) {
 	if resolved.Decision != "remote_fetch" {
 		t.Fatalf("decision = %q, want remote_fetch", resolved.Decision)
 	}
+	if resolved.PlacementIntent.NodeName != "node-a" {
+		t.Fatalf("placement node = %q, want node-a", resolved.PlacementIntent.NodeName)
+	}
+	if resolved.MaterializationPlan.Mode != "remote_fetch" {
+		t.Fatalf("materialization mode = %q, want remote_fetch", resolved.MaterializationPlan.Mode)
+	}
 	if err := client.RegisterArtifact(context.Background(), RegisterArtifactRequest{
-		SampleRunID:    "sample-1",
-		ProducerNodeID: "node-a",
-		OutputName:     "output",
-		SizeBytes:      2048,
+		SampleRunID:       "sample-1",
+		ProducerNodeID:    "node-a",
+		ProducerAttemptID: "attempt-1",
+		OutputName:        "output",
+		SizeBytes:         2048,
 	}); err != nil {
 		t.Fatalf("RegisterArtifact() error = %v", err)
 	}
@@ -58,6 +65,9 @@ func TestGRPCClientRoundTrip(t *testing.T) {
 	}
 	if stub.lastRegister.GetArtifact().GetSizeBytes() != 2048 {
 		t.Fatalf("artifact sizeBytes = %d, want 2048", stub.lastRegister.GetArtifact().GetSizeBytes())
+	}
+	if stub.lastRegister.GetArtifact().GetProducerAttemptId() != "attempt-1" {
+		t.Fatalf("producer attempt = %q, want attempt-1", stub.lastRegister.GetArtifact().GetProducerAttemptId())
 	}
 }
 
@@ -68,11 +78,17 @@ type stubResolverServer struct {
 
 func (stubResolverServer) ResolveHandoff(context.Context, *ahv1.ResolveHandoffRequest) (*ahv1.ResolveHandoffResponse, error) {
 	return &ahv1.ResolveHandoffResponse{
-		ResolutionStatus:        "RESOLVED",
-		Decision:                "remote_fetch",
-		SourceNodeName:          "node-a",
-		ArtifactUri:             "http://artifact.local/output",
-		RequiresMaterialization: true,
+		ResolutionStatus: "RESOLVED",
+		Decision:         "remote_fetch",
+		PlacementIntent: &ahv1.PlacementIntent{
+			Mode:     "required_node",
+			NodeName: "node-a",
+		},
+		MaterializationPlan: &ahv1.MaterializationPlan{
+			Mode:           "remote_fetch",
+			Uri:            "http://artifact.local/output",
+			ExpectedDigest: "sha256:abc",
+		},
 	}, nil
 }
 

@@ -1,6 +1,7 @@
 # JUMI gRPC Contract Draft
 
 > 작성일: 2026-04-18
+> 구현 정합성 업데이트: 2026-05-14
 > 목적: JUMI northbound gRPC app-to-app 계약의 초기 초안을 고정한다.
 
 ---
@@ -38,12 +39,14 @@ service RunService {
   rpc SubmitRun(SubmitRunRequest) returns (SubmitRunResponse);
   rpc GetRun(GetRunRequest) returns (GetRunResponse);
   rpc ListRunNodes(ListRunNodesRequest) returns (ListRunNodesResponse);
+  rpc ListNodeAttempts(ListNodeAttemptsRequest) returns (ListNodeAttemptsResponse);
+  rpc ListRunEvents(ListRunEventsRequest) returns (ListRunEventsResponse);
   rpc CancelRun(CancelRunRequest) returns (CancelRunResponse);
 }
 ```
 
+현재 구현은 위 6개 unary RPC를 노출한다.
 향후 이벤트 스트리밍이 필요하면 별도 `WatchRun` 또는 `StreamRunEvents`를 추가할 수 있다.
-현재 기준선에는 포함하지 않는다.
 
 ---
 
@@ -188,11 +191,95 @@ message RunNode {
 
 - node 응답은 현재 상태와 terminal 이유를 분리한다.
 - attempt 상세 목록은 초기 계약에서 필수로 두지 않는다.
-- 필요 시 후속 `GetNodeAttempts` RPC로 분리할 수 있다.
+- 현재 구현은 후속 분리 대신 `ListNodeAttempts` RPC를 이미 노출한다.
 
 ---
 
-## 7. CancelRun
+## 7. ListNodeAttempts
+
+### 7.1 역할
+
+- 특정 run/node의 attempt 이력 조회
+- attempt 상태와 terminal 원인 조회
+
+### 7.2 요청
+
+```proto
+message ListNodeAttemptsRequest {
+  string run_id = 1;
+  string node_id = 2;
+}
+```
+
+### 7.3 응답
+
+```proto
+message ListNodeAttemptsResponse {
+  repeated NodeAttempt attempts = 1;
+}
+
+message NodeAttempt {
+  string attempt_id = 1;
+  AttemptStatus status = 2;
+  string started_at = 3;
+  string finished_at = 4;
+  string terminal_stop_cause = 5;
+  string terminal_failure_reason = 6;
+}
+```
+
+### 7.4 의미론
+
+- retry가 비활성인 현재 기본 경로에서도 attempt 분리 모델을 외부에 노출하기 위해 유지한다.
+- 장기적으로 retry semantics가 확장되더라도 node-level current status와 attempt history를 분리하는 원칙은 유지한다.
+
+---
+
+## 8. ListRunEvents
+
+### 8.1 역할
+
+- run 범위 이벤트 조회
+- 최근 실패 원인, 상태 전이, Kueue 관찰 신호 확인
+
+### 8.2 요청
+
+```proto
+message ListRunEventsRequest {
+  string run_id = 1;
+  int32 limit = 2;
+}
+```
+
+### 8.3 응답
+
+```proto
+message ListRunEventsResponse {
+  repeated RunEvent events = 1;
+}
+
+message RunEvent {
+  string run_id = 1;
+  string node_id = 2;
+  string attempt_id = 3;
+  string type = 4;
+  string message = 5;
+  string occurred_at = 6;
+  string level = 7;
+  string stop_cause = 8;
+  string failure_reason = 9;
+}
+```
+
+### 8.4 의미론
+
+- `limit`는 최근 N개 이벤트 조회를 의미한다.
+- 현재 구현은 append-only 이벤트 레코드를 그대로 반환한다.
+- 장기적으로 streaming contract를 별도 문서로 분리할 수 있다.
+
+---
+
+## 9. CancelRun
 
 ### 7.1 역할
 
@@ -229,9 +316,9 @@ message CancelRunResponse {
 
 ---
 
-## 8. 공통 타입 초안
+## 10. 공통 타입 초안
 
-### 8.1 RunStatus
+### 10.1 RunStatus
 
 ```proto
 enum RunStatus {
@@ -245,24 +332,38 @@ enum RunStatus {
 }
 ```
 
-### 8.2 NodeStatus
+### 10.2 NodeStatus
 
 ```proto
 enum NodeStatus {
   NODE_STATUS_UNSPECIFIED = 0;
   NODE_STATUS_PENDING = 1;
   NODE_STATUS_READY = 2;
-  NODE_STATUS_RELEASING = 3;
-  NODE_STATUS_STARTING = 4;
-  NODE_STATUS_RUNNING = 5;
-  NODE_STATUS_SUCCEEDED = 6;
-  NODE_STATUS_FAILED = 7;
-  NODE_STATUS_CANCELED = 8;
-  NODE_STATUS_SKIPPED = 9;
+  NODE_STATUS_BUILDING_BINDINGS = 3;
+  NODE_STATUS_RESOLVING_INPUTS = 4;
+  NODE_STATUS_RELEASING = 5;
+  NODE_STATUS_STARTING = 6;
+  NODE_STATUS_RUNNING = 7;
+  NODE_STATUS_SUCCEEDED = 8;
+  NODE_STATUS_FAILED = 9;
+  NODE_STATUS_CANCELED = 10;
+  NODE_STATUS_SKIPPED = 11;
 }
 ```
 
-### 8.3 ExecutableRunSpec
+### 10.3 AttemptStatus
+
+```proto
+enum AttemptStatus {
+  ATTEMPT_STATUS_UNSPECIFIED = 0;
+  ATTEMPT_STATUS_PREPARED = 1;
+  ATTEMPT_STATUS_STARTED = 2;
+  ATTEMPT_STATUS_COMPLETED = 3;
+  ATTEMPT_STATUS_ERRORED = 4;
+}
+```
+
+### 10.4 ExecutableRunSpec
 
 초기 draft에서는 별도 proto 파일로 분리한다.
 이 문서에서는 필드 방향만 고정한다.
@@ -277,7 +378,7 @@ enum NodeStatus {
 
 ---
 
-## 9. Optional Kueue 정보
+## 11. Optional Kueue 정보
 
 ```proto
 message OptionalKueueInfo {
@@ -296,7 +397,7 @@ message OptionalKueueInfo {
 
 ---
 
-## 10. 예시 흐름
+## 12. 예시 흐름
 
 ### 10.1 submit 후 실행
 
@@ -312,7 +413,15 @@ message OptionalKueueInfo {
 
 ---
 
-## 11. 후속 문서
+## 13. 구현 메모
+
+- 현재 저장소 구현은 generated northbound proto stub 대신 JSON codec 기반 gRPC service registration을 사용한다.
+- 즉 transport는 gRPC이지만, public proto freeze는 아직 draft 단계다.
+- Sprint 5 기준으로는 최소한 현재 구현이 노출하는 RPC surface를 이 문서와 맞추는 것이 우선이다.
+
+---
+
+## 14. 후속 문서
 
 이 문서 다음으로 필요한 것은 아래와 같다.
 

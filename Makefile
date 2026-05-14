@@ -5,6 +5,7 @@ LOCALBIN := $(CURDIR)/bin
 REPORT_DIR := $(CURDIR)/reports
 GOCACHE_DIR := /tmp/jumi-gocache
 GOTMPDIR_DIR := /tmp/jumi-gotmp
+GOMODCACHE_DIR := /tmp/jumi-gomodcache
 
 GOLANGCI_LINT := $(LOCALBIN)/golangci-lint
 GOLANGCI_LINT_VERSION := v2.11.3
@@ -13,6 +14,9 @@ GOVULNCHECK := $(LOCALBIN)/govulncheck
 GOVULNCHECK_VERSION := v1.1.4
 
 GOENV := GOCACHE="$(GOCACHE_DIR)" GOTMPDIR="$(GOTMPDIR_DIR)"
+GOENV_SMOKE := GOCACHE="$(GOCACHE_DIR)" GOTMPDIR="$(GOTMPDIR_DIR)" GOMODCACHE="$(GOMODCACHE_DIR)"
+AH_PROTO_DIR ?= ../artifact-handoff/api/proto/ahv1
+JUMI_AH_PROTO_DIR := $(CURDIR)/pkg/handoff/ahv1
 
 PKGS_ALL := ./...
 PKGS_CORE := ./cmd/... ./pkg/...
@@ -20,7 +24,7 @@ PKGS_REGRESSION := ./cmd/... ./pkg/executor ./pkg/handoff ./pkg/metrics ./pkg/ob
 PKGS_COVER := ./cmd/... ./pkg/...
 PKGS_SECURITY := ./cmd/... ./pkg/...
 
-.PHONY: test test-regression coverage fmt vet lint lint-depguard lint-security vuln vuln-all golangci-lint govulncheck
+.PHONY: test test-regression coverage fmt vet lint lint-depguard lint-security vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build
 
 test:
 	@mkdir -p "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)"
@@ -104,3 +108,13 @@ vuln-all: govulncheck
 	@set +e; \
 	$(GOENV) $(GOVULNCHECK) ./... 2>&1 | tee "$(REPORT_DIR)/govulncheck-all.txt"; \
 	echo "govulncheck_all_exit=$$?" | tee "$(REPORT_DIR)/govulncheck-all.summary"
+
+handoff-proto-sync-check:
+	test -f "$(AH_PROTO_DIR)/ah_v1.pb.go"
+	test -f "$(AH_PROTO_DIR)/ah_v1_grpc.pb.go"
+	diff -u "$(AH_PROTO_DIR)/ah_v1.pb.go" "$(JUMI_AH_PROTO_DIR)/ah_v1.pb.go"
+	diff -u "$(AH_PROTO_DIR)/ah_v1_grpc.pb.go" "$(JUMI_AH_PROTO_DIR)/ah_v1_grpc.pb.go"
+
+smoke-tool-build:
+	@mkdir -p "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)" "$(GOMODCACHE_DIR)"
+	cd tools/jumi-smoke && $(GOENV_SMOKE) go build ./...

@@ -497,6 +497,8 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 				BindingName:        binding.BindingName,
 				ChildInputName:     binding.ChildInputName,
 				ProducerNodeID:     binding.ProducerNodeID,
+				ProducerAttemptID:  r.lookupNodeAttemptID(ctx, binding.ProducerNodeID),
+				ChildAttemptID:     attemptID,
 				ProducerOutputName: binding.ProducerOutputName,
 				ArtifactID:         binding.ArtifactID,
 				ConsumePolicy:      binding.ConsumePolicy,
@@ -543,7 +545,7 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 			if resolved.Decision == "remote_fetch" {
 				r.metrics.IncInputRemoteFetch()
 			}
-			if resolved.RequiresMaterialization {
+			if requiresMaterialization(resolved) {
 				r.metrics.IncInputMaterializations()
 			}
 			injectResolvedBindingEnv(&resolvedNode, binding, resolved)
@@ -636,7 +638,7 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 	finishedAt := time.Now().UTC()
 	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusCompleted, StartedAt: &startedAt, FinishedAt: &finishedAt, TerminalStopCause: firstNonEmpty(result.TerminalStopCause, "finished"), TerminalFailureReason: result.TerminalFailureReason})
 	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.succeeded", OccurredAt: finishedAt, Level: "info", StopCause: firstNonEmpty(result.TerminalStopCause, "finished")})
-	if err := r.registerNodeOutputs(context.Background(), handle); err != nil {
+	if err := r.registerNodeOutputs(context.Background(), handle, attemptID); err != nil {
 		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
 			RunID:                 r.runID,
 			NodeID:                r.node.NodeID,
@@ -649,7 +651,7 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 		})
 		return r.failNode(err, attemptID, "failed", "register_artifact_error")
 	}
-	if err := r.notifyNodeTerminal(context.Background(), "Succeeded"); err != nil {
+	if err := r.notifyNodeTerminal(context.Background(), "Succeeded", attemptID); err != nil {
 		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
 			RunID:                 r.runID,
 			NodeID:                r.node.NodeID,
@@ -689,7 +691,7 @@ func (r *nodeRunner) failNode(cause error, attemptID string, terminalStopCause s
 		current.FinishedAt = &finishedAt
 		return nil
 	})
-	if err := r.notifyNodeTerminal(context.Background(), "Failed"); err != nil {
+	if err := r.notifyNodeTerminal(context.Background(), "Failed", attemptID); err != nil {
 		appendEvent(context.Background(), r.registry, spec.EventRecord{
 			RunID:         r.runID,
 			NodeID:        r.node.NodeID,
@@ -720,7 +722,7 @@ func (r *nodeRunner) cancelNode(attemptID string, reason string) error {
 	}); err != nil {
 		return err
 	}
-	if err := r.notifyNodeTerminal(context.Background(), "Canceled"); err != nil {
+	if err := r.notifyNodeTerminal(context.Background(), "Canceled", attemptID); err != nil {
 		appendEvent(context.Background(), r.registry, spec.EventRecord{
 			RunID:         r.runID,
 			NodeID:        r.node.NodeID,
@@ -769,15 +771,16 @@ func (r *nodeRunner) unregisterHandle() {
 	delete(r.active.handles, r.node.NodeID)
 }
 
-func (r *nodeRunner) notifyNodeTerminal(ctx context.Context, terminalState string) error {
+func (r *nodeRunner) notifyNodeTerminal(ctx context.Context, terminalState string, attemptID string) error {
 	return r.handoff.NotifyNodeTerminal(ctx, handoff.NotifyNodeTerminalRequest{
 		SampleRunID:   firstNonEmpty(r.sampleRunID(ctx), r.runID),
 		NodeID:        r.node.NodeID,
+		AttemptID:     attemptID,
 		TerminalState: terminalState,
 	})
 }
 
-func (r *nodeRunner) registerNodeOutputs(ctx context.Context, handle backend.Handle) error {
+func (r *nodeRunner) registerNodeOutputs(ctx context.Context, handle backend.Handle, attemptID string) error {
 	if len(r.node.Outputs) == 0 {
 		return nil
 	}
@@ -793,13 +796,14 @@ func (r *nodeRunner) registerNodeOutputs(ctx context.Context, handle backend.Han
 		metadata := outputMetadata[outputName]
 		uri := firstNonEmpty(metadata.URI, artifactOutputURI(r.runID, r.node.NodeID, outputName))
 		if err := r.handoff.RegisterArtifact(ctx, handoff.RegisterArtifactRequest{
-			SampleRunID:    sampleRunID,
-			ProducerNodeID: r.node.NodeID,
-			OutputName:     outputName,
-			ArtifactID:     fmt.Sprintf("%s:%s:%s", sampleRunID, r.node.NodeID, outputName),
-			Digest:         metadata.Digest,
-			URI:            uri,
-			SizeBytes:      metadata.SizeBytes,
+			SampleRunID:       sampleRunID,
+			ProducerNodeID:    r.node.NodeID,
+			ProducerAttemptID: attemptID,
+			OutputName:        outputName,
+			ArtifactID:        fmt.Sprintf("%s/%s/%s/%s", sampleRunID, r.node.NodeID, attemptID, outputName),
+			Digest:            metadata.Digest,
+			URI:               uri,
+			SizeBytes:         metadata.SizeBytes,
 		}); err != nil {
 			return fmt.Errorf("register artifact %s for node %s: %w", outputName, r.node.NodeID, err)
 		}
@@ -847,13 +851,21 @@ func injectResolvedBindingEnv(node *spec.Node, binding spec.ArtifactBinding, res
 	keyBase := sanitizeEnvSegment(firstNonEmpty(binding.ChildInputName, binding.BindingName, binding.ProducerOutputName))
 	node.Env["JUMI_INPUT_"+keyBase+"_STATUS"] = resolved.ResolutionStatus
 	node.Env["JUMI_INPUT_"+keyBase+"_DECISION"] = resolved.Decision
-	node.Env["JUMI_INPUT_"+keyBase+"_URI"] = resolved.ArtifactURI
-	node.Env["JUMI_INPUT_"+keyBase+"_SOURCE_NODE"] = resolved.SourceNodeName
-	if resolved.RequiresMaterialization {
+	node.Env["JUMI_INPUT_"+keyBase+"_URI"] = resolved.MaterializationPlan.URI
+	node.Env["JUMI_INPUT_"+keyBase+"_SOURCE_NODE"] = resolved.PlacementIntent.NodeName
+	node.Env["JUMI_INPUT_"+keyBase+"_PLACEMENT_MODE"] = resolved.PlacementIntent.Mode
+	node.Env["JUMI_INPUT_"+keyBase+"_MATERIALIZATION_MODE"] = resolved.MaterializationPlan.Mode
+	node.Env["JUMI_INPUT_"+keyBase+"_EXPECTED_DIGEST"] = resolved.MaterializationPlan.ExpectedDigest
+	if requiresMaterialization(resolved) {
 		node.Env["JUMI_INPUT_"+keyBase+"_REQUIRES_MATERIALIZATION"] = "true"
 	} else {
 		node.Env["JUMI_INPUT_"+keyBase+"_REQUIRES_MATERIALIZATION"] = "false"
 	}
+}
+
+func requiresMaterialization(resolved handoff.ResolveBindingResponse) bool {
+	mode := strings.TrimSpace(resolved.MaterializationPlan.Mode)
+	return mode != "" && !strings.EqualFold(mode, "none")
 }
 
 func missingBindingFailureReason(resolved handoff.ResolveBindingResponse) string {
@@ -894,6 +906,19 @@ func (r *nodeRunner) sampleRunID(ctx context.Context) string {
 		return ""
 	}
 	return run.Spec.Run.SampleRunID
+}
+
+func (r *nodeRunner) lookupNodeAttemptID(ctx context.Context, nodeID string) string {
+	nodes, err := r.registry.ListNodes(ctx, r.runID)
+	if err != nil {
+		return ""
+	}
+	for _, node := range nodes {
+		if node.NodeID == nodeID {
+			return node.CurrentAttemptID
+		}
+	}
+	return ""
 }
 
 func (r *nodeRunner) resolveBindingWithRetry(ctx context.Context, req handoff.ResolveBindingRequest, attemptID string, bindingName string) (handoff.ResolveBindingResponse, error) {

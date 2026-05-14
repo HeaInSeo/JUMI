@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v7.34.1
-// source: api/proto/ah_v1.proto
+// source: ah_v1.proto
 
 package ahv1
 
@@ -308,5 +308,5 @@ var ArtifactHandoffResolver_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "api/proto/ah_v1.proto",
+	Metadata: "ah_v1.proto",
 }

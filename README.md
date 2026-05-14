@@ -25,3 +25,6 @@ Notes:
 - [JUMI gRPC Contract Draft](docs/JUMI_GRPC_CONTRACT_DRAFT.ko.md)
 - [JUMI Executable Run Spec Draft](docs/JUMI_EXECUTABLE_RUN_SPEC_DRAFT.ko.md)
 - [JUMI Sprint Plan](docs/JUMI_SPRINT_PLAN.ko.md)
+- [JUMI Scheduler Boundary](docs/JUMI_SCHEDULER_BOUNDARY.ko.md)
+- [JUMI Durable Registry Options](docs/JUMI_DURABLE_REGISTRY_OPTIONS.ko.md)
+- [JUMI Implementation Status 2026-05-14](docs/JUMI_IMPLEMENTATION_STATUS_2026-05-14.ko.md)
