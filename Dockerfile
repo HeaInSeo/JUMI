@@ -17,6 +17,10 @@ RUN apt-get update \
 
 COPY --from=builder /out/jumi /usr/local/bin/jumi
 
+# This Dockerfile intentionally builds the JUMI service image only.
+# The runtime-side artifact helper belongs to the DAG node runtime contract
+# and should eventually live in a separate node runtime base image/artifact.
+
 EXPOSE 8080 9090
 
 ENTRYPOINT ["/usr/local/bin/jumi"]

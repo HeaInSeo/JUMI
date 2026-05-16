@@ -9,6 +9,11 @@ import (
 	"github.com/HeaInSeo/JUMI/pkg/runtimehelper"
 )
 
+// Compatibility note:
+// This binary is the current in-repo implementation of the runtime-side
+// artifact helper. Conceptually it should become `node-artifact-runtime` and
+// move with the DAG node runtime image contract rather than the JUMI service
+// image contract.
 func main() {
 	runID := flag.String("run-id", os.Getenv("JUMI_RUN_ID"), "run identifier")
 	sampleRunID := flag.String("sample-run-id", os.Getenv("JUMI_SAMPLE_RUN_ID"), "sample run identifier")

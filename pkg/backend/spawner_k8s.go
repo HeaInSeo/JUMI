@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -29,6 +30,19 @@ import (
 const outputManifestModeMetadataKey = "jumi.outputManifestMode"
 const outputManifestModeWrappedShell = "wrapped-shell"
 const outputManifestModeRuntimeHelper = "runtime-helper"
+
+// LegacyArtifactHelperPath is the current compatibility path used by smoke/dev
+// images. It points to the helper binary when the node runtime image still
+// embeds the legacy name.
+const LegacyArtifactHelperPath = "/usr/local/bin/jumi-output-helper"
+
+// ArtifactHelperPath is the intended conceptual path after the helper is
+// renamed to node-artifact-runtime and delivered by the node runtime base image.
+const ArtifactHelperPath = "/usr/local/bin/node-artifact-runtime"
+
+// ArtifactHelperPathEnv optionally overrides the helper path for runtime image
+// migrations while keeping the legacy path as the default.
+const ArtifactHelperPathEnv = "JUMI_ARTIFACT_HELPER_PATH"
 
 type SpawnerK8sAdapter struct {
 	driver     spdriver.Driver
@@ -516,7 +530,11 @@ func wrapCommandForManifestExport(command []string, node spec.Node) []string {
 		return command
 	}
 	if mode == outputManifestModeRuntimeHelper {
-		wrapped := []string{"/usr/local/bin/jumi-output-helper"}
+		// Compatibility note:
+		// The runtime-side artifact helper belongs to the DAG node runtime image,
+		// not to the JUMI service image. Keep the legacy binary path as the default
+		// until the node runtime base image and explicit migration are introduced.
+		wrapped := []string{artifactHelperCommandPath()}
 		wrapped = append(wrapped, command...)
 		return wrapped
 	}
@@ -561,6 +579,16 @@ printf ']}\n' >> "$tmp_path"
 	wrapped := []string{"/bin/sh", "-ceu", script, "jumi-output-manifest"}
 	wrapped = append(wrapped, command...)
 	return wrapped
+}
+
+func artifactHelperCommandPath() string {
+	if configured := strings.TrimSpace(os.Getenv(ArtifactHelperPathEnv)); configured != "" {
+		return configured
+	}
+	// TODO(runtime-contract): switch the default to ArtifactHelperPath after the
+	// node runtime base image migration is explicit and all smoke/tool images no
+	// longer depend on the legacy helper name.
+	return LegacyArtifactHelperPath
 }
 
 func manifestExportMode(node spec.Node) string {

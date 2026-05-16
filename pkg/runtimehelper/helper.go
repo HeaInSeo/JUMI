@@ -16,6 +16,8 @@ import (
 	"github.com/HeaInSeo/JUMI/pkg/provenance"
 )
 
+// Config describes the runtime-side artifact helper contract executed inside
+// the DAG node runtime container after wrapping the user command.
 type Config struct {
 	RunID              string
 	SampleRunID        string

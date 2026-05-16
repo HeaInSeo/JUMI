@@ -66,7 +66,10 @@ func TestToSpawnerRunSpecMapsRuntimeContractFields(t *testing.T) {
 func TestToSpawnerRunSpecMapsServiceAccountFromSmokeFixtureStyleNode(t *testing.T) {
 	run := spec.RunRecord{RunID: "run-fixture"}
 	node := spec.Node{
-		NodeID:             "produce",
+		NodeID: "produce",
+		// Test shortcut only:
+		// this uses the JUMI image as a node runtime image because the current
+		// smoke image still carries the legacy helper binary for compatibility.
 		Image:              "harbor.10.113.24.96.nip.io/batch-int/jumi:test",
 		Command:            []string{"sh", "-c", "echo hi"},
 		ServiceAccountName: "jumi",
@@ -83,6 +86,24 @@ func TestToSpawnerRunSpecMapsServiceAccountFromSmokeFixtureStyleNode(t *testing.
 	}
 	if got.Command[0] != "/usr/local/bin/jumi-output-helper" {
 		t.Fatalf("runtime-helper command prefix = %q, want /usr/local/bin/jumi-output-helper", got.Command[0])
+	}
+}
+
+func TestToSpawnerRunSpecUsesConfiguredArtifactHelperPath(t *testing.T) {
+	t.Setenv(ArtifactHelperPathEnv, ArtifactHelperPath)
+	run := spec.RunRecord{RunID: "run-fixture"}
+	node := spec.Node{
+		NodeID:   "produce",
+		Image:    "helper-image:test",
+		Command:  []string{"sh", "-c", "echo hi"},
+		Outputs:  []string{"report"},
+		Metadata: map[string]string{"jumi.outputManifestMode": "runtime-helper"},
+	}
+
+	got := toSpawnerRunSpec(run, node)
+
+	if got.Command[0] != ArtifactHelperPath {
+		t.Fatalf("runtime-helper command prefix = %q, want %q", got.Command[0], ArtifactHelperPath)
 	}
 }
 
