@@ -3,7 +3,7 @@ module github.com/HeaInSeo/JUMI
 go 1.25.10
 
 require (
-	github.com/HeaInSeo/spawner v0.0.0
+	github.com/HeaInSeo/spawner v0.0.0-20260516072135-342ee26787ba
 	github.com/prometheus/client_golang v1.23.2
 	github.com/seoyhaein/dag-go v0.0.10-0.20260403082453-9c3e609ade22
 	go.opentelemetry.io/otel/exporters/prometheus v0.65.0
@@ -15,8 +15,6 @@ require (
 	k8s.io/apimachinery v0.35.3
 	k8s.io/client-go v0.35.3
 )
-
-replace github.com/HeaInSeo/spawner => ../spawner
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect

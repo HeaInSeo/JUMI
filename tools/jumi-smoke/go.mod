@@ -8,7 +8,7 @@ require (
 )
 
 require (
-	github.com/HeaInSeo/spawner v0.0.0 // indirect
+	github.com/HeaInSeo/spawner v0.0.0-20260516072135-342ee26787ba // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -74,5 +74,3 @@ require (
 )
 
 replace github.com/HeaInSeo/JUMI => ../..
-
-replace github.com/HeaInSeo/spawner => ../../../spawner
