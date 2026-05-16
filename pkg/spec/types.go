@@ -149,6 +149,7 @@ type NodeObservation struct {
 	KueuePendingReason  string `json:"kueuePendingReason,omitempty"`
 	KueueAdmitted       bool   `json:"kueueAdmitted,omitempty"`
 	PodName             string `json:"podName,omitempty"`
+	PodNodeName         string `json:"podNodeName,omitempty"`
 	PodScheduled        bool   `json:"podScheduled,omitempty"`
 	UnschedulableReason string `json:"unschedulableReason,omitempty"`
 }

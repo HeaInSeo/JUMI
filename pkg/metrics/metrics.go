@@ -23,6 +23,12 @@ type Metrics struct {
 	inputResolveRequests  metric.Int64Counter
 	inputRemoteFetch      metric.Int64Counter
 	inputMaterializations metric.Int64Counter
+	localityPreferred     metric.Int64Counter
+	localityMatched       metric.Int64Counter
+	localityMiss          metric.Int64Counter
+	localityFallbackStart metric.Int64Counter
+	localityFallbackOK    metric.Int64Counter
+	localityFallbackFail  metric.Int64Counter
 	sampleRunsFinalized   metric.Int64Counter
 	gcEvaluateRequests    metric.Int64Counter
 	cleanupBacklogObjects metric.Float64Gauge
@@ -70,6 +76,12 @@ func New() (*Metrics, error) {
 		{&m.inputResolveRequests, "jumi_input_resolve_requests"},
 		{&m.inputRemoteFetch, "jumi_input_remote_fetch"},
 		{&m.inputMaterializations, "jumi_input_materializations"},
+		{&m.localityPreferred, "jumi_locality_preferred"},
+		{&m.localityMatched, "jumi_locality_matched"},
+		{&m.localityMiss, "jumi_locality_miss"},
+		{&m.localityFallbackStart, "jumi_locality_fallback_started"},
+		{&m.localityFallbackOK, "jumi_locality_fallback_succeeded"},
+		{&m.localityFallbackFail, "jumi_locality_fallback_failed"},
 		{&m.sampleRunsFinalized, "jumi_sample_runs_finalized"},
 		{&m.gcEvaluateRequests, "jumi_gc_evaluate_requests"},
 		{&m.handoffResolve, "jumi_handoff_resolve"},
@@ -106,6 +118,12 @@ func (m *Metrics) IncArtifactsRegistered()   { m.artifactsRegistered.Add(context
 func (m *Metrics) IncInputResolveRequests()  { m.inputResolveRequests.Add(context.Background(), 1) }
 func (m *Metrics) IncInputRemoteFetch()      { m.inputRemoteFetch.Add(context.Background(), 1) }
 func (m *Metrics) IncInputMaterializations() { m.inputMaterializations.Add(context.Background(), 1) }
+func (m *Metrics) IncLocalityPreferred()     { m.localityPreferred.Add(context.Background(), 1) }
+func (m *Metrics) IncLocalityMatched()       { m.localityMatched.Add(context.Background(), 1) }
+func (m *Metrics) IncLocalityMiss()          { m.localityMiss.Add(context.Background(), 1) }
+func (m *Metrics) IncLocalityFallbackStart() { m.localityFallbackStart.Add(context.Background(), 1) }
+func (m *Metrics) IncLocalityFallbackOK()    { m.localityFallbackOK.Add(context.Background(), 1) }
+func (m *Metrics) IncLocalityFallbackFail()  { m.localityFallbackFail.Add(context.Background(), 1) }
 func (m *Metrics) IncSampleRunsFinalized()   { m.sampleRunsFinalized.Add(context.Background(), 1) }
 func (m *Metrics) IncGCEvaluateRequests()    { m.gcEvaluateRequests.Add(context.Background(), 1) }
 func (m *Metrics) SetCleanupBacklogObjects(v float64) {

@@ -174,14 +174,17 @@ func (a *SpawnerK8sAdapter) ObserveNode(ctx context.Context, handle Handle) (*Op
 	default:
 		return nil, nil
 	}
-	ok := true
-	if !ok {
-		return nil, nil
-	}
-	if h.queueName == "" || h.jobName == "" || a.observer == nil {
+	if h.jobName == "" || a.observer == nil {
 		return nil, nil
 	}
 	info := &OptionalKueueInfo{Observed: false, QueueName: h.queueName}
+	if h.queueName == "" {
+		if err := a.fillPodObservation(ctx, h.jobName, info); err != nil {
+			return nil, nil
+		}
+		info.Observed = true
+		return info, nil
+	}
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		obs, err := a.observer.ObserveWorkload(ctx, h.jobName)
@@ -191,11 +194,7 @@ func (a *SpawnerK8sAdapter) ObserveNode(ctx context.Context, handle Handle) (*Op
 			info.PendingReason = obs.PendingReason
 			info.Admitted = obs.Admitted
 			if obs.Admitted {
-				if podObs, podErr := a.observer.ObservePod(ctx, h.jobName); podErr == nil {
-					info.PodName = podObs.PodName
-					info.Scheduled = podObs.Scheduled
-					info.UnschedulableReason = podObs.UnschedulableReason
-				}
+				_ = a.fillPodObservation(ctx, h.jobName, info)
 			}
 			return info, nil
 		}
@@ -206,6 +205,28 @@ func (a *SpawnerK8sAdapter) ObserveNode(ctx context.Context, handle Handle) (*Op
 		}
 	}
 	return info, nil
+}
+
+func (a *SpawnerK8sAdapter) fillPodObservation(ctx context.Context, jobName string, info *OptionalKueueInfo) error {
+	if info == nil {
+		return fmt.Errorf("nil observation info")
+	}
+	podObs, err := a.observer.ObservePod(ctx, jobName)
+	if err != nil {
+		return err
+	}
+	info.PodName = podObs.PodName
+	info.Scheduled = podObs.Scheduled
+	info.UnschedulableReason = podObs.UnschedulableReason
+	if a.clientset == nil || podObs.PodName == "" {
+		return nil
+	}
+	pod, err := a.clientset.CoreV1().Pods(a.ns).Get(ctx, podObs.PodName, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	info.PodNodeName = pod.Spec.NodeName
+	return nil
 }
 
 func (a *SpawnerK8sAdapter) WaitNode(ctx context.Context, handle Handle) (ExecutionResult, error) {

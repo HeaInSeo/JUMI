@@ -58,6 +58,7 @@ type OptionalKueueInfo struct {
 	PendingReason       string `json:"pendingReason,omitempty"`
 	Admitted            bool   `json:"admitted,omitempty"`
 	PodName             string `json:"podName,omitempty"`
+	PodNodeName         string `json:"podNodeName,omitempty"`
 	Scheduled           bool   `json:"scheduled,omitempty"`
 	UnschedulableReason string `json:"unschedulableReason,omitempty"`
 }

@@ -32,6 +32,7 @@ type fakeAdapter struct {
 	canceled   map[string]bool
 	prepared   map[string]spec.Node
 	outputs    map[string]map[string]backend.OutputMetadata
+	observe    *backend.OptionalKueueInfo
 	startDelay time.Duration
 }
 
@@ -797,7 +798,7 @@ func (f *fakeAdapter) StartNode(ctx context.Context, prepared backend.PreparedNo
 }
 
 func (f *fakeAdapter) ObserveNode(_ context.Context, _ backend.Handle) (*backend.OptionalKueueInfo, error) {
-	return nil, nil
+	return f.observe, nil
 }
 
 func (f *fakeAdapter) WaitNode(ctx context.Context, handle backend.Handle) (backend.ExecutionResult, error) {
@@ -964,6 +965,90 @@ func TestDagEngineKeepsOriginalFailureReasonWhenNotifyNodeTerminalFailsOnFailedN
 	assertEventPresent(t, reg, record.RunID, "node.handoff.notify_failed", "notify_node_terminal_error")
 }
 
+func TestDagEngineRecordsLocalityMissAndFallbackSuccess(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{
+		failOn: map[string]bool{},
+		observe: &backend.OptionalKueueInfo{
+			Observed:    true,
+			PodName:     "pod-consume",
+			PodNodeName: "node-b",
+			Scheduled:   true,
+		},
+	}
+	handoffClient := &fakeHandoffClient{
+		response: handoff.ResolveBindingResponse{
+			ResolutionStatus: "RESOLVED",
+			Decision:         "remote_fetch",
+			PlacementIntent: handoff.PlacementIntent{
+				Mode:     "preferred_node",
+				NodeName: "node-a",
+			},
+			MaterializationPlan: handoff.MaterializationPlan{
+				Mode: "remote_fetch",
+				URI:  "http://artifact.local/output",
+			},
+		},
+	}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run: spec.RunMetadata{RunID: "run-locality-miss", SampleRunID: "sample-locality-miss", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{
+			Nodes: []spec.Node{
+				{NodeID: "produce", Image: "busybox:1.36"},
+				{NodeID: "consume", Image: "busybox:1.36", ArtifactBindings: []spec.ArtifactBinding{{
+					BindingName:        "dataset",
+					ChildInputName:     "dataset",
+					ProducerNodeID:     "produce",
+					ProducerOutputName: "report",
+					ConsumePolicy:      "RemoteOK",
+					Required:           true,
+				}}},
+			},
+			Edges: [][]string{{"produce", "consume"}},
+		},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "produce", Status: spec.NodeStatusPending}, {RunID: record.RunID, NodeID: "consume", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusSucceeded)
+
+	runNodes, err := reg.ListNodes(context.Background(), record.RunID)
+	if err != nil {
+		t.Fatalf("ListNodes() error = %v", err)
+	}
+	for _, node := range runNodes {
+		if node.NodeID != "consume" {
+			continue
+		}
+		if node.Observation.PodNodeName != "node-b" {
+			t.Fatalf("consume observation podNodeName = %q, want node-b", node.Observation.PodNodeName)
+		}
+	}
+
+	assertEventTypePresent(t, reg, record.RunID, "node.locality.preferred")
+	assertEventTypePresent(t, reg, record.RunID, "node.locality.missed")
+	assertEventTypePresent(t, reg, record.RunID, "node.locality.fallback_started")
+	assertEventTypePresent(t, reg, record.RunID, "node.locality.fallback_succeeded")
+
+	rendered := engine.Metrics().Render()
+	for _, want := range []string{
+		"jumi_locality_preferred_total 1",
+		"jumi_locality_miss_total 1",
+		"jumi_locality_fallback_started_total 1",
+		"jumi_locality_fallback_succeeded_total 1",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("metrics missing %q in %s", want, rendered)
+		}
+	}
+}
+
 func TestDagEngineCancelRunningNode(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
 	adapter := &fakeAdapter{
@@ -1110,4 +1195,18 @@ func assertEventAbsent(t *testing.T, reg registry.Registry, runID string, eventT
 			t.Fatalf("unexpected event type=%q found", eventType)
 		}
 	}
+}
+
+func assertEventTypePresent(t *testing.T, reg registry.Registry, runID string, eventType string) {
+	t.Helper()
+	events, err := reg.ListEvents(context.Background(), runID, 0)
+	if err != nil {
+		t.Fatalf("ListEvents() error = %v", err)
+	}
+	for _, event := range events {
+		if event.Type == eventType {
+			return
+		}
+	}
+	t.Fatalf("event type=%q not found", eventType)
 }

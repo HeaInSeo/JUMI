@@ -439,6 +439,19 @@ type nodeRunner struct {
 	runID    string
 	node     spec.Node
 	active   *activeRun
+
+	localityHints           []bindingLocalityHint
+	localityFallbackStarted bool
+	localityActualNode      string
+}
+
+type bindingLocalityHint struct {
+	BindingName             string
+	ChildInputName          string
+	PreferredNodeName       string
+	PlacementMode           string
+	Decision                string
+	RequiresMaterialization bool
 }
 
 const (
@@ -548,6 +561,7 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 			if requiresMaterialization(resolved) {
 				r.metrics.IncInputMaterializations()
 			}
+			r.recordLocalityHint(binding, resolved, attemptID)
 			injectResolvedBindingEnv(&resolvedNode, binding, resolved)
 		}
 		r.node = resolvedNode
@@ -590,8 +604,9 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 	}
 	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusStarted, StartedAt: &startedAt})
 	bottleneck := "running"
-	if r.node.Kueue != nil && r.node.Kueue.QueueName != "" {
+	if r.shouldObserveScheduling() {
 		if kueueInfo, obsErr := r.adapter.ObserveNode(ctx, handle); obsErr == nil && kueueInfo != nil && kueueInfo.Observed {
+			r.localityActualNode = kueueInfo.PodNodeName
 			_ = r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 				current.Observation = spec.NodeObservation{
 					KueueObserved:       kueueInfo.Observed,
@@ -600,11 +615,13 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 					KueuePendingReason:  kueueInfo.PendingReason,
 					KueueAdmitted:       kueueInfo.Admitted,
 					PodName:             kueueInfo.PodName,
+					PodNodeName:         kueueInfo.PodNodeName,
 					PodScheduled:        kueueInfo.Scheduled,
 					UnschedulableReason: kueueInfo.UnschedulableReason,
 				}
 				return nil
 			})
+			r.observeLocality(kueueInfo, attemptID)
 			if !kueueInfo.Admitted {
 				bottleneck = "kueue_pending"
 				appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.kueue.pending", OccurredAt: time.Now().UTC(), Level: "info", Message: firstNonEmpty(kueueInfo.PendingReason, "waiting for Kueue admission")})
@@ -628,6 +645,7 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.running", OccurredAt: startedAt, Level: "info", Message: "backend start completed and node is running"})
 	result, err := r.adapter.WaitNode(ctx, handle)
 	if err != nil {
+		r.recordLocalityFallbackFailure(attemptID)
 		if r.isRunCanceled() || result.TerminalStopCause == "canceled" {
 			return r.cancelNode(attemptID, firstNonEmpty(result.TerminalFailureReason, "cancellation_requested"))
 		}
@@ -637,8 +655,10 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 	}
 	finishedAt := time.Now().UTC()
 	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusCompleted, StartedAt: &startedAt, FinishedAt: &finishedAt, TerminalStopCause: firstNonEmpty(result.TerminalStopCause, "finished"), TerminalFailureReason: result.TerminalFailureReason})
+	r.recordLocalityFallbackSuccess(attemptID)
 	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.succeeded", OccurredAt: finishedAt, Level: "info", StopCause: firstNonEmpty(result.TerminalStopCause, "finished")})
 	if err := r.registerNodeOutputs(context.Background(), handle, attemptID); err != nil {
+		r.recordLocalityFallbackFailure(attemptID)
 		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
 			RunID:                 r.runID,
 			NodeID:                r.node.NodeID,
@@ -652,6 +672,7 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 		return r.failNode(err, attemptID, "failed", "register_artifact_error")
 	}
 	if err := r.notifyNodeTerminal(context.Background(), "Succeeded", attemptID); err != nil {
+		r.recordLocalityFallbackFailure(attemptID)
 		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
 			RunID:                 r.runID,
 			NodeID:                r.node.NodeID,
@@ -678,6 +699,7 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 }
 
 func (r *nodeRunner) failNode(cause error, attemptID string, terminalStopCause string, failureReason string) error {
+	r.recordLocalityFallbackFailure(attemptID)
 	if r.isRunCanceled() {
 		return r.cancelNode(attemptID, "cancellation_requested")
 	}
@@ -736,6 +758,114 @@ func (r *nodeRunner) cancelNode(attemptID string, reason string) error {
 		})
 	}
 	return nil
+}
+
+func (r *nodeRunner) shouldObserveScheduling() bool {
+	return (r.node.Kueue != nil && r.node.Kueue.QueueName != "") || len(r.localityHints) > 0
+}
+
+func (r *nodeRunner) recordLocalityHint(binding spec.ArtifactBinding, resolved handoff.ResolveBindingResponse, attemptID string) {
+	if resolved.PlacementIntent.NodeName == "" {
+		return
+	}
+	hint := bindingLocalityHint{
+		BindingName:             binding.BindingName,
+		ChildInputName:          binding.ChildInputName,
+		PreferredNodeName:       resolved.PlacementIntent.NodeName,
+		PlacementMode:           resolved.PlacementIntent.Mode,
+		Decision:                resolved.Decision,
+		RequiresMaterialization: requiresMaterialization(resolved),
+	}
+	r.localityHints = append(r.localityHints, hint)
+	r.metrics.IncLocalityPreferred()
+	appendEvent(context.Background(), r.registry, spec.EventRecord{
+		RunID:      r.runID,
+		NodeID:     r.node.NodeID,
+		AttemptID:  attemptID,
+		Type:       "node.locality.preferred",
+		OccurredAt: time.Now().UTC(),
+		Level:      "info",
+		Message:    fmt.Sprintf("binding=%s preferredNode=%s mode=%s", firstNonEmpty(binding.ChildInputName, binding.BindingName), hint.PreferredNodeName, firstNonEmpty(hint.PlacementMode, "unspecified")),
+	})
+}
+
+func (r *nodeRunner) observeLocality(info *backend.OptionalKueueInfo, attemptID string) {
+	if info == nil || info.PodNodeName == "" {
+		return
+	}
+	for _, hint := range r.localityHints {
+		bindingName := firstNonEmpty(hint.ChildInputName, hint.BindingName)
+		if info.PodNodeName == hint.PreferredNodeName {
+			r.metrics.IncLocalityMatched()
+			appendEvent(context.Background(), r.registry, spec.EventRecord{
+				RunID:      r.runID,
+				NodeID:     r.node.NodeID,
+				AttemptID:  attemptID,
+				Type:       "node.locality.matched",
+				OccurredAt: time.Now().UTC(),
+				Level:      "info",
+				Message:    fmt.Sprintf("binding=%s podNode=%s preferredNode=%s", bindingName, info.PodNodeName, hint.PreferredNodeName),
+			})
+			continue
+		}
+		r.metrics.IncLocalityMiss()
+		appendEvent(context.Background(), r.registry, spec.EventRecord{
+			RunID:      r.runID,
+			NodeID:     r.node.NodeID,
+			AttemptID:  attemptID,
+			Type:       "node.locality.missed",
+			OccurredAt: time.Now().UTC(),
+			Level:      "warn",
+			Message:    fmt.Sprintf("binding=%s podNode=%s preferredNode=%s", bindingName, info.PodNodeName, hint.PreferredNodeName),
+		})
+		if hint.Decision == "remote_fetch" || hint.RequiresMaterialization {
+			r.localityFallbackStarted = true
+			r.metrics.IncLocalityFallbackStart()
+			appendEvent(context.Background(), r.registry, spec.EventRecord{
+				RunID:      r.runID,
+				NodeID:     r.node.NodeID,
+				AttemptID:  attemptID,
+				Type:       "node.locality.fallback_started",
+				OccurredAt: time.Now().UTC(),
+				Level:      "info",
+				Message:    fmt.Sprintf("binding=%s decision=%s materialization=%t", bindingName, hint.Decision, hint.RequiresMaterialization),
+			})
+		}
+	}
+}
+
+func (r *nodeRunner) recordLocalityFallbackSuccess(attemptID string) {
+	if !r.localityFallbackStarted {
+		return
+	}
+	r.metrics.IncLocalityFallbackOK()
+	appendEvent(context.Background(), r.registry, spec.EventRecord{
+		RunID:      r.runID,
+		NodeID:     r.node.NodeID,
+		AttemptID:  attemptID,
+		Type:       "node.locality.fallback_succeeded",
+		OccurredAt: time.Now().UTC(),
+		Level:      "info",
+		Message:    firstNonEmpty(r.localityActualNode, "fallback preserved node success"),
+	})
+	r.localityFallbackStarted = false
+}
+
+func (r *nodeRunner) recordLocalityFallbackFailure(attemptID string) {
+	if !r.localityFallbackStarted {
+		return
+	}
+	r.metrics.IncLocalityFallbackFail()
+	appendEvent(context.Background(), r.registry, spec.EventRecord{
+		RunID:      r.runID,
+		NodeID:     r.node.NodeID,
+		AttemptID:  attemptID,
+		Type:       "node.locality.fallback_failed",
+		OccurredAt: time.Now().UTC(),
+		Level:      "error",
+		Message:    firstNonEmpty(r.localityActualNode, "fallback path failed"),
+	})
+	r.localityFallbackStarted = false
 }
 
 func (r *nodeRunner) effectiveCancellationReason(reason string) string {

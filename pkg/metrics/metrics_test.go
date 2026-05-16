@@ -13,6 +13,9 @@ func TestRegistryRender(t *testing.T) {
 	reg.IncJobsCreated()
 	reg.IncArtifactsRegistered()
 	reg.IncInputResolveRequests()
+	reg.IncLocalityPreferred()
+	reg.IncLocalityMiss()
+	reg.IncLocalityFallbackStart()
 	reg.IncSampleRunsFinalized()
 	reg.IncGCEvaluateRequests()
 	reg.SetCleanupBacklogObjects(2)
@@ -26,6 +29,15 @@ func TestRegistryRender(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "jumi_input_resolve_requests_total 1") {
 		t.Fatalf("missing input resolve counter in render: %s", rendered)
+	}
+	if !strings.Contains(rendered, "jumi_locality_preferred_total 1") {
+		t.Fatalf("missing locality preferred counter in render: %s", rendered)
+	}
+	if !strings.Contains(rendered, "jumi_locality_miss_total 1") {
+		t.Fatalf("missing locality miss counter in render: %s", rendered)
+	}
+	if !strings.Contains(rendered, "jumi_locality_fallback_started_total 1") {
+		t.Fatalf("missing locality fallback counter in render: %s", rendered)
 	}
 	if !strings.Contains(rendered, "jumi_sample_runs_finalized_total 1") {
 		t.Fatalf("missing sample-run finalized counter in render: %s", rendered)
