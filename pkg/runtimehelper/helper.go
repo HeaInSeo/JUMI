@@ -18,6 +18,12 @@ import (
 
 // Config describes the runtime-side artifact helper contract executed inside
 // the DAG node runtime container after wrapping the user command.
+//
+// Compatibility note:
+// The long-term source of truth for this helper is the separate
+// `github.com/HeaInSeo/node-artifact-runtime` repository. This package remains
+// in JUMI temporarily so helper extraction can be validated without breaking
+// runtime behavior all at once.
 type Config struct {
 	RunID              string
 	SampleRunID        string

@@ -13,6 +13,8 @@
 
 - `github.com/HeaInSeo/node-artifact-runtime`
 
+현재 helper source scaffold와 연동 문서의 초기 이관은 이미 위 repo에서 시작했다.
+
 ## 2. 왜 별도 repo 인가
 
 이 helper는:
