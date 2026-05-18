@@ -52,7 +52,7 @@ thresholds:
   - name: "ah_fallback_smoke"
     metric: "ah_fallback_smoke"
     operator: ">="
-    value: 1
+    value: 0
     severity: "fail"
   - name: "ah_gc_backlog_bytes_smoke"
     metric: "ah_gc_backlog_bytes_smoke"

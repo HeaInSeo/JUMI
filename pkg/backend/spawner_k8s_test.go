@@ -87,8 +87,8 @@ func TestToSpawnerRunSpecMapsServiceAccountFromSmokeFixtureStyleNode(t *testing.
 	if value, ok := optionalStringField(got, "ServiceAccountName"); ok && value != "jumi" {
 		t.Fatalf("ServiceAccountName = %q, want jumi", value)
 	}
-	if got.Command[0] != "/usr/local/bin/jumi-output-helper" {
-		t.Fatalf("runtime-helper command prefix = %q, want /usr/local/bin/jumi-output-helper", got.Command[0])
+	if got.Command[0] != ArtifactHelperPath {
+		t.Fatalf("runtime-helper command prefix = %q, want %q", got.Command[0], ArtifactHelperPath)
 	}
 	if len(got.Command) < 5 || got.Command[1] != "run" || got.Command[2] != "--" {
 		t.Fatalf("runtime-helper command prefix = %q, want [helper run -- ...]", got.Command[:min(len(got.Command), 4)])
@@ -173,8 +173,8 @@ func TestToSpawnerRunSpecWrapsCommandForRuntimeHelperMode(t *testing.T) {
 	if len(got.Command) < 6 {
 		t.Fatalf("runtime-helper command length = %d, want >= 6", len(got.Command))
 	}
-	if got.Command[0] != "/usr/local/bin/jumi-output-helper" {
-		t.Fatalf("runtime-helper command prefix = %q, want /usr/local/bin/jumi-output-helper", got.Command[0])
+	if got.Command[0] != ArtifactHelperPath {
+		t.Fatalf("runtime-helper command prefix = %q, want %q", got.Command[0], ArtifactHelperPath)
 	}
 	if got.Command[1] != "run" || got.Command[2] != "--" {
 		t.Fatalf("runtime-helper subcommand = %q, want [run --]", got.Command[1:3])

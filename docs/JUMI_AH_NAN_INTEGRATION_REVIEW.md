@@ -90,6 +90,12 @@ child node 실행
 - `PlacementIntent`를 PodSpec에 반영
 - required node conflict 처리
 
+참고:
+- 현재 live smoke는 pre-scheduling planning-mode resolve만 사용한다.
+- 이 경로에서는 AH가 `remote_fetch` 계획을 반환해도 `ah_fallback_total`을 올리지 않는 것이 정상이다.
+- 즉 `jumi_input_remote_fetch_total` 증가와 `ah_fallback_total == 0`은 동시에 성립할 수 있다.
+- `ah_fallback_total`은 target node가 구체화된 post-scheduling fallback execution 의미로 해석해야 한다.
+
 ### Phase 4: materialization baseline
 
 목표: remote_fetch/local_reuse가 실제 input 준비로 이어진다.

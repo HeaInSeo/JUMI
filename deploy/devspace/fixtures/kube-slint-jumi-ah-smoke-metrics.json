@@ -35,7 +35,7 @@
     "jumi_gc_evaluate_requests_total": 1,
     "ah_artifacts_registered_total": 1,
     "ah_resolve_requests_total": 1,
-    "ah_fallback_total": 1,
+    "ah_fallback_total": 0,
     "ah_gc_backlog_bytes": 0
   }
 }

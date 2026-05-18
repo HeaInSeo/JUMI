@@ -154,7 +154,7 @@ runtime helper 경로는 개념적으로 아래와 같다.
 /usr/local/bin/nan run -- <user command>
 ```
 
-현재 코드와 fixture는 호환성을 위해 legacy 경로를 아직 사용한다.
+현재 기준 경로는 `nan`이며, legacy 이름은 호환 alias로만 남긴다.
 
 ```text
 /usr/local/bin/jumi-output-helper run -- <user command>
@@ -162,8 +162,8 @@ runtime helper 경로는 개념적으로 아래와 같다.
 
 호환성 규칙:
 
-- existing code may still refer to `/usr/local/bin/jumi-output-helper`
-- migration이 explicit해질 때까지 legacy path를 유지한다
+- legacy fixture 또는 runtime image는 `/usr/local/bin/jumi-output-helper` alias를 여전히 사용할 수 있다
+- migration이 끝날 때까지 legacy alias를 유지하되, canonical path는 `/usr/local/bin/nan`이다
 
 ## 7. Current v0 Behavior
 

@@ -334,7 +334,7 @@ func (a *SpawnerK8sAdapter) CollectOutputMetadata(ctx context.Context, handle Ha
 		return nil, fmt.Errorf("read artifacts manifest from pod termination message %s: %w", pod.Name, err)
 	}
 	if len(raw) == 0 {
-		raw, err = a.readArtifactsManifest(ctx, pod.Name)
+		raw, err = a.readArtifactsManifest(ctx, namespace, pod.Name, manifestPathForNode(node))
 		if err != nil {
 			return nil, ErrOutputMetadataUnavailable
 		}
@@ -517,15 +517,30 @@ func terminatedMessage(state *corev1.ContainerStateTerminated) string {
 	return state.Message
 }
 
-func (a *SpawnerK8sAdapter) readArtifactsManifest(ctx context.Context, podName string) ([]byte, error) {
+func manifestPathForNode(node spec.Node) string {
+	if node.Env != nil {
+		if path := strings.TrimSpace(node.Env["JUMI_OUTPUT_MANIFEST_PATH"]); path != "" {
+			return path
+		}
+	}
+	return provenance.DefaultArtifactsManifestPath
+}
+
+func (a *SpawnerK8sAdapter) readArtifactsManifest(ctx context.Context, namespace string, podName string, manifestPath string) ([]byte, error) {
+	if strings.TrimSpace(namespace) == "" {
+		namespace = a.ns
+	}
+	if strings.TrimSpace(manifestPath) == "" {
+		manifestPath = provenance.DefaultArtifactsManifestPath
+	}
 	req := a.clientset.CoreV1().RESTClient().Post().
-		Namespace(a.ns).
+		Namespace(namespace).
 		Resource("pods").
 		Name(podName).
 		SubResource("exec")
 	req.VersionedParams(&corev1.PodExecOptions{
 		Container: "main",
-		Command:   []string{"cat", provenance.DefaultArtifactsManifestPath},
+		Command:   []string{"cat", manifestPath},
 		Stdout:    true,
 		Stderr:    true,
 	}, scheme.ParameterCodec)
@@ -665,11 +680,11 @@ func wrapCommandForManifestExport(command []string, node spec.Node) []string {
 	if mode == outputManifestModeRuntimeHelper {
 		// Compatibility note:
 		// The runtime-side artifact helper belongs to the DAG node runtime image,
-		// not to the JUMI service image. Keep the legacy binary path as the default
-		// until the node runtime base image and explicit migration are introduced.
+		// not to the JUMI service image. Use the canonical nan path by default and
+		// keep the legacy helper name only as a transitional runtime image alias.
 		//
 		// TODO(runtime-contract): remove this obsolete compatibility path after
-		// JUMI switches to explicit `nan run --contract ... -- <cmd>` injection.
+		// the node runtime images no longer carry the legacy helper alias.
 		wrapped := []string{artifactHelperCommandPath(), "run", "--"}
 		wrapped = append(wrapped, command...)
 		return wrapped
@@ -723,10 +738,7 @@ func artifactHelperCommandPath() string {
 	if configured := strings.TrimSpace(os.Getenv(ArtifactHelperPathEnv)); configured != "" {
 		return configured
 	}
-	// TODO(runtime-contract): switch the default to ArtifactHelperPath after the
-	// node runtime base image migration is explicit and all smoke/tool images no
-	// longer depend on the legacy helper name.
-	return LegacyArtifactHelperPath
+	return ArtifactHelperPath
 }
 
 func manifestExportMode(node spec.Node) string {
