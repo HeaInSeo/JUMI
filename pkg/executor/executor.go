@@ -469,6 +469,8 @@ const (
 	resolveBindingRetryDelay  = 100 * time.Millisecond
 )
 
+const hostnameNodeSelectorKey = "kubernetes.io/hostname"
+
 func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 	if r.node.TimeoutPolicy.Seconds > 0 {
 		var cancel context.CancelFunc
@@ -564,6 +566,20 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 		}
 	}
 	injectRuntimeContextEnv(&executionNode, run, attemptID)
+	if err := applyPlacementHints(&executionNode, r.localityHints); err != nil {
+		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
+			RunID:                 r.runID,
+			NodeID:                r.node.NodeID,
+			AttemptID:             attemptID,
+			Status:                spec.AttemptStatusErrored,
+			StartedAt:             &now,
+			FinishedAt:            timePtr(time.Now().UTC()),
+			TerminalStopCause:     "failed",
+			TerminalFailureReason: "placement_conflict",
+		})
+		return r.failNode(err, attemptID, "failed", "placement_conflict")
+	}
+	recordPlacementHintApplication(context.Background(), r.registry, r.runID, r.node.NodeID, attemptID, r.localityHints, executionNode.Placement)
 	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusStarting
 		current.CurrentBottleneckLocation = "backend_prepare"
@@ -978,6 +994,15 @@ func cloneNode(node spec.Node) spec.Node {
 			cloned.Metadata[k] = v
 		}
 	}
+	if node.Placement != nil {
+		cloned.Placement = &spec.PlacementHints{}
+		if node.Placement.NodeSelector != nil {
+			cloned.Placement.NodeSelector = make(map[string]string, len(node.Placement.NodeSelector))
+			for k, v := range node.Placement.NodeSelector {
+				cloned.Placement.NodeSelector[k] = v
+			}
+		}
+	}
 	return cloned
 }
 
@@ -1013,6 +1038,76 @@ func injectRuntimeContextEnv(node *spec.Node, run spec.RunRecord, attemptID stri
 	}
 	if len(node.Outputs) > 0 {
 		node.Env["JUMI_OUTPUT_MANIFEST_PATH"] = provenance.AttemptArtifactsManifestPath(run.RunID, node.NodeID, attemptID)
+	}
+}
+
+func applyPlacementHints(node *spec.Node, hints []bindingLocalityHint) error {
+	if node == nil || len(hints) == 0 {
+		return nil
+	}
+	requiredNode := ""
+	for _, hint := range hints {
+		if hint.PlacementMode != "required_node" || strings.TrimSpace(hint.PreferredNodeName) == "" {
+			continue
+		}
+		if requiredNode == "" {
+			requiredNode = hint.PreferredNodeName
+			continue
+		}
+		if requiredNode != hint.PreferredNodeName {
+			return fmt.Errorf("conflicting required_node placement intents: %s vs %s", requiredNode, hint.PreferredNodeName)
+		}
+	}
+	if requiredNode == "" {
+		return nil
+	}
+	if node.Placement == nil {
+		node.Placement = &spec.PlacementHints{}
+	}
+	if node.Placement.NodeSelector == nil {
+		node.Placement.NodeSelector = map[string]string{}
+	}
+	if existing := strings.TrimSpace(node.Placement.NodeSelector[hostnameNodeSelectorKey]); existing != "" && existing != requiredNode {
+		return fmt.Errorf("node selector %s=%s conflicts with required_node=%s", hostnameNodeSelectorKey, existing, requiredNode)
+	}
+	node.Placement.NodeSelector[hostnameNodeSelectorKey] = requiredNode
+	return nil
+}
+
+func recordPlacementHintApplication(ctx context.Context, reg registry.Registry, runID, nodeID, attemptID string, hints []bindingLocalityHint, placement *spec.PlacementHints) {
+	if len(hints) == 0 {
+		return
+	}
+	appliedRequired := ""
+	if placement != nil && placement.NodeSelector != nil {
+		appliedRequired = strings.TrimSpace(placement.NodeSelector[hostnameNodeSelectorKey])
+	}
+	for _, hint := range hints {
+		bindingName := firstNonEmpty(hint.ChildInputName, hint.BindingName)
+		switch hint.PlacementMode {
+		case "required_node":
+			if appliedRequired == hint.PreferredNodeName && appliedRequired != "" {
+				appendEvent(ctx, reg, spec.EventRecord{
+					RunID:      runID,
+					NodeID:     nodeID,
+					AttemptID:  attemptID,
+					Type:       "node.placement.required_applied",
+					OccurredAt: time.Now().UTC(),
+					Level:      "info",
+					Message:    fmt.Sprintf("binding=%s nodeSelector[%s]=%s", bindingName, hostnameNodeSelectorKey, appliedRequired),
+				})
+			}
+		case "preferred_node":
+			appendEvent(ctx, reg, spec.EventRecord{
+				RunID:      runID,
+				NodeID:     nodeID,
+				AttemptID:  attemptID,
+				Type:       "node.placement.preferred_deferred",
+				OccurredAt: time.Now().UTC(),
+				Level:      "info",
+				Message:    fmt.Sprintf("binding=%s preferredNode=%s requires backend affinity support", bindingName, hint.PreferredNodeName),
+			})
+		}
 	}
 }
 

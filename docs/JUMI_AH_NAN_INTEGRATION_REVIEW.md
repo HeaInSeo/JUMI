@@ -91,6 +91,9 @@ child node 실행
 - required node conflict 처리
 
 참고:
+- 현재 JUMI는 `required_node`를 `kubernetes.io/hostname` nodeSelector로 materialize한다.
+- `preferred_node`는 아직 spawner/backend surface에 affinity 지원이 없어서 soft hint로만 유지된다.
+- 따라서 `preferred_node`의 실제 scheduling 선호 반영은 spawner 라이브러리 확장 과제다.
 - 현재 live smoke는 pre-scheduling planning-mode resolve만 사용한다.
 - 이 경로에서는 AH가 `remote_fetch` 계획을 반환해도 `ah_fallback_total`을 올리지 않는 것이 정상이다.
 - 즉 `jumi_input_remote_fetch_total` 증가와 `ah_fallback_total == 0`은 동시에 성립할 수 있다.

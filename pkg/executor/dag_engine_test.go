@@ -45,6 +45,7 @@ type fakeHandoffClient struct {
 	finalizeRequests []handoff.FinalizeSampleRunRequest
 	evaluateRequests []handoff.EvaluateGCRequest
 	response         handoff.ResolveBindingResponse
+	responses        []handoff.ResolveBindingResponse
 	resolveErr       error
 	resolveErrs      []error
 	registerErr      error
@@ -66,6 +67,11 @@ func (f *fakeHandoffClient) ResolveBinding(_ context.Context, req handoff.Resolv
 	}
 	if f.resolveErr != nil {
 		return handoff.ResolveBindingResponse{}, f.resolveErr
+	}
+	if len(f.responses) > 0 {
+		resp := f.responses[0]
+		f.responses = f.responses[1:]
+		return resp, nil
 	}
 	if f.response.ResolutionStatus == "" {
 		return handoff.ResolveBindingResponse{
@@ -206,6 +212,12 @@ func TestDagEngineResolvesArtifactBindingsBeforeStart(t *testing.T) {
 	if preparedNode.Env["JUMI_ATTEMPT_ID"] == "" {
 		t.Fatal("expected prepared node to include JUMI_ATTEMPT_ID")
 	}
+	if preparedNode.Placement == nil {
+		t.Fatal("expected prepared node placement to be populated")
+	}
+	if got := preparedNode.Placement.NodeSelector["kubernetes.io/hostname"]; got != "node-a" {
+		t.Fatalf("prepared node selector = %q, want node-a", got)
+	}
 	if got := preparedNode.Env["JUMI_OUTPUT_MANIFEST_PATH"]; got != "" {
 		t.Fatalf("prepared manifest path = %q, want empty for node without declared outputs", got)
 	}
@@ -227,6 +239,7 @@ func TestDagEngineResolvesArtifactBindingsBeforeStart(t *testing.T) {
 	if handoffClient.evaluateRequests[0].SampleRunID != "sample-1" {
 		t.Fatalf("evaluate gc sampleRunID = %q, want sample-1", handoffClient.evaluateRequests[0].SampleRunID)
 	}
+	assertEventTypePresent(t, reg, record.RunID, "node.placement.required_applied")
 }
 
 func TestDagEngineInjectsAttemptAwareRuntimeContext(t *testing.T) {
@@ -268,6 +281,73 @@ func TestDagEngineInjectsAttemptAwareRuntimeContext(t *testing.T) {
 	}
 	if got := preparedNode.Env["JUMI_OUTPUT_MANIFEST_PATH"]; !strings.Contains(got, "/attempts/") {
 		t.Fatalf("prepared env JUMI_OUTPUT_MANIFEST_PATH = %q, want attempt-aware path", got)
+	}
+}
+
+func TestDagEngineFailsOnConflictingRequiredPlacementIntents(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{failOn: map[string]bool{}}
+	handoffClient := &fakeHandoffClient{
+		responses: []handoff.ResolveBindingResponse{
+			{
+				ResolutionStatus: "RESOLVED",
+				Decision:         "remote_fetch",
+				PlacementIntent:  handoff.PlacementIntent{Mode: "required_node", NodeName: "node-a"},
+				MaterializationPlan: handoff.MaterializationPlan{
+					Mode: "remote_fetch",
+					URI:  "http://artifact.local/output-a",
+				},
+			},
+			{
+				ResolutionStatus: "RESOLVED",
+				Decision:         "remote_fetch",
+				PlacementIntent:  handoff.PlacementIntent{Mode: "required_node", NodeName: "node-c"},
+				MaterializationPlan: handoff.MaterializationPlan{
+					Mode: "remote_fetch",
+					URI:  "http://artifact.local/output-c",
+				},
+			},
+		},
+	}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run: spec.RunMetadata{RunID: "run-placement-conflict", SampleRunID: "sample-placement-conflict", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{
+			Nodes: []spec.Node{
+				{NodeID: "a", Image: "busybox:1.36"},
+				{NodeID: "c", Image: "busybox:1.36"},
+				{NodeID: "b", Image: "busybox:1.36", ArtifactBindings: []spec.ArtifactBinding{
+					{BindingName: "left", ChildInputName: "left", ProducerNodeID: "a", ProducerOutputName: "output", ArtifactID: "sample-placement-conflict:a:output", ConsumePolicy: "SameNodeOnly", Required: true},
+					{BindingName: "right", ChildInputName: "right", ProducerNodeID: "c", ProducerOutputName: "output", ArtifactID: "sample-placement-conflict:c:output", ConsumePolicy: "SameNodeOnly", Required: true},
+				}},
+			},
+			Edges: [][]string{{"a", "b"}, {"c", "b"}},
+		},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{
+		{RunID: record.RunID, NodeID: "a", Status: spec.NodeStatusPending},
+		{RunID: record.RunID, NodeID: "c", Status: spec.NodeStatusPending},
+		{RunID: record.RunID, NodeID: "b", Status: spec.NodeStatusPending},
+	}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusFailed)
+	runNodes, err := reg.ListNodes(context.Background(), record.RunID)
+	if err != nil {
+		t.Fatalf("ListNodes() error = %v", err)
+	}
+	for _, node := range runNodes {
+		if node.NodeID != "b" {
+			continue
+		}
+		if node.TerminalFailureReason != "placement_conflict" {
+			t.Fatalf("failure reason = %q, want placement_conflict", node.TerminalFailureReason)
+		}
 	}
 }
 
