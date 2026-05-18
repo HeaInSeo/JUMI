@@ -24,7 +24,12 @@ PKGS_REGRESSION := ./cmd/... ./pkg/executor ./pkg/handoff ./pkg/metrics ./pkg/ob
 PKGS_COVER := ./cmd/... ./pkg/...
 PKGS_SECURITY := ./cmd/... ./pkg/...
 
-.PHONY: test test-regression coverage fmt vet lint lint-depguard lint-security vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build
+.PHONY: test test-regression coverage fmt vet lint lint-depguard lint-security vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote runtime-build-local runtime-check-local runtime-smoke-remote
+
+REMOTE_SSH_TARGET ?= seoy@100.123.80.48
+REGISTRY_HOST ?= harbor.10.113.24.96.nip.io
+RUNTIME_IMAGE_LOCAL_TAG ?= jumi-runtime:dev
+PREFLIGHT_PUBLISH_ENV_SCRIPT := $(CURDIR)/scripts/preflight-publish-env.sh
 
 test:
 	@mkdir -p "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)"
@@ -118,3 +123,18 @@ handoff-proto-sync-check:
 smoke-tool-build:
 	@mkdir -p "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)" "$(GOMODCACHE_DIR)"
 	cd tools/jumi-smoke && $(GOENV_SMOKE) go build ./...
+
+preflight-publish-local:
+	"$(PREFLIGHT_PUBLISH_ENV_SCRIPT)"
+
+preflight-publish-remote:
+	REMOTE_SSH_TARGET="$(REMOTE_SSH_TARGET)" REGISTRY_HOST="$(REGISTRY_HOST)" "$(PREFLIGHT_PUBLISH_ENV_SCRIPT)" --remote
+
+runtime-build-local:
+	podman build -f Containerfile -t "$(RUNTIME_IMAGE_LOCAL_TAG)" .
+
+runtime-check-local:
+	podman run --rm --entrypoint /usr/local/bin/nan "$(RUNTIME_IMAGE_LOCAL_TAG)" version
+
+runtime-smoke-remote: preflight-publish-remote
+	./scripts/run-jumi-ah-dev-live-smoke-eval.sh

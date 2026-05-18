@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/HeaInSeo/JUMI/pkg/provenance"
 )
@@ -28,6 +29,7 @@ type Config struct {
 	RunID              string
 	SampleRunID        string
 	NodeID             string
+	AttemptID          string
 	OutputNames        []string
 	OutputRoot         string
 	ManifestPath       string
@@ -79,7 +81,15 @@ func Run(ctx context.Context, cfg Config) int {
 
 func emitArtifacts(cfg Config) error {
 	manifest := provenance.ArtifactManifest{
-		Artifacts: make([]provenance.ArtifactRecord, 0, len(cfg.OutputNames)),
+		SchemaVersion: provenance.ArtifactManifestSchemaVersion,
+		RunID:         cfg.RunID,
+		SampleRunID:   cfg.SampleRunID,
+		NodeID:        cfg.NodeID,
+		AttemptID:     cfg.AttemptID,
+		ContainerName: "main",
+		HelperVersion: "jumi-compat",
+		CreatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
+		Artifacts:     make([]provenance.ArtifactRecord, 0, len(cfg.OutputNames)),
 	}
 	for _, outputName := range cfg.OutputNames {
 		outputName = strings.TrimSpace(outputName)
@@ -142,10 +152,13 @@ func buildArtifactRecord(runID, nodeID, outputName, path string) (provenance.Art
 	}
 
 	return provenance.ArtifactRecord{
-		OutputName: outputName,
-		URI:        fmt.Sprintf("jumi://runs/%s/nodes/%s/outputs/%s", runID, nodeID, outputName),
-		Digest:     "sha256:" + hex.EncodeToString(hash.Sum(nil)),
-		SizeBytes:  size,
+		OutputName:   outputName,
+		DeclaredPath: outputName,
+		AbsolutePath: path,
+		Type:         "file",
+		URI:          fmt.Sprintf("jumi://runs/%s/nodes/%s/outputs/%s", runID, nodeID, outputName),
+		Digest:       "sha256:" + hex.EncodeToString(hash.Sum(nil)),
+		SizeBytes:    size,
 	}, true, nil
 }
 

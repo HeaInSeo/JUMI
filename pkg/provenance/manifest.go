@@ -3,19 +3,32 @@ package provenance
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 )
 
 const DefaultArtifactsManifestPath = "/out/_meta/artifacts.manifest.json"
+const ArtifactManifestSchemaVersion = "jumi.observedArtifactManifest.v1"
 
 type ArtifactManifest struct {
-	Artifacts []ArtifactRecord `json:"artifacts"`
+	SchemaVersion string           `json:"schemaVersion,omitempty"`
+	RunID         string           `json:"runId,omitempty"`
+	SampleRunID   string           `json:"sampleRunId,omitempty"`
+	NodeID        string           `json:"nodeId,omitempty"`
+	AttemptID     string           `json:"attemptId,omitempty"`
+	ContainerName string           `json:"containerName,omitempty"`
+	HelperVersion string           `json:"helperVersion,omitempty"`
+	CreatedAt     string           `json:"createdAt,omitempty"`
+	Artifacts     []ArtifactRecord `json:"artifacts"`
 }
 
 type ArtifactRecord struct {
-	OutputName string `json:"outputName"`
-	URI        string `json:"uri,omitempty"`
-	Digest     string `json:"digest,omitempty"`
-	SizeBytes  int64  `json:"sizeBytes,omitempty"`
+	OutputName   string `json:"outputName"`
+	DeclaredPath string `json:"declaredPath,omitempty"`
+	AbsolutePath string `json:"absolutePath,omitempty"`
+	Type         string `json:"type,omitempty"`
+	URI          string `json:"uri,omitempty"`
+	Digest       string `json:"digest,omitempty"`
+	SizeBytes    int64  `json:"sizeBytes,omitempty"`
 }
 
 func ParseArtifactManifest(data []byte) (ArtifactManifest, error) {
@@ -43,4 +56,13 @@ func (m ArtifactManifest) ByOutputName(name string) (ArtifactRecord, bool) {
 		}
 	}
 	return ArtifactRecord{}, false
+}
+
+func AttemptArtifactsManifestPath(runID, nodeID, attemptID string) string {
+	return fmt.Sprintf(
+		"/out/_meta/jumi/runs/%s/nodes/%s/attempts/%s/artifacts.manifest.json",
+		url.PathEscape(runID),
+		url.PathEscape(nodeID),
+		url.PathEscape(attemptID),
+	)
 }

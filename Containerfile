@@ -20,11 +20,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /out/jumi /usr/local/bin/jumi
+COPY --from=builder /out/jumi-output-helper /usr/local/bin/nan
 # Compatibility copy only:
 # the runtime-side helper belongs to the DAG node runtime image contract, not
 # to the JUMI service image contract. This copy remains for current smoke/dev
 # paths that still use the JUMI image as a node runtime shortcut.
-COPY --from=builder /out/jumi-output-helper /usr/local/bin/jumi-output-helper
+RUN ln -s /usr/local/bin/nan /usr/local/bin/jumi-output-helper
 
 EXPOSE 8080 9090
 

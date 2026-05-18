@@ -19,6 +19,7 @@ func TestRunWritesManifestAndTerminationLog(t *testing.T) {
 		RunID:              "run-1",
 		SampleRunID:        "sample-1",
 		NodeID:             "produce",
+		AttemptID:          "run-1-produce-attempt-1",
 		OutputNames:        []string{"report"},
 		OutputRoot:         tmpDir,
 		ManifestPath:       manifestPath,
@@ -41,9 +42,18 @@ func TestRunWritesManifestAndTerminationLog(t *testing.T) {
 	if len(manifest.Artifacts) != 1 {
 		t.Fatalf("artifact count = %d, want 1", len(manifest.Artifacts))
 	}
+	if manifest.SchemaVersion != provenance.ArtifactManifestSchemaVersion {
+		t.Fatalf("schemaVersion = %q, want %q", manifest.SchemaVersion, provenance.ArtifactManifestSchemaVersion)
+	}
+	if manifest.AttemptID != "run-1-produce-attempt-1" {
+		t.Fatalf("attemptId = %q, want run-1-produce-attempt-1", manifest.AttemptID)
+	}
 	record := manifest.Artifacts[0]
 	if record.OutputName != "report" {
 		t.Fatalf("outputName = %q, want report", record.OutputName)
+	}
+	if record.AbsolutePath != filepath.Join(tmpDir, "report") {
+		t.Fatalf("absolutePath = %q, want %q", record.AbsolutePath, filepath.Join(tmpDir, "report"))
 	}
 	if record.SizeBytes != 10 {
 		t.Fatalf("sizeBytes = %d, want 10", record.SizeBytes)

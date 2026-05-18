@@ -11,10 +11,16 @@ Policy-agnostic in-cluster execution data-plane app for Kubernetes, built on a K
 - `make lint-security`: report-only `gosec` observation
 - `make vuln`: report-only `govulncheck` observation
 - `make vuln-all`: report-only `govulncheck` over all packages
+- `make preflight-publish-local`: check Harbor reachability from the current host
+- `make preflight-publish-remote`: check Harbor reachability from `100.123.80.48`
+- `make runtime-build-local`: local runtime image build for CLI validation only
+- `make runtime-check-local`: local `nan` CLI contract check against the local image
+- `make runtime-smoke-remote`: remote K8s smoke entrypoint
 
 Notes:
 - `GOLANGCI_LINT=/path/to/golangci-lint make lint` can be used to reuse an existing local binary instead of bootstrapping `./bin/golangci-lint`.
 - `make lint-security` is intentionally observation-only; current findings should be triaged separately from the fail gate.
+- Local build is not publish authority. Runtime image publish and K8s smoke authority live on `100.123.80.48`.
 
 ## Documents
 
@@ -30,9 +36,11 @@ Notes:
 - [JUMI ko Service Image Migration Plan](docs/JUMI_KO_SERVICE_IMAGE_MIGRATION_PLAN.md)
 - [JUMI Node Runtime Base Image Plan](docs/JUMI_NODE_RUNTIME_BASE_IMAGE_PLAN.md)
 - [JUMI Artifact Helper Repo Split Plan](docs/JUMI_ARTIFACT_HELPER_REPO_SPLIT_PLAN.md)
+- [JUMI AH nan Integration Review](docs/JUMI_AH_NAN_INTEGRATION_REVIEW.md)
 - [JUMI Durable Registry Options](docs/JUMI_DURABLE_REGISTRY_OPTIONS.ko.md)
 - [JUMI Implementation Status 2026-05-14](docs/JUMI_IMPLEMENTATION_STATUS_2026-05-14.ko.md)
 - [JUMI Layered Error Guidelines Review](docs/JUMI_LAYERED_ERROR_GUIDELINES_REVIEW.ko.md)
 - [JUMI dag-go Integration Contract Review](docs/JUMI_DAG_GO_INTEGRATION_CONTRACT_REVIEW.ko.md)
 - [JUMI spawner Integration Contract Review](docs/JUMI_SPAWNER_INTEGRATION_CONTRACT_REVIEW.ko.md)
 - [JUMI Locality Semantics Review](docs/JUMI_LOCALITY_SEMANTICS_REVIEW.ko.md)
+- [JUMI Execution Environment Boundary](docs/JUMI_EXECUTION_ENVIRONMENT_BOUNDARY.md)

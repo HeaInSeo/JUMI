@@ -25,15 +25,16 @@ type fakeHandle struct {
 }
 
 type fakeAdapter struct {
-	mu         sync.Mutex
-	order      []string
-	failOn     map[string]bool
-	waitCh     map[string]chan struct{}
-	canceled   map[string]bool
-	prepared   map[string]spec.Node
-	outputs    map[string]map[string]backend.OutputMetadata
-	observe    *backend.OptionalKueueInfo
-	startDelay time.Duration
+	mu                       sync.Mutex
+	order                    []string
+	failOn                   map[string]bool
+	waitCh                   map[string]chan struct{}
+	canceled                 map[string]bool
+	prepared                 map[string]spec.Node
+	outputs                  map[string]map[string]backend.OutputMetadata
+	observe                  *backend.OptionalKueueInfo
+	startDelay               time.Duration
+	forceMetadataUnavailable bool
 }
 
 type fakeHandoffClient struct {
@@ -202,6 +203,12 @@ func TestDagEngineResolvesArtifactBindingsBeforeStart(t *testing.T) {
 	if preparedNode.Env["JUMI_INPUT_DATASET_REQUIRES_MATERIALIZATION"] != "true" {
 		t.Fatalf("requires materialization env = %q, want true", preparedNode.Env["JUMI_INPUT_DATASET_REQUIRES_MATERIALIZATION"])
 	}
+	if preparedNode.Env["JUMI_ATTEMPT_ID"] == "" {
+		t.Fatal("expected prepared node to include JUMI_ATTEMPT_ID")
+	}
+	if got := preparedNode.Env["JUMI_OUTPUT_MANIFEST_PATH"]; got != "" {
+		t.Fatalf("prepared manifest path = %q, want empty for node without declared outputs", got)
+	}
 	if got := engine.Metrics().Render(); !strings.Contains(got, "jumi_input_resolve_requests_total 1") {
 		t.Fatalf("expected resolve metric in render: %s", got)
 	}
@@ -219,6 +226,48 @@ func TestDagEngineResolvesArtifactBindingsBeforeStart(t *testing.T) {
 	}
 	if handoffClient.evaluateRequests[0].SampleRunID != "sample-1" {
 		t.Fatalf("evaluate gc sampleRunID = %q, want sample-1", handoffClient.evaluateRequests[0].SampleRunID)
+	}
+}
+
+func TestDagEngineInjectsAttemptAwareRuntimeContext(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{failOn: map[string]bool{}}
+	engine := NewDagEngine(reg, adapter)
+	specInput := spec.ExecutableRunSpec{
+		Run: spec.RunMetadata{RunID: "run-runtime-env", SampleRunID: "sample-runtime-env", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{
+			Nodes: []spec.Node{{
+				NodeID:   "produce",
+				Image:    "helper-image:latest",
+				Command:  []string{"sh", "-c", "echo hi > /out/report"},
+				Outputs:  []string{"report"},
+				Metadata: map[string]string{"jumi.outputManifestMode": "runtime-helper"},
+			}},
+		},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "produce", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusSucceeded)
+	adapter.mu.Lock()
+	preparedNode := adapter.prepared["produce"]
+	adapter.mu.Unlock()
+	if got := preparedNode.Env["JUMI_RUN_ID"]; got != "run-runtime-env" {
+		t.Fatalf("prepared env JUMI_RUN_ID = %q, want run-runtime-env", got)
+	}
+	if got := preparedNode.Env["JUMI_NODE_ID"]; got != "produce" {
+		t.Fatalf("prepared env JUMI_NODE_ID = %q, want produce", got)
+	}
+	if got := preparedNode.Env["JUMI_ATTEMPT_ID"]; got == "" {
+		t.Fatal("prepared env JUMI_ATTEMPT_ID = empty, want attempt context")
+	}
+	if got := preparedNode.Env["JUMI_OUTPUT_MANIFEST_PATH"]; !strings.Contains(got, "/attempts/") {
+		t.Fatalf("prepared env JUMI_OUTPUT_MANIFEST_PATH = %q, want attempt-aware path", got)
 	}
 }
 
@@ -261,8 +310,14 @@ func TestDagEngineRegistersNodeOutputsOnSuccess(t *testing.T) {
 	if handoffClient.registerRequests[0].URI == "" {
 		t.Fatal("expected non-empty output URI")
 	}
-	if handoffClient.registerRequests[0].SizeBytes != 0 {
-		t.Fatalf("sizeBytes = %d, want 0 without metadata provider data", handoffClient.registerRequests[0].SizeBytes)
+	if handoffClient.registerRequests[0].Digest == "" {
+		t.Fatal("expected non-empty digest")
+	}
+	if handoffClient.registerRequests[0].SizeBytes == 0 {
+		t.Fatalf("sizeBytes = %d, want non-zero metadata size", handoffClient.registerRequests[0].SizeBytes)
+	}
+	if handoffClient.registerRequests[0].NodeName == "" {
+		t.Fatal("expected non-empty nodeName")
 	}
 	if got := engine.Metrics().Render(); !strings.Contains(got, "jumi_artifacts_registered_total 2") {
 		t.Fatalf("expected artifact register metric in render: %s", got)
@@ -834,12 +889,29 @@ func (f *fakeAdapter) CancelNode(_ context.Context, handle backend.Handle) error
 	return nil
 }
 
-func (f *fakeAdapter) CollectOutputMetadata(_ context.Context, handle backend.Handle, _ spec.Node) (map[string]backend.OutputMetadata, error) {
+func (f *fakeAdapter) CollectOutputMetadata(_ context.Context, handle backend.Handle, node spec.Node) (map[string]backend.OutputMetadata, error) {
 	h := handle.(fakeHandle)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.outputs == nil {
+	if f.forceMetadataUnavailable {
 		return nil, backend.ErrOutputMetadataUnavailable
+	}
+	if f.outputs == nil {
+		if len(node.Outputs) == 0 {
+			return nil, backend.ErrOutputMetadataUnavailable
+		}
+		out := make(map[string]backend.OutputMetadata, len(node.Outputs))
+		for _, outputName := range node.Outputs {
+			out[outputName] = backend.OutputMetadata{
+				OutputName: outputName,
+				URI:        artifactOutputURI("test-run", h.nodeID, outputName),
+				Digest:     "sha256:test",
+				SizeBytes:  1,
+				NodeName:   "node-a",
+				PodName:    h.nodeID + "-pod",
+			}
+		}
+		return out, nil
 	}
 	metadata, ok := f.outputs[h.nodeID]
 	if !ok {

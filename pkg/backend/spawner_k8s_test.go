@@ -61,6 +61,9 @@ func TestToSpawnerRunSpecMapsRuntimeContractFields(t *testing.T) {
 	if got.Env["JUMI_RUN_ID"] != "run-1" {
 		t.Fatalf("JUMI_RUN_ID = %q, want run-1", got.Env["JUMI_RUN_ID"])
 	}
+	if got.Env["JUMI_OUTPUT_ROOT"] != "/out" {
+		t.Fatalf("JUMI_OUTPUT_ROOT = %q, want /out", got.Env["JUMI_OUTPUT_ROOT"])
+	}
 }
 
 func TestToSpawnerRunSpecMapsServiceAccountFromSmokeFixtureStyleNode(t *testing.T) {
@@ -87,6 +90,9 @@ func TestToSpawnerRunSpecMapsServiceAccountFromSmokeFixtureStyleNode(t *testing.
 	if got.Command[0] != "/usr/local/bin/jumi-output-helper" {
 		t.Fatalf("runtime-helper command prefix = %q, want /usr/local/bin/jumi-output-helper", got.Command[0])
 	}
+	if len(got.Command) < 5 || got.Command[1] != "run" || got.Command[2] != "--" {
+		t.Fatalf("runtime-helper command prefix = %q, want [helper run -- ...]", got.Command[:min(len(got.Command), 4)])
+	}
 }
 
 func TestToSpawnerRunSpecUsesConfiguredArtifactHelperPath(t *testing.T) {
@@ -104,6 +110,9 @@ func TestToSpawnerRunSpecUsesConfiguredArtifactHelperPath(t *testing.T) {
 
 	if got.Command[0] != ArtifactHelperPath {
 		t.Fatalf("runtime-helper command prefix = %q, want %q", got.Command[0], ArtifactHelperPath)
+	}
+	if got.Command[1] != "run" || got.Command[2] != "--" {
+		t.Fatalf("runtime-helper command prefix = %q, want [%s run -- ...]", got.Command[:min(len(got.Command), 4)], ArtifactHelperPath)
 	}
 }
 
@@ -161,15 +170,48 @@ func TestToSpawnerRunSpecWrapsCommandForRuntimeHelperMode(t *testing.T) {
 
 	got := toSpawnerRunSpec(run, node)
 
-	if len(got.Command) < 4 {
-		t.Fatalf("runtime-helper command length = %d, want >= 4", len(got.Command))
+	if len(got.Command) < 6 {
+		t.Fatalf("runtime-helper command length = %d, want >= 6", len(got.Command))
 	}
 	if got.Command[0] != "/usr/local/bin/jumi-output-helper" {
 		t.Fatalf("runtime-helper command prefix = %q, want /usr/local/bin/jumi-output-helper", got.Command[0])
 	}
-	if got.Command[1] != "sh" || got.Command[2] != "-c" {
-		t.Fatalf("runtime-helper original command = %q, want [sh -c ...]", got.Command[1:3])
+	if got.Command[1] != "run" || got.Command[2] != "--" {
+		t.Fatalf("runtime-helper subcommand = %q, want [run --]", got.Command[1:3])
 	}
+	if got.Command[3] != "sh" || got.Command[4] != "-c" {
+		t.Fatalf("runtime-helper original command = %q, want [sh -c ...]", got.Command[3:5])
+	}
+}
+
+func TestToSpawnerRunSpecPreservesAttemptAwareManifestPath(t *testing.T) {
+	run := spec.RunRecord{RunID: "run-5", Spec: spec.ExecutableRunSpec{Run: spec.RunMetadata{SampleRunID: "sample-5"}}}
+	node := spec.Node{
+		NodeID:  "worker",
+		Image:   "helper-image:latest",
+		Command: []string{"echo", "hi"},
+		Outputs: []string{"report"},
+		Env: map[string]string{
+			"JUMI_ATTEMPT_ID":           "run-5-worker-attempt-1",
+			"JUMI_OUTPUT_MANIFEST_PATH": "/out/_meta/jumi/runs/run-5/nodes/worker/attempts/run-5-worker-attempt-1/artifacts.manifest.json",
+		},
+	}
+
+	got := toSpawnerRunSpec(run, node)
+
+	if got.Env["JUMI_ATTEMPT_ID"] != "run-5-worker-attempt-1" {
+		t.Fatalf("JUMI_ATTEMPT_ID = %q, want run-5-worker-attempt-1", got.Env["JUMI_ATTEMPT_ID"])
+	}
+	if got.Env["JUMI_OUTPUT_MANIFEST_PATH"] != "/out/_meta/jumi/runs/run-5/nodes/worker/attempts/run-5-worker-attempt-1/artifacts.manifest.json" {
+		t.Fatalf("JUMI_OUTPUT_MANIFEST_PATH = %q, want attempt-aware path", got.Env["JUMI_OUTPUT_MANIFEST_PATH"])
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func TestBuildDirectK8sJobUsesServiceAccountAndWorkingDir(t *testing.T) {

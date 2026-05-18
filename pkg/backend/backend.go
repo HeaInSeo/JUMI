@@ -33,6 +33,8 @@ type OutputMetadata struct {
 	URI        string `json:"uri,omitempty"`
 	Digest     string `json:"digest,omitempty"`
 	SizeBytes  int64  `json:"sizeBytes,omitempty"`
+	NodeName   string `json:"nodeName,omitempty"`
+	PodName    string `json:"podName,omitempty"`
 }
 
 type OutputMetadataProvider interface {

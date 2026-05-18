@@ -28,17 +28,25 @@ import (
 )
 
 const outputManifestModeMetadataKey = "jumi.outputManifestMode"
+
+// outputManifestModeWrappedShell is an obsolete compatibility mode kept only so
+// older smoke/dev fixtures continue to run during the nan transition. It is a
+// final removal target once JUMI switches fully to nan runtime execution.
 const outputManifestModeWrappedShell = "wrapped-shell"
+
+// outputManifestModeRuntimeHelper is an obsolete compatibility mode that still
+// wraps the node command with the legacy helper path. New runtime integration
+// should move to `nan run`. This mode is a final removal target.
 const outputManifestModeRuntimeHelper = "runtime-helper"
 
-// LegacyArtifactHelperPath is the current compatibility path used by smoke/dev
-// images. It points to the helper binary when the node runtime image still
-// embeds the legacy name.
+// LegacyArtifactHelperPath is an obsolete compatibility path used by older
+// smoke/dev images. It points to the helper binary when the node runtime image
+// still embeds the legacy name. This path is a final removal target.
 const LegacyArtifactHelperPath = "/usr/local/bin/jumi-output-helper"
 
-// ArtifactHelperPath is the intended conceptual path after the helper is
-// renamed to node-artifact-runtime and delivered by the node runtime base image.
-const ArtifactHelperPath = "/usr/local/bin/node-artifact-runtime"
+// ArtifactHelperPath is the intended runtime binary path after node runtime
+// images migrate to nan.
+const ArtifactHelperPath = "/usr/local/bin/nan"
 
 // ArtifactHelperPathEnv optionally overrides the helper path for runtime image
 // migrations while keeping the legacy path as the default.
@@ -310,14 +318,14 @@ func (a *SpawnerK8sAdapter) CancelNode(ctx context.Context, handle Handle) error
 }
 
 func (a *SpawnerK8sAdapter) CollectOutputMetadata(ctx context.Context, handle Handle, node spec.Node) (map[string]OutputMetadata, error) {
-	h, ok := handle.(spawnerHandle)
+	namespace, jobName, ok := a.outputMetadataJobRef(handle)
 	if !ok {
 		return nil, ErrOutputMetadataUnavailable
 	}
-	if h.jobName == "" || a.clientset == nil || a.restConfig == nil {
+	if jobName == "" || a.clientset == nil || a.restConfig == nil {
 		return nil, ErrOutputMetadataUnavailable
 	}
-	pod, err := a.findJobPod(ctx, h.jobName)
+	pod, err := a.findJobPod(ctx, namespace, jobName)
 	if err != nil {
 		return nil, ErrOutputMetadataUnavailable
 	}
@@ -335,6 +343,9 @@ func (a *SpawnerK8sAdapter) CollectOutputMetadata(ctx context.Context, handle Ha
 	if err != nil {
 		return nil, fmt.Errorf("parse artifacts manifest for pod %s: %w", pod.Name, err)
 	}
+	if err := validateObservedManifest(manifest, node); err != nil {
+		return nil, fmt.Errorf("validate artifacts manifest for pod %s: %w", pod.Name, err)
+	}
 	out := make(map[string]OutputMetadata, len(manifest.Artifacts))
 	for _, outputName := range node.Outputs {
 		record, ok := manifest.ByOutputName(outputName)
@@ -346,6 +357,8 @@ func (a *SpawnerK8sAdapter) CollectOutputMetadata(ctx context.Context, handle Ha
 			URI:        record.URI,
 			Digest:     record.Digest,
 			SizeBytes:  record.SizeBytes,
+			NodeName:   pod.Spec.NodeName,
+			PodName:    pod.Name,
 		}
 	}
 	if len(out) == 0 {
@@ -354,8 +367,50 @@ func (a *SpawnerK8sAdapter) CollectOutputMetadata(ctx context.Context, handle Ha
 	return out, nil
 }
 
-func (a *SpawnerK8sAdapter) findJobPod(ctx context.Context, jobName string) (*corev1.Pod, error) {
-	pods, err := a.clientset.CoreV1().Pods(a.ns).List(ctx, metav1.ListOptions{
+func validateObservedManifest(manifest provenance.ArtifactManifest, node spec.Node) error {
+	if node.Env == nil {
+		return nil
+	}
+	if expected := strings.TrimSpace(node.Env["JUMI_RUN_ID"]); expected != "" {
+		if manifest.RunID == "" {
+			return fmt.Errorf("manifest runId is required")
+		}
+		if manifest.RunID != expected {
+			return fmt.Errorf("manifest runId = %q, want %q", manifest.RunID, expected)
+		}
+	}
+	if expected := strings.TrimSpace(node.Env["JUMI_NODE_ID"]); expected != "" {
+		if manifest.NodeID == "" {
+			return fmt.Errorf("manifest nodeId is required")
+		}
+		if manifest.NodeID != expected {
+			return fmt.Errorf("manifest nodeId = %q, want %q", manifest.NodeID, expected)
+		}
+	}
+	if expected := strings.TrimSpace(node.Env["JUMI_ATTEMPT_ID"]); expected != "" {
+		if manifest.AttemptID == "" {
+			return fmt.Errorf("manifest attemptId is required")
+		}
+		if manifest.AttemptID != expected {
+			return fmt.Errorf("manifest attemptId = %q, want %q", manifest.AttemptID, expected)
+		}
+	}
+	return nil
+}
+
+func (a *SpawnerK8sAdapter) outputMetadataJobRef(handle Handle) (string, string, bool) {
+	switch h := handle.(type) {
+	case spawnerHandle:
+		return a.ns, h.jobName, h.jobName != ""
+	case directK8sHandle:
+		return h.ns, h.jobName, h.jobName != ""
+	default:
+		return "", "", false
+	}
+}
+
+func (a *SpawnerK8sAdapter) findJobPod(ctx context.Context, namespace string, jobName string) (*corev1.Pod, error) {
+	pods, err := a.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("job-name=%s", jobName),
 	})
 	if err != nil {
@@ -364,7 +419,77 @@ func (a *SpawnerK8sAdapter) findJobPod(ctx context.Context, jobName string) (*co
 	if len(pods.Items) == 0 {
 		return nil, fmt.Errorf("no pods found for job %s", jobName)
 	}
+	var best *corev1.Pod
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if !mainContainerSucceeded(pod) {
+			continue
+		}
+		if best == nil || podSucceededLater(pod, best) {
+			best = pod
+		}
+	}
+	if best != nil {
+		return best, nil
+	}
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if mainContainerTerminated(pod) {
+			if best == nil || podTerminatedLater(pod, best) {
+				best = pod
+			}
+		}
+	}
+	if best != nil {
+		return best, nil
+	}
 	return &pods.Items[0], nil
+}
+
+func mainContainerSucceeded(pod *corev1.Pod) bool {
+	if pod == nil {
+		return false
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name != "main" || status.State.Terminated == nil {
+			continue
+		}
+		return status.State.Terminated.ExitCode == 0
+	}
+	return false
+}
+
+func mainContainerTerminated(pod *corev1.Pod) bool {
+	if pod == nil {
+		return false
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name == "main" && status.State.Terminated != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func podSucceededLater(candidate *corev1.Pod, current *corev1.Pod) bool {
+	return terminatedAt(candidate).After(terminatedAt(current))
+}
+
+func podTerminatedLater(candidate *corev1.Pod, current *corev1.Pod) bool {
+	return terminatedAt(candidate).After(terminatedAt(current))
+}
+
+func terminatedAt(pod *corev1.Pod) time.Time {
+	if pod == nil {
+		return time.Time{}
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name != "main" || status.State.Terminated == nil {
+			continue
+		}
+		return status.State.Terminated.FinishedAt.Time
+	}
+	return time.Time{}
 }
 
 func readArtifactsManifestFromTerminationMessage(pod *corev1.Pod) ([]byte, error) {
@@ -514,14 +639,22 @@ func injectOutputContractEnv(env map[string]string, run spec.RunRecord, node spe
 		return
 	}
 	sort.Strings(outputs)
-	env["JUMI_OUTPUT_MANIFEST_ENABLED"] = "true"
-	env["JUMI_OUTPUT_MANIFEST_PATH"] = provenance.DefaultArtifactsManifestPath
-	env["JUMI_OUTPUT_NAMES"] = strings.Join(outputs, ",")
-	env["JUMI_RUN_ID"] = run.RunID
-	env["JUMI_NODE_ID"] = node.NodeID
+	setEnvDefault(env, "JUMI_OUTPUT_MANIFEST_ENABLED", "true")
+	setEnvDefault(env, "JUMI_OUTPUT_ROOT", "/out")
+	setEnvDefault(env, "JUMI_OUTPUT_MANIFEST_PATH", provenance.DefaultArtifactsManifestPath)
+	setEnvDefault(env, "JUMI_OUTPUT_NAMES", strings.Join(outputs, ","))
+	setEnvDefault(env, "JUMI_RUN_ID", run.RunID)
+	setEnvDefault(env, "JUMI_NODE_ID", node.NodeID)
 	if sampleRunID := run.Spec.Run.SampleRunID; sampleRunID != "" {
-		env["JUMI_SAMPLE_RUN_ID"] = sampleRunID
+		setEnvDefault(env, "JUMI_SAMPLE_RUN_ID", sampleRunID)
 	}
+}
+
+func setEnvDefault(env map[string]string, key string, value string) {
+	if _, exists := env[key]; exists {
+		return
+	}
+	env[key] = value
 }
 
 func wrapCommandForManifestExport(command []string, node spec.Node) []string {
@@ -534,10 +667,15 @@ func wrapCommandForManifestExport(command []string, node spec.Node) []string {
 		// The runtime-side artifact helper belongs to the DAG node runtime image,
 		// not to the JUMI service image. Keep the legacy binary path as the default
 		// until the node runtime base image and explicit migration are introduced.
-		wrapped := []string{artifactHelperCommandPath()}
+		//
+		// TODO(runtime-contract): remove this obsolete compatibility path after
+		// JUMI switches to explicit `nan run --contract ... -- <cmd>` injection.
+		wrapped := []string{artifactHelperCommandPath(), "run", "--"}
 		wrapped = append(wrapped, command...)
 		return wrapped
 	}
+	// wrapped-shell is obsolete compatibility only. Keep it available for older
+	// fixtures until nan command injection fully replaces shell wrapping.
 	script := `
 "$@"
 status=$?
