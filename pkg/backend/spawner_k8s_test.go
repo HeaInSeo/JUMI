@@ -66,6 +66,36 @@ func TestToSpawnerRunSpecMapsRuntimeContractFields(t *testing.T) {
 	}
 }
 
+func TestToSpawnerRunSpecMapsPreferredPlacementFields(t *testing.T) {
+	run := spec.RunRecord{RunID: "run-placement"}
+	node := spec.Node{
+		NodeID:  "worker",
+		Image:   "busybox:1.36",
+		Command: []string{"echo", "hi"},
+		Placement: &spec.PlacementHints{
+			PreferredNodes: []spec.WeightedNodePreference{
+				{NodeName: "lab-worker-1", Weight: 100},
+				{NodeName: "lab-worker-2", Weight: 50},
+			},
+		},
+	}
+
+	got := toSpawnerRunSpec(run, node)
+
+	if got.Placement == nil {
+		t.Fatal("Placement = nil, want preferred nodes")
+	}
+	if len(got.Placement.PreferredNodes) != 2 {
+		t.Fatalf("PreferredNodes = %d, want 2", len(got.Placement.PreferredNodes))
+	}
+	if got.Placement.PreferredNodes[0].NodeName != "lab-worker-1" || got.Placement.PreferredNodes[0].Weight != 100 {
+		t.Fatalf("unexpected first preferred node: %+v", got.Placement.PreferredNodes[0])
+	}
+	if got.Placement.PreferredNodes[1].NodeName != "lab-worker-2" || got.Placement.PreferredNodes[1].Weight != 50 {
+		t.Fatalf("unexpected second preferred node: %+v", got.Placement.PreferredNodes[1])
+	}
+}
+
 func TestToSpawnerRunSpecMapsServiceAccountFromSmokeFixtureStyleNode(t *testing.T) {
 	run := spec.RunRecord{RunID: "run-fixture"}
 	node := spec.Node{

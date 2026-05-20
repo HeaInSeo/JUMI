@@ -115,8 +115,15 @@ type CleanupPolicy struct {
 	TTLSecondsAfterFinished int32 `json:"ttlSecondsAfterFinished,omitempty"`
 }
 
+type WeightedNodePreference struct {
+	NodeName string `json:"nodeName,omitempty"`
+	Weight   int32  `json:"weight,omitempty"`
+}
+
 type PlacementHints struct {
-	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	NodeSelector     map[string]string        `json:"nodeSelector,omitempty"`
+	RequiredNodeName string                   `json:"requiredNodeName,omitempty"`
+	PreferredNodes   []WeightedNodePreference `json:"preferredNodes,omitempty"`
 }
 
 type Mount struct {

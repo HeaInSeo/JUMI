@@ -1046,31 +1046,67 @@ func applyPlacementHints(node *spec.Node, hints []bindingLocalityHint) error {
 		return nil
 	}
 	requiredNode := ""
+	hasPreferred := false
 	for _, hint := range hints {
-		if hint.PlacementMode != "required_node" || strings.TrimSpace(hint.PreferredNodeName) == "" {
-			continue
-		}
-		if requiredNode == "" {
-			requiredNode = hint.PreferredNodeName
-			continue
-		}
-		if requiredNode != hint.PreferredNodeName {
-			return fmt.Errorf("conflicting required_node placement intents: %s vs %s", requiredNode, hint.PreferredNodeName)
+		switch hint.PlacementMode {
+		case "required_node":
+			if strings.TrimSpace(hint.PreferredNodeName) == "" {
+				continue
+			}
+			if requiredNode == "" {
+				requiredNode = hint.PreferredNodeName
+				continue
+			}
+			if requiredNode != hint.PreferredNodeName {
+				return fmt.Errorf("conflicting required_node placement intents: %s vs %s", requiredNode, hint.PreferredNodeName)
+			}
+		case "preferred_node":
+			if strings.TrimSpace(hint.PreferredNodeName) != "" {
+				hasPreferred = true
+			}
 		}
 	}
-	if requiredNode == "" {
+	if requiredNode == "" && !hasPreferred {
 		return nil
 	}
 	if node.Placement == nil {
 		node.Placement = &spec.PlacementHints{}
 	}
-	if node.Placement.NodeSelector == nil {
-		node.Placement.NodeSelector = map[string]string{}
+	if requiredNode != "" {
+		if len(node.Placement.PreferredNodes) > 0 {
+			return fmt.Errorf("preferred placement already set while applying required_node=%s", requiredNode)
+		}
+		if node.Placement.NodeSelector == nil {
+			node.Placement.NodeSelector = map[string]string{}
+		}
+		if existing := strings.TrimSpace(node.Placement.NodeSelector[hostnameNodeSelectorKey]); existing != "" && existing != requiredNode {
+			return fmt.Errorf("node selector %s=%s conflicts with required_node=%s", hostnameNodeSelectorKey, existing, requiredNode)
+		}
+		node.Placement.NodeSelector[hostnameNodeSelectorKey] = requiredNode
+		node.Placement.RequiredNodeName = requiredNode
+		return nil
 	}
-	if existing := strings.TrimSpace(node.Placement.NodeSelector[hostnameNodeSelectorKey]); existing != "" && existing != requiredNode {
-		return fmt.Errorf("node selector %s=%s conflicts with required_node=%s", hostnameNodeSelectorKey, existing, requiredNode)
+	if node.Placement.RequiredNodeName != "" {
+		return fmt.Errorf("required placement already set while applying preferred nodes")
 	}
-	node.Placement.NodeSelector[hostnameNodeSelectorKey] = requiredNode
+	preferred := make([]spec.WeightedNodePreference, 0, len(hints))
+	seen := map[string]struct{}{}
+	for _, hint := range hints {
+		if hint.PlacementMode != "preferred_node" || strings.TrimSpace(hint.PreferredNodeName) == "" {
+			continue
+		}
+		if _, ok := seen[hint.PreferredNodeName]; ok {
+			continue
+		}
+		seen[hint.PreferredNodeName] = struct{}{}
+		preferred = append(preferred, spec.WeightedNodePreference{
+			NodeName: hint.PreferredNodeName,
+			Weight:   100,
+		})
+	}
+	if len(preferred) > 0 {
+		node.Placement.PreferredNodes = preferred
+	}
 	return nil
 }
 
@@ -1102,10 +1138,10 @@ func recordPlacementHintApplication(ctx context.Context, reg registry.Registry, 
 				RunID:      runID,
 				NodeID:     nodeID,
 				AttemptID:  attemptID,
-				Type:       "node.placement.preferred_deferred",
+				Type:       "node.placement.preferred_applied",
 				OccurredAt: time.Now().UTC(),
 				Level:      "info",
-				Message:    fmt.Sprintf("binding=%s preferredNode=%s requires backend affinity support", bindingName, hint.PreferredNodeName),
+				Message:    fmt.Sprintf("binding=%s preferredNode=%s mapped to backend preferred placement", bindingName, hint.PreferredNodeName),
 			})
 		}
 	}

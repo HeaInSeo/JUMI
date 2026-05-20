@@ -3,7 +3,7 @@ module github.com/HeaInSeo/JUMI
 go 1.25.10
 
 require (
-	github.com/HeaInSeo/spawner v0.0.0-20260516072135-342ee26787ba
+	github.com/HeaInSeo/spawner v0.0.0-20260518121823-6b4771360ac3
 	github.com/prometheus/client_golang v1.23.2
 	github.com/seoyhaein/dag-go v0.0.10-0.20260403082453-9c3e609ade22
 	go.opentelemetry.io/otel/exporters/prometheus v0.65.0

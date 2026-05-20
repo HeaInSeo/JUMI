@@ -769,14 +769,30 @@ func cleanupTTL(node spec.Node) int32 {
 }
 
 func buildPlacement(node spec.Node) *spapi.Placement {
-	if node.Placement == nil || len(node.Placement.NodeSelector) == 0 {
+	if node.Placement == nil {
 		return nil
 	}
-	out := make(map[string]string, len(node.Placement.NodeSelector))
-	for k, v := range node.Placement.NodeSelector {
-		out[k] = v
+	out := &spapi.Placement{}
+	if len(node.Placement.NodeSelector) > 0 {
+		out.NodeSelector = make(map[string]string, len(node.Placement.NodeSelector))
+		for k, v := range node.Placement.NodeSelector {
+			out.NodeSelector[k] = v
+		}
 	}
-	return &spapi.Placement{NodeSelector: out}
+	out.RequiredNodeName = node.Placement.RequiredNodeName
+	if len(node.Placement.PreferredNodes) > 0 {
+		out.PreferredNodes = make([]spapi.WeightedNodePreference, 0, len(node.Placement.PreferredNodes))
+		for _, pref := range node.Placement.PreferredNodes {
+			out.PreferredNodes = append(out.PreferredNodes, spapi.WeightedNodePreference{
+				NodeName: pref.NodeName,
+				Weight:   pref.Weight,
+			})
+		}
+	}
+	if len(out.NodeSelector) == 0 && out.RequiredNodeName == "" && len(out.PreferredNodes) == 0 {
+		return nil
+	}
+	return out
 }
 
 func setOptionalStringField(target *spapi.RunSpec, fieldName string, value string) {

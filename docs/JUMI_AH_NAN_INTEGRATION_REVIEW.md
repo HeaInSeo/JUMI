@@ -92,8 +92,8 @@ child node 실행
 
 참고:
 - 현재 JUMI는 `required_node`를 `kubernetes.io/hostname` nodeSelector로 materialize한다.
-- `preferred_node`는 아직 spawner/backend surface에 affinity 지원이 없어서 soft hint로만 유지된다.
-- 따라서 `preferred_node`의 실제 scheduling 선호 반영은 spawner 라이브러리 확장 과제다.
+- 현재 JUMI는 `preferred_node`를 backend preferred placement로 전달하고, spawner K8s driver는 이를 `preferredDuringSchedulingIgnoredDuringExecution` nodeAffinity로 매핑한다.
+- `preferred_node`는 여전히 soft hint다. Kubernetes scheduler가 이를 반드시 지킬 필요는 없고, locality miss는 계속 runtime variance로 다룬다.
 - 현재 live smoke는 pre-scheduling planning-mode resolve만 사용한다.
 - 이 경로에서는 AH가 `remote_fetch` 계획을 반환해도 `ah_fallback_total`을 올리지 않는 것이 정상이다.
 - 즉 `jumi_input_remote_fetch_total` 증가와 `ah_fallback_total == 0`은 동시에 성립할 수 있다.
@@ -104,7 +104,8 @@ child node 실행
 목표: remote_fetch/local_reuse가 실제 input 준비로 이어진다.
 
 - `MaterializationPlan`을 runtime context 또는 후속 contract 구조에 기록
-- init-container 또는 nan acquisition 기반 baseline
+- node-local reuse / peer fetch / nan runtime acquisition 설계
+- init-container + emptyDir는 fallback 후보로만 검토
 - digest verification
 - `/in` read-only contract 검증
 

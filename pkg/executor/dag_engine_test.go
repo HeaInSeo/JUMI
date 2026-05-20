@@ -1182,11 +1182,27 @@ func TestDagEngineRecordsLocalityMissAndFallbackSuccess(t *testing.T) {
 			t.Fatalf("consume observation podNodeName = %q, want node-b", node.Observation.PodNodeName)
 		}
 	}
+	adapter.mu.Lock()
+	preparedNode, ok := adapter.prepared["consume"]
+	adapter.mu.Unlock()
+	if !ok {
+		t.Fatal("expected prepared node for consume")
+	}
+	if preparedNode.Placement == nil {
+		t.Fatal("expected prepared node placement to be populated")
+	}
+	if len(preparedNode.Placement.PreferredNodes) != 1 {
+		t.Fatalf("preferred placement count = %d, want 1", len(preparedNode.Placement.PreferredNodes))
+	}
+	if preparedNode.Placement.PreferredNodes[0].NodeName != "node-a" || preparedNode.Placement.PreferredNodes[0].Weight != 100 {
+		t.Fatalf("unexpected preferred placement = %+v", preparedNode.Placement.PreferredNodes[0])
+	}
 
 	assertEventTypePresent(t, reg, record.RunID, "node.locality.preferred")
 	assertEventTypePresent(t, reg, record.RunID, "node.locality.missed")
 	assertEventTypePresent(t, reg, record.RunID, "node.locality.fallback_started")
 	assertEventTypePresent(t, reg, record.RunID, "node.locality.fallback_succeeded")
+	assertEventTypePresent(t, reg, record.RunID, "node.placement.preferred_applied")
 
 	rendered := engine.Metrics().Render()
 	for _, want := range []string{
