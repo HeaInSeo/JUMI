@@ -78,8 +78,9 @@ child node 실행
 - full contract file injection은 보류하고 env/flag 기반 minimal context를 우선 사용
 
 참고:
-- 현재 JUMI 저장소에는 `jumi-output-helper`, `runtime-helper`, `wrapped-shell` 잔재가 아직 남아 있다.
-- 이들은 모두 obsolete compatibility 경로로만 유지하며, 새 구현의 기준 경로로 간주하지 않는다.
+- JUMI 저장소 내부 helper source(`cmd/jumi-output-helper`, `pkg/runtimehelper`)는 제거됐다.
+- 다만 `runtime-helper`, `wrapped-shell` 같은 obsolete compatibility 경로와 smoke shortcut fixture는 아직 남아 있다.
+- 이들은 모두 새 구현의 기준 경로가 아니라, 제거 전 마지막 migration compatibility로만 간주한다.
 
 ### Phase 3: locality 반영
 

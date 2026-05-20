@@ -78,18 +78,20 @@ JUMI가 알 필요 없는 것:
 
 ## 5. 현재 저장소에서 유지할 것
 
-분리 전까지 JUMI repo에는 compatibility 경로가 남을 수 있다.
+분리 전환기에는 JUMI repo에 compatibility 경로가 남을 수 있다.
 
 예:
 
-- `cmd/jumi-output-helper`
-- `pkg/runtimehelper`
+- JUMI 저장소 안의 helper source
+  - `cmd/jumi-output-helper`
+  - `pkg/runtimehelper`
+  는 제거 완료 상태를 유지한다
 - smoke shortcut fixture
 - legacy helper path
 
 하지만 이들은 장기 소속을 의미하지 않는다.
 
-즉 현재 저장소의 helper 관련 코드는:
+즉 현재 저장소에 남아 있는 helper 관련 항목은:
 
 - migration compatibility
 - contract stabilization

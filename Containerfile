@@ -8,10 +8,10 @@ RUN go mod download
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/jumi ./cmd/jumi
-# Transitional build only:
-# keep producing the runtime-side helper from the in-repo compatibility source
-# until nan is fully split out of JUMI.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/nan ./cmd/jumi-output-helper
+# Runtime-side helper ownership lives in the separate node-artifact-runtime
+# repository. JUMI only consumes the published nan artifact.
+RUN GOBIN=/out CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go install github.com/HeaInSeo/node-artifact-runtime/cmd/node-artifact-runtime@248c734617a80925f390bc9f3800f8a489242415
 
 FROM debian:bookworm-slim
 
@@ -20,7 +20,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /out/jumi /usr/local/bin/jumi
-COPY --from=builder /out/nan /usr/local/bin/nan
+COPY --from=builder /out/node-artifact-runtime /usr/local/bin/nan
 # Transitional copy only:
 # the runtime-side helper belongs to the DAG node runtime image contract, not
 # to the JUMI service image contract. Keep only the canonical `nan` path in
