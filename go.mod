@@ -3,9 +3,9 @@ module github.com/HeaInSeo/JUMI
 go 1.25.10
 
 require (
+	github.com/HeaInSeo/dag-go v1.2.0
 	github.com/HeaInSeo/spawner v0.0.0-20260518121823-6b4771360ac3
 	github.com/prometheus/client_golang v1.23.2
-	github.com/seoyhaein/dag-go v0.0.10-0.20260403082453-9c3e609ade22
 	go.opentelemetry.io/otel/exporters/prometheus v0.65.0
 	go.opentelemetry.io/otel/metric v1.43.0
 	go.opentelemetry.io/otel/sdk/metric v1.43.0
@@ -17,6 +17,7 @@ require (
 )
 
 require (
+	github.com/HeaInSeo/utils v0.0.0-20260504053318-1547f9bc140b // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -42,8 +43,7 @@ require (
 	github.com/prometheus/common v0.67.5 // indirect
 	github.com/prometheus/otlptranslator v1.0.0 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
-	github.com/seoyhaein/utils v0.0.6 // indirect
-	github.com/sirupsen/logrus v1.9.1 // indirect
+	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect

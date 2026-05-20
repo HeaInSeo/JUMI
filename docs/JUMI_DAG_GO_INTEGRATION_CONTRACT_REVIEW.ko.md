@@ -7,9 +7,8 @@
 > 정본 저장소: `github.com/HeaInSeo/dag-go`
 >
 > 전환 메모:
-> - 현재 JUMI의 published dependency는 아직 `github.com/seoyhaein/dag-go` 경로를 사용한다.
-> - 이는 `github.com/HeaInSeo/dag-go` 최신 published module이 아직 `module github.com/seoyhaein/dag-go`를 선언하고 있기 때문이다.
-> - JUMI는 정본을 `github.com/HeaInSeo/dag-go`로 간주하며, module path가 정리되는 즉시 최신 `HeaInSeo/dag-go`로 전환해야 한다.
+> - JUMI는 `github.com/HeaInSeo/dag-go`를 정본으로 사용한다.
+> - `github.com/seoyhaein/dag-go` 경로는 제거 대상이며, 새 의존성 업데이트에서는 사용하지 않는다.
 
 ---
 

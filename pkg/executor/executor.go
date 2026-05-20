@@ -18,7 +18,7 @@ import (
 	"github.com/HeaInSeo/JUMI/pkg/provenance"
 	"github.com/HeaInSeo/JUMI/pkg/registry"
 	"github.com/HeaInSeo/JUMI/pkg/spec"
-	dag "github.com/seoyhaein/dag-go"
+	dag "github.com/HeaInSeo/dag-go"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

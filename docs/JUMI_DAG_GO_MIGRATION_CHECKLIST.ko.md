@@ -1,7 +1,7 @@
 # JUMI dag-go Migration Checklist
 
 > 작성일: 2026-05-20
-> 목적: JUMI가 `github.com/HeaInSeo/dag-go` 최신 정본으로 전환될 때 필요한 체크리스트를 고정한다.
+> 목적: JUMI가 `github.com/HeaInSeo/dag-go` 정본으로 전환할 때 사용한 체크리스트와 후속 검증 기준을 고정한다.
 
 ## 기준
 
@@ -9,10 +9,11 @@
 - 제거 대상 경로: `github.com/seoyhaein/dag-go`
 - 원칙: JUMI는 항상 최신 `dag-go`를 우선 사용한다.
 
-## 현재 블로커
+## 현재 상태
 
-- `github.com/HeaInSeo/dag-go` 최신 커밋은 존재하지만, published module은 아직 `module github.com/seoyhaein/dag-go`를 선언한다.
-- 따라서 JUMI는 `HeaInSeo/dag-go`를 직접 require/import하면 module path mismatch로 실패한다.
+- JUMI는 `github.com/HeaInSeo/dag-go`를 사용한다.
+- 제거 대상 경로 `github.com/seoyhaein/dag-go`는 새 업데이트 기준으로 더 이상 사용하지 않는다.
+- 라이브러리 업데이트 시에는 항상 최신 `HeaInSeo/dag-go`를 우선 적용하고 전체 테스트/스모크를 다시 수행한다.
 
 ## 전환 선행 조건
 
