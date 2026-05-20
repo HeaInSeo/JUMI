@@ -154,3 +154,10 @@ JUMI repo
 이 방향에서 가장 중요한 원칙은 하나다.
 
 `node-artifact-runtime`은 JUMI의 부속 바이너리가 아니라, node runtime contract를 담당하는 별도 GitHub repo 자산이 되어야 한다.
+
+TODO(supply-path): public source fetch is acceptable for current smoke validation, but the long-term supply path should move beyond source fetch.
+- GitHub Release binary
+- OCI image
+- Harbor mirror
+- ORAS artifact
+- digest-pinned runtime base image
