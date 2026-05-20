@@ -39,11 +39,6 @@ const outputManifestModeWrappedShell = "wrapped-shell"
 // should move to `nan run`. This mode is a final removal target.
 const outputManifestModeRuntimeHelper = "runtime-helper"
 
-// LegacyArtifactHelperPath is an obsolete compatibility path used by older
-// smoke/dev images. It points to the helper binary when the node runtime image
-// still embeds the legacy name. This path is a final removal target.
-const LegacyArtifactHelperPath = "/usr/local/bin/jumi-output-helper"
-
 // ArtifactHelperPath is the intended runtime binary path after node runtime
 // images migrate to nan.
 const ArtifactHelperPath = "/usr/local/bin/nan"

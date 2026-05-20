@@ -162,8 +162,9 @@ runtime helper 경로는 개념적으로 아래와 같다.
 
 호환성 규칙:
 
-- legacy fixture 또는 runtime image는 `/usr/local/bin/jumi-output-helper` alias를 여전히 사용할 수 있다
-- migration이 끝날 때까지 legacy alias를 유지하되, canonical path는 `/usr/local/bin/nan`이다
+- 오래된 runtime image는 `/usr/local/bin/jumi-output-helper` alias를 여전히 가질 수 있다
+- 하지만 JUMI service image는 더 이상 이 legacy alias를 기본 제공 대상으로 보지 않는다
+- migration이 끝날 때까지 canonical path는 `/usr/local/bin/nan`이다
 
 ## 7. Current v0 Behavior
 

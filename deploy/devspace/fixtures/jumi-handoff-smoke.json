@@ -10,8 +10,8 @@
     "sourceSystem": "vm-lab-smoke"
   },
   "metadata": {
-    "jumi.testShortcut": "This fixture uses the JUMI image as the node runtime image only because the current test image still contains the obsolete legacy helper binary. Production node runtime images should inherit from a JUMI-compatible node runtime base image containing nan.",
-    "jumi.obsoleteCompatibility": "The runtime-helper manifest mode and the embedded jumi-output-helper path are obsolete compatibility shortcuts kept only for migration."
+    "jumi.testShortcut": "This fixture uses the JUMI image as the node runtime image only because the current test image still carries nan as a transitional shortcut. Production node runtime images should inherit from a JUMI-compatible node runtime base image containing nan.",
+    "jumi.obsoleteCompatibility": "The runtime-helper manifest mode is an obsolete compatibility shortcut kept only for migration. The JUMI service image no longer carries the legacy jumi-output-helper alias."
   },
   "graph": {
     "nodes": [
