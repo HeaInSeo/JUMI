@@ -24,12 +24,14 @@ PKGS_REGRESSION := ./cmd/... ./pkg/executor ./pkg/handoff ./pkg/metrics ./pkg/ob
 PKGS_COVER := ./cmd/... ./pkg/...
 PKGS_SECURITY := ./cmd/... ./pkg/...
 
-.PHONY: test test-regression coverage fmt vet lint lint-depguard lint-security vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote runtime-build-local runtime-check-local runtime-smoke-remote
+.PHONY: test test-regression coverage fmt vet lint lint-depguard lint-security vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-smoke-remote ko-publish-remote ko-smoke-remote
 
 REMOTE_SSH_TARGET ?= seoy@100.123.80.48
 REGISTRY_HOST ?= harbor.10.113.24.96.nip.io
 RUNTIME_IMAGE_LOCAL_TAG ?= jumi-runtime:dev
 PREFLIGHT_PUBLISH_ENV_SCRIPT := $(CURDIR)/scripts/preflight-publish-env.sh
+PREFLIGHT_KO_REMOTE_SCRIPT := $(CURDIR)/scripts/preflight-ko-remote.sh
+PUBLISH_JUMI_SERVICE_KO_REMOTE_SCRIPT := $(CURDIR)/scripts/publish-jumi-service-ko-remote.sh
 
 test:
 	@mkdir -p "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)"
@@ -130,6 +132,9 @@ preflight-publish-local:
 preflight-publish-remote:
 	REMOTE_SSH_TARGET="$(REMOTE_SSH_TARGET)" REGISTRY_HOST="$(REGISTRY_HOST)" "$(PREFLIGHT_PUBLISH_ENV_SCRIPT)" --remote
 
+preflight-ko-remote:
+	REMOTE_SSH_TARGET="$(REMOTE_SSH_TARGET)" REGISTRY_HOST="$(REGISTRY_HOST)" "$(PREFLIGHT_KO_REMOTE_SCRIPT)"
+
 runtime-build-local:
 	podman build -f Containerfile -t "$(RUNTIME_IMAGE_LOCAL_TAG)" .
 
@@ -138,3 +143,9 @@ runtime-check-local:
 
 runtime-smoke-remote: preflight-publish-remote
 	./scripts/run-jumi-ah-dev-live-smoke-eval.sh
+
+ko-publish-remote: preflight-ko-remote
+	REMOTE_SSH_TARGET="$(REMOTE_SSH_TARGET)" REGISTRY_HOST="$(REGISTRY_HOST)" "$(PUBLISH_JUMI_SERVICE_KO_REMOTE_SCRIPT)"
+
+ko-smoke-remote: ko-publish-remote
+	REMOTE_JUMI_REPO_ROOT="/tmp/jumi-runtime-refresh" ALLOW_LOCAL_CHECKOUT_FALLBACK=true ./scripts/run-jumi-ah-dev-live-smoke-eval.sh

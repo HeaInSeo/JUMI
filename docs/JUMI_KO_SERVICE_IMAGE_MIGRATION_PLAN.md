@@ -115,3 +115,26 @@ live smoke에서 producer runtime image가 여전히 JUMI image shortcut을 쓸 
 - Harbor push 경로 표준화
 - `jumi-ah-dev` deployment image 교체 자동화
 - node runtime base image 도입 후 helper compatibility copy 제거
+
+## 9. 현재 검증 상태
+
+2026-05-20 기준으로 아래가 확인되었다.
+
+- `100.123.80.48`에서 `ko`를 직접 실행해 JUMI service image를 Harbor에 publish 가능
+- publish 대상은 `harbor.10.113.24.96.nip.io/batch-int/jumi`
+- `ko build -B ./cmd/jumi` 경로가 Harbor repository naming 기준에 맞음
+- published digest를 `jumi-ah-dev` deployment에 적용한 뒤 live smoke `PASS`
+
+## 10. 운영 전제
+
+원격 `ko` publish가 성립하려면 아래가 필요하다.
+
+1. `100.123.80.48`에 `ko` binary가 설치되어 있어야 한다
+2. Harbor TLS issuer `lab-ca`가 원격 OS trust store에 설치되어 있어야 한다
+3. Harbor auth가 `~/.docker/config.json`에 있어야 한다
+
+주의:
+
+- `podman`이 동작한다고 해서 `ko`가 같은 인증서를 자동으로 신뢰하는 것은 아니다.
+- `podman` auth가 있다고 해서 `ko`가 그 auth file을 자동으로 읽는 것도 아니다.
+- 따라서 `ko` 기준 trust/auth preflight를 별도로 유지해야 한다.

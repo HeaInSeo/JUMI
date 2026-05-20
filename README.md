@@ -13,14 +13,18 @@ Policy-agnostic in-cluster execution data-plane app for Kubernetes, built on a K
 - `make vuln-all`: report-only `govulncheck` over all packages
 - `make preflight-publish-local`: check Harbor reachability from the current host
 - `make preflight-publish-remote`: check Harbor reachability from `100.123.80.48`
+- `make preflight-ko-remote`: verify remote `ko`, Harbor TLS trust, and Docker auth on `100.123.80.48`
 - `make runtime-build-local`: local runtime image build for CLI validation only
 - `make runtime-check-local`: local `nan` CLI contract check against the local image
 - `make runtime-smoke-remote`: remote K8s smoke entrypoint
+- `make ko-publish-remote`: build and deploy the JUMI service image with `ko` on `100.123.80.48`
+- `make ko-smoke-remote`: run the live smoke after a `ko` service image publish
 
 Notes:
 - `GOLANGCI_LINT=/path/to/golangci-lint make lint` can be used to reuse an existing local binary instead of bootstrapping `./bin/golangci-lint`.
 - `make lint-security` is intentionally observation-only; current findings should be triaged separately from the fail gate.
 - Local build is not publish authority. Runtime image publish and K8s smoke authority live on `100.123.80.48`.
+- Remote `ko` publish requires Harbor TLS trust in the remote OS trust store and Harbor auth in `~/.docker/config.json`.
 
 ## Documents
 
