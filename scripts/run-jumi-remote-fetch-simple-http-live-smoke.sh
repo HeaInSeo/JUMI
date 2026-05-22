@@ -13,6 +13,7 @@ RUNTIME_SHORTCUT_IMAGE_TAG="${RUNTIME_SHORTCUT_IMAGE_TAG:-runtime-shortcut-simpl
 RUNTIME_SHORTCUT_IMAGE="${RUNTIME_SHORTCUT_IMAGE:-${RUNTIME_SHORTCUT_IMAGE_REPO}:${RUNTIME_SHORTCUT_IMAGE_TAG}}"
 EVAL_SCRIPT="${EVAL_SCRIPT:-${ROOT_DIR}/scripts/run-jumi-ah-dev-live-smoke-eval.sh}"
 FIXTURE_PATH="$(mktemp "${ROOT_DIR}/artifacts/devspace/jumi-remote-fetch-simple-http-fixture.XXXXXX.json")"
+ARTIFACT_SOURCE_REMOTE_PATH="${REMOTE_TMP_DIR:-/tmp/jumi-simple-http-artifact-source}/simple-http-artifact-source.yaml"
 
 ssh_remote() {
   ssh -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$REMOTE_SSH_TARGET" "$@"
@@ -20,7 +21,7 @@ ssh_remote() {
 
 cleanup() {
   rm -f "${FIXTURE_PATH}"
-  ssh_remote "export KUBECONFIG='${REMOTE_KUBECONFIG}'; kubectl -n '${VM_NAMESPACE}' delete -f '${REMOTE_JUMI_REPO_ROOT}/deploy/devspace/jumi-simple-http-artifact-source.yaml' --ignore-not-found" >/dev/null 2>&1 || true
+  ssh_remote "export KUBECONFIG='${REMOTE_KUBECONFIG}'; kubectl -n '${VM_NAMESPACE}' delete -f '${ARTIFACT_SOURCE_REMOTE_PATH}' --ignore-not-found; rm -rf '$(dirname "${ARTIFACT_SOURCE_REMOTE_PATH}")'" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -33,10 +34,13 @@ fixture = fixture.replace("__RUNTIME_SHORTCUT_IMAGE__", "${RUNTIME_SHORTCUT_IMAG
 Path("${FIXTURE_PATH}").write_text(fixture, encoding="utf-8")
 PY
 
+ssh_remote "mkdir -p '$(dirname "${ARTIFACT_SOURCE_REMOTE_PATH}")'"
+scp_remote "${ARTIFACT_SOURCE_MANIFEST}" "${REMOTE_SSH_TARGET}:${ARTIFACT_SOURCE_REMOTE_PATH}"
+
 ssh_remote "
   set -euo pipefail
   export KUBECONFIG='${REMOTE_KUBECONFIG}'
-  kubectl -n '${VM_NAMESPACE}' apply -f '${REMOTE_JUMI_REPO_ROOT}/deploy/devspace/jumi-simple-http-artifact-source.yaml'
+  kubectl -n '${VM_NAMESPACE}' apply -f '${ARTIFACT_SOURCE_REMOTE_PATH}'
   kubectl -n '${VM_NAMESPACE}' rollout status deployment/simple-http-artifact-source --timeout=180s
   kubectl -n '${VM_NAMESPACE}' get svc simple-http-artifact-source
 "
