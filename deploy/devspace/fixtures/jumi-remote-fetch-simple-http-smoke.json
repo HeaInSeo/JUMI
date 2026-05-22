@@ -21,7 +21,7 @@
         "command": [
           "sh",
           "-ceu",
-          "dd if=/dev/zero of=/out/report bs=1048576 count=1; mkdir -p \"$(dirname \"$JUMI_OUTPUT_MANIFEST_PATH\")\"; cat > \"$JUMI_OUTPUT_MANIFEST_PATH\" <<EOF\n{\"schemaVersion\":\"nan.artifactManifest.v1\",\"runId\":\"${JUMI_RUN_ID}\",\"sampleRunId\":\"${JUMI_SAMPLE_RUN_ID}\",\"nodeId\":\"${JUMI_NODE_ID}\",\"attemptId\":\"${JUMI_ATTEMPT_ID}\",\"containerName\":\"main\",\"nanVersion\":\"manual-vm-profile\",\"createdAt\":\"2026-05-22T00:00:00Z\",\"outputRoot\":\"/out\",\"artifacts\":[{\"outputName\":\"report\",\"declaredPath\":\"report\",\"absolutePath\":\"/out/report\",\"uri\":\"http://simple-http-artifact-source/artifacts/dataset-1mb.bin\",\"digest\":\"sha256:30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58\",\"sizeBytes\":1048576,\"type\":\"file\"}]}\nEOF\ncp \"$JUMI_OUTPUT_MANIFEST_PATH\" /dev/termination-log"
+          "mkdir -p /out; dd if=/dev/zero of=/out/report bs=1048576 count=1; mkdir -p \"$(dirname \"$JUMI_OUTPUT_MANIFEST_PATH\")\"; cat > \"$JUMI_OUTPUT_MANIFEST_PATH\" <<EOF\n{\"schemaVersion\":\"nan.artifactManifest.v1\",\"runId\":\"${JUMI_RUN_ID}\",\"sampleRunId\":\"${JUMI_SAMPLE_RUN_ID}\",\"nodeId\":\"${JUMI_NODE_ID}\",\"attemptId\":\"${JUMI_ATTEMPT_ID}\",\"containerName\":\"main\",\"nanVersion\":\"manual-vm-profile\",\"createdAt\":\"2026-05-22T00:00:00Z\",\"outputRoot\":\"/out\",\"artifacts\":[{\"outputName\":\"report\",\"declaredPath\":\"report\",\"absolutePath\":\"/out/report\",\"uri\":\"http://simple-http-artifact-source/artifacts/dataset-1mb.bin\",\"digest\":\"sha256:30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58\",\"sizeBytes\":1048576,\"type\":\"file\"}]}\nEOF\ncp \"$JUMI_OUTPUT_MANIFEST_PATH\" /dev/termination-log"
         ],
         "serviceAccountName": "jumi",
         "outputs": [
@@ -34,7 +34,7 @@
         "command": [
           "sh",
           "-ceu",
-          "printf 'uri=%s materialization=%s expectedDigest=%s localPath=%s\\n' \"$JUMI_INPUT_DATASET_URI\" \"$JUMI_INPUT_DATASET_MATERIALIZATION_MODE\" \"$JUMI_INPUT_DATASET_EXPECTED_DIGEST\" \"$JUMI_INPUT_DATASET_LOCAL_PATH\"; test -f \"$JUMI_INPUT_DATASET_LOCAL_PATH\"; sha256sum \"$JUMI_INPUT_DATASET_LOCAL_PATH\"; wc -c \"$JUMI_INPUT_DATASET_LOCAL_PATH\"; cp \"$JUMI_INPUT_DATASET_LOCAL_PATH\" /out/consumed"
+          "mkdir -p /out; printf 'uri=%s materialization=%s expectedDigest=%s localPath=%s\\n' \"$JUMI_INPUT_DATASET_URI\" \"$JUMI_INPUT_DATASET_MATERIALIZATION_MODE\" \"$JUMI_INPUT_DATASET_EXPECTED_DIGEST\" \"$JUMI_INPUT_DATASET_LOCAL_PATH\"; test -f \"$JUMI_INPUT_DATASET_LOCAL_PATH\"; sha256sum \"$JUMI_INPUT_DATASET_LOCAL_PATH\"; wc -c \"$JUMI_INPUT_DATASET_LOCAL_PATH\"; cp \"$JUMI_INPUT_DATASET_LOCAL_PATH\" /out/consumed"
         ],
         "serviceAccountName": "jumi",
         "outputs": [
