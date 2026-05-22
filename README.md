@@ -41,6 +41,8 @@ Notes:
 - [JUMI Node Runtime Base Image Plan](docs/JUMI_NODE_RUNTIME_BASE_IMAGE_PLAN.md)
 - [JUMI Artifact Helper Repo Split Plan](docs/JUMI_ARTIFACT_HELPER_REPO_SPLIT_PLAN.md)
 - [JUMI AH nan Integration Review](docs/JUMI_AH_NAN_INTEGRATION_REVIEW.md)
+- [JUMI Remote Fetch v0 Sprint Plan](docs/JUMI_REMOTE_FETCH_V0_SPRINT_PLAN.md)
+- [JUMI simple_http Artifact Source v0 Plan](docs/JUMI_SIMPLE_HTTP_ARTIFACT_SOURCE_V0_PLAN.md)
 - [JUMI Durable Registry Options](docs/JUMI_DURABLE_REGISTRY_OPTIONS.ko.md)
 - [JUMI Implementation Status 2026-05-14](docs/JUMI_IMPLEMENTATION_STATUS_2026-05-14.ko.md)
 - [JUMI Layered Error Guidelines Review](docs/JUMI_LAYERED_ERROR_GUIDELINES_REVIEW.ko.md)

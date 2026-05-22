@@ -138,8 +138,9 @@ func TestDagEngineResolvesArtifactBindingsBeforeStart(t *testing.T) {
 			Decision:         "remote_fetch",
 			PlacementIntent:  handoff.PlacementIntent{Mode: "required_node", NodeName: "node-a"},
 			MaterializationPlan: handoff.MaterializationPlan{
-				Mode: "remote_fetch",
-				URI:  "http://artifact.local/output",
+				Mode:           "remote_fetch",
+				URI:            "http://artifact.local/output",
+				ExpectedDigest: "sha256:abc",
 			},
 		},
 	}
@@ -205,6 +206,15 @@ func TestDagEngineResolvesArtifactBindingsBeforeStart(t *testing.T) {
 	}
 	if preparedNode.Env["JUMI_INPUT_DATASET_URI"] != "http://artifact.local/output" {
 		t.Fatalf("uri env = %q, want http://artifact.local/output", preparedNode.Env["JUMI_INPUT_DATASET_URI"])
+	}
+	if preparedNode.Env["JUMI_INPUT_DATASET_PLACEMENT_MODE"] != "required_node" {
+		t.Fatalf("placement mode env = %q, want required_node", preparedNode.Env["JUMI_INPUT_DATASET_PLACEMENT_MODE"])
+	}
+	if preparedNode.Env["JUMI_INPUT_DATASET_MATERIALIZATION_MODE"] != "remote_fetch" {
+		t.Fatalf("materialization mode env = %q, want remote_fetch", preparedNode.Env["JUMI_INPUT_DATASET_MATERIALIZATION_MODE"])
+	}
+	if preparedNode.Env["JUMI_INPUT_DATASET_EXPECTED_DIGEST"] != "sha256:abc" {
+		t.Fatalf("expected digest env = %q, want sha256:abc", preparedNode.Env["JUMI_INPUT_DATASET_EXPECTED_DIGEST"])
 	}
 	if preparedNode.Env["JUMI_INPUT_DATASET_REQUIRES_MATERIALIZATION"] != "true" {
 		t.Fatalf("requires materialization env = %q, want true", preparedNode.Env["JUMI_INPUT_DATASET_REQUIRES_MATERIALIZATION"])

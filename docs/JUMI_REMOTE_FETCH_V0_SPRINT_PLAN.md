@@ -1,0 +1,399 @@
+# JUMI Remote Fetch v0 Sprint Plan
+
+> 작성일: 2026-05-22  
+> 상태: Active  
+> 목적: `remote_fetch` / artifact materialization v0 범위를 고정하고, 작업이 중단되더라도 같은 기준에서 재개할 수 있게 한다.
+
+---
+
+## 1. 한 줄 요약
+
+현재 JUMI / AH / nan 기준선은 다음과 같다.
+
+- `contract smoke`는 가능하다.
+- `real materialization smoke`는 아직 미구현이다.
+- v0의 첫 실제 backend는 `simple_http`로 제한한다.
+- v0의 임시 materialization target path는 `/work/inputs/<inputName>`으로 둔다.
+
+즉 현재 상태는:
+
+```text
+AH가 MaterializationPlan(mode, uri, expectedDigest)를 반환한다
+↓
+JUMI가 이를 env/runtime context로 전달한다
+↓
+runtime helper가 실제 fetch/materialize하는 구현은 아직 완성되지 않았다
+```
+
+---
+
+## 2. 용어 구분
+
+### 2.1 Contract Smoke
+
+다음을 검증하는 단계다.
+
+- A output manifest 생성
+- JUMI `RegisterArtifact`
+- B 준비 시 `ResolveBinding`
+- AH가 `remote_fetch + uri + expectedDigest` 반환
+- JUMI가 이를 B env/runtime context에 주입
+
+이 단계에서는 B가 실제로 파일을 fetch하지 않아도 된다.
+
+중요:
+
+- unit-level contract smoke에서는 `jumi://...` logical URI 전달까지만 확인해도 된다.
+- VM-facing materialization smoke에서만 fetch 가능한 `http://...` URI를 확인한다.
+
+### 2.2 Materialization Smoke
+
+다음을 검증하는 단계다.
+
+- B runtime helper가 실제로 artifact를 가져온다
+- digest를 검증한다
+- `/work/inputs/<inputName>`에 atomic하게 준비한다
+- B command가 그 파일을 읽고 성공한다
+
+---
+
+## 3. 현재 기준선
+
+### 3.1 현재 가능한 것
+
+- AH가 `MaterializationPlan.mode`, `uri`, `expectedDigest`를 반환
+- JUMI가 이를 env/runtime context로 전달
+- `remote_fetch` decision 계측
+- A -> B live smoke에서 contract seam 자체는 검증 가능
+
+### 3.2 현재 불가능한 것
+
+- runtime helper가 `uri`를 실제로 fetch
+- digest mismatch 시 fetch 단계에서 terminal fail
+- `/work/inputs/<inputName>` materialization
+- large-file transport backend 검증
+
+### 3.3 v0 transport backend 결정
+
+v0 happy path backend는 `simple_http`로 제한한다.
+
+제한 범위:
+
+- 단일 파일 GET
+- 무인증 또는 테스트용 단순 HTTP
+- sha256 검증
+- small file happy path 우선
+
+backlog로 미루는 것:
+
+- `dragonfly`
+- `node_peer_fetch`
+- `external_command`
+- `direct_object_store` 일반화
+- object storage auth / signed URL
+- retry / resume / range request
+
+### 3.4 v0 materialization target path
+
+임시 기준 경로:
+
+```text
+/work/inputs/<inputName>
+```
+
+이 경로는 v0 happy path를 닫기 위한 임시 contract다.
+장기적으로 `/in` 또는 별도 runtime contract path로 다시 정리될 수 있다.
+
+### 3.5 URI 계층
+
+v0 기준으로 URI는 두 층으로 본다.
+
+- logical URI
+  - 예: `jumi://run/{runId}/node/{nodeId}/attempt/{attemptId}/output/{name}`
+  - artifact identity 또는 내부 식별자 성격
+- fetchable URI
+  - 예: `http://artifact-source.local/artifacts/{digest}`
+  - 실제 fetch 가능한 transport URI
+
+원칙:
+
+- `nan`은 fetchable URI의 SOT가 아니다.
+- 장기적으로 fetchable URI의 SOT는 AH 또는 그 뒤의 materialization source layer가 맡는다.
+- 하지만 v0에서는 복잡한 source registry를 만들지 않고, VM happy path용 `simple_http` artifact source를 둔다.
+
+---
+
+## 4. 스프린트 개요
+
+| Sprint | 목표 | 상태 |
+|---|---|---|
+| Sprint 0 | 기준선 고정 | Completed |
+| Sprint 1 | contract smoke 안정화 | In Progress |
+| Sprint 2 | `nan` simple_http materializer 최소 구현 | In Progress |
+| Sprint 3 | VM happy path 검증 | Pending |
+| Sprint 4 | 정리와 backlog 고정 | Pending |
+
+---
+
+## 5. Sprint 0 — 기준선 고정
+
+목표:
+
+- 현재 상태를 `contract smoke 가능 / real materialization 미구현`으로 명확히 고정
+- `remote_fetch`를 특정 다운로드 기술이 아니라 materialization 동작으로 정의
+- `simple_http`를 v0 backend로 결정
+- `/work/inputs/<inputName>`를 임시 target path로 결정
+
+산출물:
+
+- 현재 `remote_fetch` 상태 문서화
+- `contract smoke`와 `materialization smoke` 용어 분리
+- v0 happy path backend를 `simple_http`로 결정
+- 임시 materialization target path 결정
+
+완료 기준:
+
+- 문서에 현재 가능/불가능 범위가 명확함
+- 구현 범위가 `simple_http`로 제한됨
+- `dragonfly` / `peer_fetch`가 backlog로 이동함
+
+상태:
+
+- 완료
+
+관련 문서:
+
+- [JUMI Node Runtime Artifact Contract](./JUMI_NODE_RUNTIME_ARTIFACT_CONTRACT.md)
+- [JUMI AH nan Integration Review](./JUMI_AH_NAN_INTEGRATION_REVIEW.md)
+- [JUMI Design](./JUMI_DESIGN.ko.md)
+- [JUMI Locality Semantics Review](./JUMI_LOCALITY_SEMANTICS_REVIEW.ko.md)
+
+---
+
+## 6. Sprint 1 — Contract Smoke 안정화
+
+목표:
+
+- 실제 fetch 전 단계까지 확실히 검증
+
+검증 흐름:
+
+```text
+A 실행
+  ↓
+A output manifest 생성
+  ↓
+JUMI가 AH RegisterArtifact 호출
+  ↓
+B 준비 시 ResolveBinding 호출
+  ↓
+AH가 remote_fetch + uri + expectedDigest 반환
+  ↓
+JUMI가 B env에 주입
+```
+
+확인할 env:
+
+- `JUMI_INPUT_<X>_URI`
+- `JUMI_INPUT_<X>_MATERIALIZATION_MODE`
+- `JUMI_INPUT_<X>_EXPECTED_DIGEST`
+- `JUMI_INPUT_<X>_SOURCE_NODE`
+- `JUMI_INPUT_<X>_PLACEMENT_MODE`
+
+완료 기준:
+
+- B Job/Pod 실행 환경에 `remote_fetch` env가 들어감
+- `expectedDigest`가 비어 있지 않음
+- 이 단계에서는 B가 fetch하지 않아도 됨
+- B runtime image가 아직 fetch를 하지 않아도 contract smoke는 성공으로 본다
+
+예상 작업:
+
+- JUMI/AH fixture가 실제 `uri`를 가진 `MaterializationPlan`을 안정적으로 만들도록 정리
+- smoke summary에서 `contract smoke`와 `materialization smoke`를 구분
+- fetchable URI 공급 경로를 v0 VM happy path용 runtime/materialization profile adapter 관점으로 고정
+
+현재 기준 상태:
+
+- executor 단위 테스트에서는 `status`, `decision`, `uri`, `source_node`, `placement_mode`, `materialization_mode`, `expectedDigest`, `requires_materialization` env 주입을 고정할 수 있다
+- unit-level contract smoke에서는 `jumi://...` logical URI 전달을 허용한다
+- live smoke에서는 `remote_fetch` decision seam과 계측은 검증되지만, fetch 가능한 `http://...` URI까지는 아직 고정되지 않았다
+- 따라서 Sprint 1은 "unit-level contract sealing은 가능, VM-facing contract smoke는 일부 잔여" 상태다
+
+관련 설계 메모:
+
+- [JUMI simple_http Artifact Source v0 Plan](./JUMI_SIMPLE_HTTP_ARTIFACT_SOURCE_V0_PLAN.md)
+
+---
+
+## 7. Sprint 2 — nan simple_http materializer 최소 구현
+
+목표:
+
+- B runtime에서 실제 파일을 가져오고 digest를 검증
+
+현재 상태:
+
+- `node-artifact-runtime`에서 env 기반 `remote_fetch` input 파싱이 구현됨
+- `simple_http` GET + `sha256` digest 검증 + `/work/inputs/<inputName>` atomic move가 단위 테스트로 검증됨
+- child command에는 `JUMI_INPUT_<X>_LOCAL_PATH` env가 주입됨
+- 현재 GitHub pin 기준선: `github.com/HeaInSeo/node-artifact-runtime@v0.1.5`
+- 아직 VM happy path용 fetchable `http://...` URI 공급 adapter는 미구현
+
+최소 구현:
+
+- env 또는 contract에서 `uri` 읽기
+- `expectedDigest` 읽기
+- `simple_http` GET으로 파일 다운로드
+- 임시 파일에 저장
+- sha256 계산
+- `expectedDigest`와 비교
+- 성공 시 `/work/inputs/<inputName>`으로 atomic move
+- 실패 시 non-zero exit
+
+지원 backend:
+
+- `simple_http`
+
+지원 digest:
+
+- `sha256`
+
+지원 파일 크기:
+
+- `1MB ~ 10MB`
+
+권장 구현 디테일:
+
+- temp path 예: `/work/.jumi-fetch/<inputName>.part`
+- digest mismatch 시 최종 target path는 만들지 않음
+- 같은 inputName의 덮어쓰기 정책은 v0에서는 "성공 시 최종 파일 교체"로 단순화
+
+완료 기준:
+
+- B가 실제로 파일을 다운로드함
+- digest mismatch 시 실패함
+- digest 일치 시 `/work/inputs/<inputName>`에 파일이 생김
+- B command가 그 파일을 읽고 성공함
+- 구현이 GitHub 정본 `node-artifact-runtime`에 반영되어 JUMI 쪽이 commit/tag로 pin 가능함
+
+---
+
+## 8. Sprint 3 — VM Happy Path 검증
+
+목표:
+
+- 실제 VM/kind 환경에서 A -> B를 end-to-end로 확인
+
+시나리오 이름:
+
+- `simple_http_remote_fetch_A_to_B`
+
+흐름:
+
+1. A node가 artifact 생성
+2. `nan`이 output manifest 생성
+3. v0 VM happy path용 runtime/materialization profile adapter가 A output을 simple HTTP server root 아래에 노출
+4. JUMI가 AH에 `RegisterArtifact`
+5. 이때 AH에 들어가는 URI는 fetch 가능한 `http://...` URI
+6. B가 `ResolveBinding` 결과로 `remote_fetch` plan 수신
+7. AH는 등록된 `http://...` URI를 `MaterializationPlan.URI`로 pass-through
+8. B runtime helper가 `simple_http`로 fetch
+9. digest 검증
+10. `/work/inputs/<inputName>` 준비
+11. B가 input 읽고 성공
+12. 전체 run `Succeeded`
+
+파일 크기 단계:
+
+- 1단계: `1MB`
+- 2단계: `10MB`
+- 3단계: `100MB`
+
+완료 기준:
+
+- A Job/Pod 성공
+- AH `RegisterArtifact` 성공
+- B `ResolveBinding remote_fetch` 확인
+- B fetch 성공
+- digest 검증 성공
+- B 성공
+- 전체 run 성공
+
+참고:
+
+- `100MB`까지 통과하면 현재 단계에서는 충분하다
+- `1GB+`는 다음 안정화 단계로 미룬다
+
+---
+
+## 9. Sprint 4 — 정리와 Backlog 고정
+
+목표:
+
+- v0에서 닫은 것과 남은 부채를 분명히 남긴다
+
+backlog:
+
+- `dragonfly` backend
+- `node_peer_fetch`
+- `external_command` backend
+- node-local CAS cache
+- retry / resume
+- large-file stress test
+- post-scheduling `ResolveBinding`
+- directK8s placement parity
+- `required_node` pending timeout policy
+- auth-enabled object store backend
+- multi-input concurrent fetch policy
+- cache eviction policy
+
+완료 기준:
+
+- v0에서 닫은 것과 안 닫은 것이 분명함
+- 다음 개발자가 `remote_fetch` 상태를 오해하지 않음
+- `simple_http` happy path 결과가 문서에 남음
+
+---
+
+## 10. 재개 규칙
+
+이 문서를 기준으로 중단/재개 시 아래 순서로 확인한다.
+
+1. 현재 스프린트 상태 확인
+2. `contract smoke`와 `materialization smoke`를 혼동하지 않았는지 확인
+3. v0 backend가 여전히 `simple_http`로 제한되어 있는지 확인
+4. materialization target path가 `/work/inputs/<inputName>`인지 확인
+5. backlog 항목이 범위 안으로 새어 들어오지 않았는지 확인
+
+재개 시 첫 확인 질문:
+
+```text
+지금 우리는 Sprint 2 simple_http materializer를 GitHub 정본에 pin하는 중인가,
+아니면 Sprint 3 VM happy path adapter로 넘어갔는가?
+```
+
+---
+
+## 11. 비범위 항목
+
+이번 v0 스프린트에서 기본값으로 밀지 않는 것:
+
+- Dragonfly 필수 통합
+- long-running sidecar
+- PV/PVC 중심 공유 스토리지
+- generic PodSpec extension
+- full post-scheduling placement/materialization re-resolve
+
+---
+
+## 12. 현재 판정
+
+현재 문서 기준 판정은 아래와 같다.
+
+- Sprint 0: 완료
+- Sprint 1: 거의 완료
+- Sprint 2: GitHub 정본 구현 완료, VM adapter 대기
+- Sprint 3 이후: 구현 전
+
+즉 지금은 "최소 materializer 구현은 닫혔고, fetchable `http://...` URI를 공급하는 VM happy path adapter" 직전 단계다.

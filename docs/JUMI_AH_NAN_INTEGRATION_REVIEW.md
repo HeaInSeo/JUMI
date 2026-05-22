@@ -110,6 +110,101 @@ child node 실행
 - digest verification
 - `/in` read-only contract 검증
 
+중요한 정의:
+
+- `remote_fetch`는 특정 다운로드 기술 이름이 아니다.
+- `remote_fetch`는 현재 실행 node에서 artifact를 사용할 수 있게 준비하는 materialization 동작이다.
+- `MaterializationPlan.mode`는 "무엇을 해야 하는가"를 뜻한다.
+- transport backend는 "어떤 수단으로 가져올 것인가"를 뜻한다.
+- `jumi://...`는 logical artifact URI로 유지할 수 있고, fetchable URI와 동일할 필요는 없다.
+
+transport backend 후보:
+
+- `node_peer_fetch`
+- `dragonfly`
+- `external_command`
+- `simple_http`
+- `disabled` / `local_only`
+
+원칙:
+
+- AH/JUMI/nan은 특정 transport backend API에 직접 종속되지 않아야 한다.
+- Dragonfly는 대용량 artifact 전송에 유리한 선택지일 수 있지만, 필수 구성요소는 아니다.
+- pipeline spec은 `consumePolicy` 같은 분석 의미를 표현하고, runtime/materialization profile이 실제 transport strategy를 선택해야 한다.
+- `simple_http`는 pipeline spec이 아니라 runtime/materialization profile 또는 VM test profile에서만 선택된다.
+
+예:
+
+```yaml
+input:
+  consumePolicy: SameNodeThenRemote
+```
+
+```yaml
+materializationProfile:
+  remoteFetch:
+    strategy: simple_http
+```
+
+또는:
+
+```yaml
+materializationProfile:
+  remoteFetch:
+    strategy: external_command
+    command: /opt/site/bin/fetch-artifact
+```
+
+유전체 분석 관점:
+
+- FASTQ / BAM / CRAM / VCF는 수십 GB~수백 GB가 될 수 있다.
+- 동일 artifact를 여러 자식 node가 반복 소비할 수 있다.
+- 중앙 저장소 직접 다운로드만 반복하면 storage/네트워크 병목이 생긴다.
+- digest 기반 검증은 필수다.
+- node-local cache, retry / resume / partial download는 후속 확장 포인트다.
+
+개발 경계:
+
+- v0 목표
+  - `remote_fetch` mode와 `uri` / `expectedDigest` 계약 유지
+  - JUMI가 `MaterializationPlan`을 env 또는 node runtime context로 전달
+  - `nan` 또는 runtime helper가 `simple_http` backend로 작은 파일 happy path를 검증
+  - transport backend abstraction을 문서로 고정
+- v0 비목표
+  - Dragonfly 완전 통합
+  - node-local CAS cache 완성
+  - peer fetch 완성
+  - `direct_object_store` 일반화
+  - 기관별 전송 도구 완전 통합
+  - post-scheduling resolve 완성
+- v1 이후 후보
+  - node-local CAS cache
+  - Dragonfly backend
+  - peer fetch backend
+  - external command backend
+  - transfer metrics
+  - fetch retry / resume
+  - large-file stress test
+  - `targetNodeName=actualNode` 기반 post-scheduling resolve
+
+VM happy path 계획:
+
+1. A node가 작은 artifact를 생성한다
+2. `nan`이 output manifest를 만든다
+3. v0 VM happy path용 runtime/materialization profile adapter가 A output을 `simple_http` artifact source로 노출한다
+4. JUMI가 AH에 `RegisterArtifact` 한다
+5. AH에는 fetch 가능한 `http://...` URI가 등록된다
+6. AH가 B input `ResolveBinding`을 수행한다
+7. AH가 `remote_fetch` `MaterializationPlan`을 반환하고, `MaterializationPlan.URI`는 등록된 `http://...` URI를 pass-through 한다
+8. JUMI가 B env/runtime context에 `uri`, `expectedDigest`, `materialization mode`를 전달한다
+9. B node가 `simple_http` backend로 artifact를 fetch한다
+10. digest를 검증한다
+11. `/work/inputs/<inputName>`에 atomic하게 배치한다
+12. B가 input을 읽고 성공한다
+13. 이후 `10MB -> 1GB -> 5GB+`로 확장한다
+
+이 검증의 목적은 최종 전송 기술을 고정하는 것이 아니라, `remote_fetch` 계약이 실제로 artifact를 materialize할 수 있는지 확인하는 것이다.
+
 ## 개발 가드레일
 
 - AH proto는 AH repo가 정본이다.

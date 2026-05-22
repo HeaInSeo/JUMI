@@ -278,7 +278,254 @@ JUMI image를 node runtime image로도 사용한 흔적이 있다.
 JUMI는 declared contract와 observed manifest를 합쳐서 AH에 등록한다.
 따라서 `nan`이 pipeline semantics 전체를 직접 알 필요는 없다.
 
-## 12. TODO
+## 12. Remote Fetch 와 Materialization
+
+현재 문맥에서 `remote_fetch`는 특정 전송 기술 이름이 아니다.
+
+정의:
+
+- `remote_fetch`는 `MaterializationPlan`에 포함된 `uri`와 `expectedDigest`를 기준으로, 현재 실행 노드에서 자식 작업이 사용할 수 있도록 부모 artifact를 준비하는 추상적인 materialization 동작이다.
+- 즉 `remote_fetch`는 "무엇을 해야 하는가"를 뜻하고, 실제로 "어떤 수단으로 가져올 것인가"는 별도 transport backend가 결정한다.
+
+반드시 구분해야 하는 두 층:
+
+- `MaterializationPlan.mode`
+  - 예: `none`, `local_reuse`, `remote_fetch`
+  - 의미: 실행 시점에 어떤 종류의 artifact 준비가 필요한가
+- `TransportStrategy` 또는 `FetchBackend`
+  - 예: `direct_object_store`, `node_peer_fetch`, `dragonfly`, `external_command`, `disabled`
+  - 의미: 실제 전송/준비를 어떤 수단으로 수행할 것인가
+
+예시:
+
+```text
+mode: remote_fetch
+uri: s3://bucket/path/to/output.bam
+expectedDigest: sha256:...
+transport strategy: direct_object_store
+```
+
+또는:
+
+```text
+mode: remote_fetch
+uri: peer://worker-2/runs/run-001/outputs/aligned-bam
+expectedDigest: sha256:...
+transport strategy: node_peer_fetch
+```
+
+즉 `remote_fetch = 다운로드`로 설명하면 부족하다.
+정확한 의미는 "현재 실행 노드에서 artifact를 사용할 수 있는 상태로 materialize하는 것"이다.
+
+### 12.1 Logical URI 와 Fetchable URI
+
+현재 문맥에서는 artifact URI를 두 층으로 구분하는 것이 안전하다.
+
+- `logicalUri`
+  - 예: `jumi://run/{runId}/node/{nodeId}/attempt/{attemptId}/output/{name}`
+  - 의미: artifact의 내부 식별자 또는 논리적 URI
+  - 반드시 실제 fetch 가능한 URL일 필요는 없다
+- `fetchableUri`
+  - 예: `http://artifact-source.local/artifacts/{digest}`
+  - 의미: 특정 실행 환경에서 실제 바이트를 가져올 수 있는 transport URI
+  - 환경별 backend와 source policy에 따라 달라질 수 있다
+
+예:
+
+```yaml
+logicalUri: jumi://run/{runId}/node/{nodeId}/attempt/{attemptId}/output/{name}
+fetchableUri: http://artifact-source.local/artifacts/{digest}
+digest: sha256:...
+```
+
+현재 JUMI smoke와 `nan` manifest 경로에서는 `jumi://...`를 계속 logical URI로 사용할 수 있다.
+장기적으로 fetchable URI의 source of truth는 AH 또는 그 뒤의 materialization source layer가 소유해야 한다.
+
+## 13. Pipeline Spec 과 Runtime Materialization Profile 분리
+
+pipeline spec에는 특정 전송 기술을 박지 않는다.
+
+나쁜 예:
+
+```yaml
+input:
+  fetch: dragonfly
+```
+
+좋은 예:
+
+```yaml
+input:
+  consumePolicy: SameNodeThenRemote
+```
+
+실제 전송 방식은 runtime 또는 materialization profile에서 선택한다.
+
+예:
+
+```yaml
+materializationProfile:
+  remoteFetch:
+    strategy: direct_object_store
+```
+
+또는:
+
+```yaml
+materializationProfile:
+  remoteFetch:
+    strategy: dragonfly
+```
+
+또는:
+
+```yaml
+materializationProfile:
+  remoteFetch:
+    strategy: external_command
+    command: /opt/site/bin/fetch-artifact
+```
+
+원칙:
+
+- pipeline spec은 분석 논리와 input 소비 정책을 표현한다.
+- runtime/materialization profile은 실행 환경별 전송 구현을 선택한다.
+- 같은 pipeline spec이 여러 기관/클러스터에서 서로 다른 transport backend로 실행될 수 있어야 한다.
+- `simple_http` 같은 검증용 backend도 pipeline spec이 아니라 runtime/materialization profile 또는 VM test profile에서만 선택되어야 한다.
+
+## 14. Runtime-side Transport Backend 후보
+
+`nan` 또는 그 후속 runtime helper는 transport backend를 교체 가능한 계층으로 다뤄야 한다.
+
+### 14.1 `direct_object_store`
+
+- S3 / MinIO / HTTP / object storage에서 직접 다운로드
+- v0 happy path 검증에 가장 적합
+- 구현이 단순하다
+- 대용량/동시성 상황에서는 object storage 병목이 생길 수 있다
+
+### 14.2 `node_peer_fetch`
+
+- artifact가 있는 worker node 또는 node-local cache에서 직접 가져온다
+- AH의 location-aware 설계와 잘 맞는다
+- 별도의 node-level artifact endpoint 또는 agent가 필요할 수 있다
+
+### 14.3 `dragonfly`
+
+- P2P distribution layer를 사용하는 backend 후보다
+- 대용량 artifact, 반복 다운로드, 모델/OCI artifact 배포에 유리할 수 있다
+- 하지만 모든 기관이나 연구소가 Dragonfly를 사용할 수 있는 것은 아니다
+- 따라서 Dragonfly는 선택 가능한 backend일 뿐, AH/JUMI/nan의 필수 의존성이 아니다
+
+정리 문장:
+
+> Dragonfly는 P2P 전송이 가능한 선택적 backend이며, AH/JUMI/nan이 필수로 의존해야 하는 구성요소는 아니다.
+
+### 14.4 `external_command`
+
+- 기관/기업이 이미 보유한 고속 전송 도구나 사내 CLI를 호출한다
+- 예: `/opt/site/bin/fetch-artifact`
+- `uri`, `expectedDigest`, `outputPath` 같은 값을 인자로 넘기는 방식으로 설계할 수 있다
+
+### 14.5 `disabled` 또는 `local_only`
+
+- remote fetch를 허용하지 않는 환경
+- `SameNodeOnly` 정책 또는 `required_node` 기반 실행만 허용
+- remote fetch가 필요하면 실패 처리한다
+
+### 14.6 `simple_http`
+
+- v0 VM happy path 검증용 backend
+- 작은 파일을 대상으로 단순 HTTP GET만 가정한다
+- 최종 전송 구조를 고정하기 위한 것이 아니라, `remote_fetch` 계약이 실제 fetch/materialize로 이어지는지 빨리 검증하기 위한 backend다
+- pipeline spec에는 드러나지 않고 runtime/materialization profile 또는 VM test profile에서만 선택된다
+
+## 15. 유전체 분석 관점에서의 Remote Fetch
+
+유전체 분석에서는 `remote_fetch`를 단순 다운로드로 보면 안 된다.
+
+이유:
+
+- FASTQ / BAM / CRAM / VCF는 수십 GB~수백 GB가 될 수 있다
+- 동일 artifact를 여러 자식 node가 반복 소비할 수 있다
+- 중앙 object storage에서 매번 다시 가져오면 네트워크와 storage가 병목이 될 수 있다
+- digest 기반 검증은 필수다
+- node-local cache는 v1 이후 중요한 확장 포인트다
+- retry / resume / partial download / range access도 향후 중요한 확장 포인트다
+
+현재 단계의 목표는 대용량 transport를 완성하는 것이 아니라, 작은 happy path를 direct backend로 먼저 검증하면서 transport abstraction을 설계 문서로 고정하는 것이다.
+
+## 16. v0 / v1 경계
+
+### 16.1 v0 목표
+
+- `remote_fetch` mode와 `uri` / `expectedDigest` 계약 유지
+- JUMI가 `MaterializationPlan`을 env 또는 후속 node contract 구조로 전달
+- `nan` 또는 runtime helper가 `simple_http` backend로 실제 fetch 수행 가능
+- digest 검증
+- 작은 파일 기준 VM happy path 검증
+- pipeline spec이 특정 transport backend에 종속되지 않음
+- transport backend 교체 가능성을 문서로 고정
+
+### 16.2 v0 비목표
+
+- Dragonfly 완전 통합
+- node-local CAS cache 완성
+- peer fetch 완성
+- `direct_object_store` 일반화
+- 고급 retry / resume / range fetch
+- 기관별 고속 전송 도구 완전 통합
+- post-scheduling resolve 완성
+
+### 16.3 v1 이후 후보
+
+- node-local CAS cache
+- Dragonfly backend
+- peer fetch backend
+- external command backend
+- transfer metrics
+- fetch retry / resume
+- large-file stress test
+- `targetNodeName=actualNode` 기반 post-scheduling resolve
+- scheduling 결과 기반 materialization 재판단
+
+## 17. VM Happy Path 검증 계획
+
+초기 VM happy path는 Dragonfly가 아니라 `simple_http` backend를 기준으로 잡는다.
+
+중요:
+
+- 이것은 최종 전송 구조가 아니라, remote_fetch materialization smoke를 빠르게 닫기 위한 검증용 backend다.
+- `simple_http` 선택은 pipeline spec이 아니라 runtime/materialization profile 또는 VM test profile에서 이뤄진다.
+- 이 profile은 JUMI core의 일반 책임이 아니라, v0 happy path 검증을 위한 환경별 adapter 성격으로 본다.
+
+예상 흐름:
+
+1. A node가 작은 artifact를 생성한다
+2. `nan` 또는 runtime helper가 output manifest를 생성한다
+3. v0 VM happy path용 runtime/materialization profile adapter가 A output을 `simple_http` artifact source 아래에 노출한다
+4. JUMI가 AH에 `RegisterArtifact` 한다
+5. 이때 AH에 들어가는 fetchable URI는 `http://...` 형태다
+6. AH가 B input에 대해 `ResolveBinding` 한다
+7. AH는 등록된 `http://...` URI를 `MaterializationPlan.URI`로 pass-through 한다
+8. JUMI가 B node env 또는 contract에 `uri`, `expectedDigest`, `materialization mode`를 전달한다
+9. B node가 `simple_http` backend로 artifact를 fetch한다
+10. digest를 검증한다
+11. `/work/inputs/<inputName>`에 atomic하게 준비한다
+12. B가 input을 읽고 성공한다
+13. 이후 파일 크기를 `10MB -> 1GB -> 5GB+` 순서로 확장한다
+
+핵심 문장:
+
+> VM happy path의 목적은 최종 전송 기술을 결정하는 것이 아니라, `remote_fetch` 계약이 실제 실행 흐름에서 artifact를 materialize할 수 있는지 검증하는 것이다.
+
+## 18. Known Gaps
+
+- `directK8s` fallback path는 `PreferredNodes` / `nodeAffinity` semantics를 잃을 수 있다
+- `required_node` pending / unschedulable timeout 정책은 아직 더 명확해져야 한다
+- `ResolveBinding(targetNodeName=actualNode)` 기반 post-scheduling re-resolve는 아직 구현되지 않았다
+
+## 19. TODO
 
 - TODO(runtime-contract): introduce an explicit node runtime base image containing the artifact helper.
 - TODO(runtime-contract): replace the legacy `jumi-output-helper` path with `/usr/local/bin/nan` after the node runtime base image is introduced.

@@ -187,6 +187,50 @@ JUMI는 이 backend 위에서 Kueue-integrated path를 함께 지원한다.
 - Kueue가 없다고 해서 prepare/start가 실패해서는 안 된다.
 - Kueue와 연동될 때는 admission/queue 관찰을 강화할 수 있어야 한다.
 - Kueue 관련 필드가 없어도 Kubernetes native 실행은 가능해야 한다.
+- placement intent와 실행 배치 조건은 backend adapter가 Kubernetes `nodeSelector` / `nodeAffinity` 같은 실제 PodSpec 필드로 번역한다.
+
+### 6.4.1 Artifact Handoff / Materialization Boundary
+
+JUMI는 AH와 `PlacementIntent`, `MaterializationPlan`을 주고받지만, 직접 대용량 파일 전송 로직을 소유하지 않는다.
+
+원칙:
+
+- AH는 artifact 위치, digest, producer attempt, nodeName을 기준으로 binding resolution을 수행한다.
+- AH는 `remote_fetch`가 필요한지와 `uri` / `expectedDigest` 같은 materialization 계약을 반환한다.
+- JUMI는 그 계약을 node 실행 spec과 runtime context로 전달한다.
+- 실제 데이터 전송은 runtime-side helper와 transport backend가 담당한다.
+
+중요한 구분:
+
+- `MaterializationPlan.mode`
+  - 예: `none`, `local_reuse`, `remote_fetch`
+  - 의미: 실행 시점에 어떤 artifact 준비가 필요한가
+- transport backend
+  - 예: `direct_object_store`, `node_peer_fetch`, `dragonfly`, `external_command`, `disabled`
+  - 의미: 실제로 어떤 수단으로 artifact를 가져올 것인가
+
+즉 `remote_fetch`는 특정 다운로드 기술 이름이 아니라, "현재 실행 노드에서 자식 작업이 사용할 수 있도록 부모 artifact를 준비하는 추상적 materialization 동작"이다.
+
+pipeline spec과 runtime profile도 분리한다.
+
+- pipeline spec은 분석 논리와 input 소비 정책을 표현한다.
+- runtime/materialization profile은 실행 환경별 transport backend를 선택한다.
+- 같은 pipeline spec이 여러 기관/클러스터에서 다른 전송 backend로 실행될 수 있어야 한다.
+
+예:
+
+```yaml
+input:
+  consumePolicy: SameNodeThenRemote
+```
+
+```yaml
+materializationProfile:
+  remoteFetch:
+    strategy: direct_object_store
+```
+
+Dragonfly는 이 계층에서 선택 가능한 backend 후보일 뿐, JUMI/AH/nan의 필수 구성요소가 아니다.
 
 ### 6.5 Bounded Release Controller
 
