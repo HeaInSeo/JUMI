@@ -345,7 +345,7 @@ Sprint 3A 실제 결과:
 
 - 1MiB 단계는 완료
 - 10MiB 단계는 완료
-- 100MiB 확장은 아직 미실행
+- 100MiB 단계는 완료
 
 ### Sprint 3B — producer publish path / richer source wiring
 
