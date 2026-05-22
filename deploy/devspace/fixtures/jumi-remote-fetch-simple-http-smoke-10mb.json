@@ -1,0 +1,66 @@
+{
+  "run": {
+    "runId": "vm-lab-remote-fetch-smoke-10mb-20260522",
+    "sampleRunId": "vm-lab-remote-fetch-smoke-10mb-sample-20260522",
+    "submittedAt": "2026-05-22T10:15:00Z",
+    "failurePolicy": {
+      "mode": "fail-fast"
+    },
+    "requesterId": "batch-integration",
+    "sourceSystem": "vm-lab-remote-fetch-smoke-10mb"
+  },
+  "metadata": {
+    "jumi.testShortcut": "This fixture is a Sprint 3A consumer materialization smoke for 10MiB. The producer does not publish to the HTTP source at runtime; a pre-seeded simple_http artifact source is used instead.",
+    "jumi.obsoleteCompatibility": "The consumer uses nan via the runtime shortcut image only to validate remote_fetch materialization. This is a VM happy-path profile, not the final artifact source design."
+  },
+  "graph": {
+    "nodes": [
+      {
+        "nodeId": "produce",
+        "image": "busybox:1.36",
+        "command": [
+          "sh",
+          "-ceu",
+          "mkdir -p /out; dd if=/dev/zero of=/out/report bs=1048576 count=10; mkdir -p \"$(dirname \"$JUMI_OUTPUT_MANIFEST_PATH\")\"; cat > \"$JUMI_OUTPUT_MANIFEST_PATH\" <<EOF\n{\"schemaVersion\":\"nan.artifactManifest.v1\",\"runId\":\"${JUMI_RUN_ID}\",\"sampleRunId\":\"${JUMI_SAMPLE_RUN_ID}\",\"nodeId\":\"${JUMI_NODE_ID}\",\"attemptId\":\"${JUMI_ATTEMPT_ID}\",\"containerName\":\"main\",\"nanVersion\":\"manual-vm-profile\",\"createdAt\":\"2026-05-22T00:00:00Z\",\"outputRoot\":\"/out\",\"artifacts\":[{\"outputName\":\"report\",\"declaredPath\":\"report\",\"absolutePath\":\"/out/report\",\"uri\":\"http://simple-http-artifact-source/artifacts/dataset-10mb.bin\",\"digest\":\"sha256:e5b844cc57f57094ea4585e235f36c78c1cd222262bb89d53c94dcb4d6b3e55d\",\"sizeBytes\":10485760,\"type\":\"file\"}]}\nEOF\ncat \"$JUMI_OUTPUT_MANIFEST_PATH\" > /dev/termination-log"
+        ],
+        "serviceAccountName": "jumi",
+        "outputs": [
+          "report"
+        ]
+      },
+      {
+        "nodeId": "consume",
+        "image": "__RUNTIME_SHORTCUT_IMAGE__",
+        "command": [
+          "sh",
+          "-ceu",
+          "mkdir -p /out; printf 'uri=%s materialization=%s expectedDigest=%s localPath=%s\\n' \"$JUMI_INPUT_DATASET_URI\" \"$JUMI_INPUT_DATASET_MATERIALIZATION_MODE\" \"$JUMI_INPUT_DATASET_EXPECTED_DIGEST\" \"$JUMI_INPUT_DATASET_LOCAL_PATH\"; test -f \"$JUMI_INPUT_DATASET_LOCAL_PATH\"; sha256sum \"$JUMI_INPUT_DATASET_LOCAL_PATH\"; wc -c \"$JUMI_INPUT_DATASET_LOCAL_PATH\"; cp \"$JUMI_INPUT_DATASET_LOCAL_PATH\" /out/consumed"
+        ],
+        "serviceAccountName": "jumi",
+        "outputs": [
+          "consumed"
+        ],
+        "metadata": {
+          "jumi.outputManifestMode": "runtime-helper"
+        },
+        "artifactBindings": [
+          {
+            "bindingName": "dataset",
+            "childInputName": "dataset",
+            "producerNodeId": "produce",
+            "producerOutputName": "report",
+            "consumePolicy": "RemoteOK",
+            "expectedDigest": "sha256:e5b844cc57f57094ea4585e235f36c78c1cd222262bb89d53c94dcb4d6b3e55d",
+            "required": true
+          }
+        ]
+      }
+    ],
+    "edges": [
+      [
+        "produce",
+        "consume"
+      ]
+    ]
+  }
+}
