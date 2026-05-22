@@ -19,6 +19,10 @@ ssh_remote() {
   ssh -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$REMOTE_SSH_TARGET" "$@"
 }
 
+scp_remote() {
+  scp -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$@"
+}
+
 cleanup() {
   rm -f "${FIXTURE_PATH}"
   ssh_remote "export KUBECONFIG='${REMOTE_KUBECONFIG}'; kubectl -n '${VM_NAMESPACE}' delete -f '${ARTIFACT_SOURCE_REMOTE_PATH}' --ignore-not-found; rm -rf '$(dirname "${ARTIFACT_SOURCE_REMOTE_PATH}")'" >/dev/null 2>&1 || true
