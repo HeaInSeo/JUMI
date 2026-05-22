@@ -128,9 +128,10 @@ v0 기준으로 URI는 두 층으로 본다.
 | Sprint | 목표 | 상태 |
 |---|---|---|
 | Sprint 0 | 기준선 고정 | Completed |
-| Sprint 1 | contract smoke 안정화 | In Progress |
-| Sprint 2 | `nan` simple_http materializer 최소 구현 | In Progress |
-| Sprint 3 | VM happy path 검증 | Pending |
+| Sprint 1 | contract smoke 안정화 | Completed |
+| Sprint 2 | `nan` simple_http materializer 최소 구현 | Completed |
+| Sprint 3A | VM consumer materialization happy path | Completed |
+| Sprint 3B | producer publish path / richer source wiring | Pending |
 | Sprint 4 | 정리와 backlog 고정 | Pending |
 
 ---
@@ -218,7 +219,7 @@ JUMI가 B env에 주입
 - executor 단위 테스트에서는 `status`, `decision`, `uri`, `source_node`, `placement_mode`, `materialization_mode`, `expectedDigest`, `requires_materialization` env 주입을 고정할 수 있다
 - unit-level contract smoke에서는 `jumi://...` logical URI 전달을 허용한다
 - live smoke에서는 `remote_fetch` decision seam과 계측은 검증되지만, fetch 가능한 `http://...` URI까지는 아직 고정되지 않았다
-- 따라서 Sprint 1은 "unit-level contract sealing은 가능, VM-facing contract smoke는 일부 잔여" 상태다
+- 이후 Sprint 3A에서 VM-facing materialization smoke까지 검증되었으므로 Sprint 1은 완료로 본다
 
 관련 설계 메모:
 
@@ -279,11 +280,11 @@ JUMI가 B env에 주입
 
 ---
 
-## 8. Sprint 3 — VM Happy Path 검증
+## 8. Sprint 3A — VM Consumer Materialization Happy Path 검증
 
 목표:
 
-- 실제 VM/kind 환경에서 A -> B를 end-to-end로 확인
+- 실제 VM/kind 환경에서 consumer remote_fetch materialization path를 end-to-end로 확인
 
 시나리오 이름:
 
@@ -291,18 +292,25 @@ JUMI가 B env에 주입
 
 흐름:
 
-1. A node가 artifact 생성
-2. `nan`이 output manifest 생성
-3. v0 VM happy path용 runtime/materialization profile adapter가 A output을 simple HTTP server root 아래에 노출
-4. JUMI가 AH에 `RegisterArtifact`
-5. 이때 AH에 들어가는 URI는 fetch 가능한 `http://...` URI
+1. pre-seeded `simple_http` artifact source가 deterministic `1MiB` artifact를 제공
+2. A node는 happy-path 전용 manual manifest를 직접 작성
+3. manual manifest에는 fetch 가능한 `http://...` URI와 `sha256` digest가 들어감
+4. JUMI가 기존 방식으로 AH에 `RegisterArtifact`
+5. AH는 등록된 `http://...` URI를 `MaterializationPlan.URI`로 pass-through
 6. B가 `ResolveBinding` 결과로 `remote_fetch` plan 수신
-7. AH는 등록된 `http://...` URI를 `MaterializationPlan.URI`로 pass-through
-8. B runtime helper가 `simple_http`로 fetch
+7. JUMI가 B env에 `URI`, `expectedDigest`, `materialization_mode`, `local_path`를 전달
+8. `nan@v0.1.5` runtime helper가 `simple_http`로 fetch
 9. digest 검증
 10. `/work/inputs/<inputName>` 준비
 11. B가 input 읽고 성공
 12. 전체 run `Succeeded`
+
+Sprint 3A 범위:
+
+- 이것은 consumer materialization smoke다
+- producer가 실제 artifact를 HTTP source에 upload/publish하는 검증은 포함하지 않는다
+- JUMI core `FetchableUriMapper` 추가는 포함하지 않는다
+- AH Artifact Source Registry 추가는 포함하지 않는다
 
 파일 크기 단계:
 
@@ -319,6 +327,33 @@ JUMI가 B env에 주입
 - digest 검증 성공
 - B 성공
 - 전체 run 성공
+
+Sprint 3A 실제 결과:
+
+- `simple_http` source service가 cluster 내부에서 접근 가능함
+- AH `RegisterArtifact`에 `http://simple-http-artifact-source/artifacts/dataset-1mb.bin` URI가 기록됨
+- `ResolveBinding` 이후 consume env에 아래 값이 존재함
+  - `JUMI_INPUT_DATASET_URI`
+  - `JUMI_INPUT_DATASET_MATERIALIZATION_MODE=remote_fetch`
+  - `JUMI_INPUT_DATASET_EXPECTED_DIGEST`
+  - `JUMI_INPUT_DATASET_LOCAL_PATH=/work/inputs/dataset`
+- `nan@v0.1.5`가 실제 HTTP fetch, sha256 검증, `/work/inputs/dataset` materialization을 수행함
+- consume command가 materialized input을 읽고 성공함
+- run `Succeeded`
+
+현재 판정:
+
+- 1MiB 단계는 완료
+- 10MiB, 100MiB 확장은 아직 미실행
+
+### Sprint 3B — producer publish path / richer source wiring
+
+Sprint 3B 이후 후보:
+
+- producer가 만든 artifact를 fetchable source에 실제 publish/upload
+- simple HTTP source writer 또는 upload endpoint
+- object storage backend
+- richer runtime/materialization profile wiring
 
 참고:
 
@@ -392,8 +427,9 @@ backlog:
 현재 문서 기준 판정은 아래와 같다.
 
 - Sprint 0: 완료
-- Sprint 1: 거의 완료
-- Sprint 2: GitHub 정본 구현 완료, VM adapter 대기
-- Sprint 3 이후: 구현 전
+- Sprint 1: 완료
+- Sprint 2: 완료
+- Sprint 3A: 완료
+- Sprint 3B 이후: 대기
 
-즉 지금은 "최소 materializer 구현은 닫혔고, fetchable `http://...` URI를 공급하는 VM happy path adapter" 직전 단계다.
+즉 지금은 "consumer remote_fetch materialization happy path는 닫혔고, 이후는 producer publish path와 richer source wiring" 단계다.
