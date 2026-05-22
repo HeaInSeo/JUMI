@@ -341,6 +341,13 @@ Sprint 3A 실제 결과:
 - consume command가 materialized input을 읽고 성공함
 - run `Succeeded`
 
+판정 원칙:
+
+- Sprint 3A `remote_fetch` materialization smoke 성공 여부는 run/materialization evidence로 먼저 판정한다
+- `slint-gate` policy evaluation은 post-smoke gate로 분리한다
+- local VM run에서는 `SLINT_GATE_MODE=optional` 또는 `skip`을 허용한다
+- CI 또는 release gate에서는 `SLINT_GATE_MODE=required`로 강제할 수 있다
+
 현재 판정:
 
 - 1MiB 단계는 완료

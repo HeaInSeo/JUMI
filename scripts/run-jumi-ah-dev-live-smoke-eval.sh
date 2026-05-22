@@ -20,6 +20,7 @@ PUBLISH_SHIFT_LEFT_OBSERVABILITY="${PUBLISH_SHIFT_LEFT_OBSERVABILITY:-${PUBLISH_
 PUBLISH_SHIFT_LEFT_OBSERVABILITY_SCRIPT="${PUBLISH_SHIFT_LEFT_OBSERVABILITY_SCRIPT:-}"
 PORT_FORWARD_PORT="${PORT_FORWARD_PORT:-19190}"
 SLINT_GATE_BIN="${SLINT_GATE_BIN:-slint-gate}"
+SLINT_GATE_MODE="${SLINT_GATE_MODE:-optional}"
 ALLOW_LOCAL_CHECKOUT_FALLBACK="${ALLOW_LOCAL_CHECKOUT_FALLBACK:-false}"
 
 RUN_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -54,6 +55,17 @@ need_cmd() {
     echo "missing command: $1" >&2
     exit 1
   }
+}
+
+log_stage() {
+  local stage="$1"
+  local result="$2"
+  local detail="${3:-}"
+  if [[ -n "${detail}" ]]; then
+    printf '%s: %s - %s\n' "${stage}" "${result}" "${detail}"
+  else
+    printf '%s: %s\n' "${stage}" "${result}"
+  fi
 }
 
 ssh_remote() {
@@ -96,6 +108,14 @@ need_cmd ssh
 need_cmd scp
 need_cmd python3
 
+case "${SLINT_GATE_MODE}" in
+  skip|optional|required) ;;
+  *)
+    echo "invalid SLINT_GATE_MODE: ${SLINT_GATE_MODE}" >&2
+    exit 1
+    ;;
+esac
+
 require_file "$FIXTURE_SOURCE_PATH"
 require_file "$REMOTE_HELPER_PATH"
 require_file "$POLICY_FILE"
@@ -136,7 +156,7 @@ ssh_remote "bash -lc \"rm -rf '${REMOTE_JUMI_REPO_ROOT}/tools/jumi-smoke' && mkd
 collect_metric_values "jumi" "jumi" "metrics-jumi-start-${RUN_STAMP,,}" >"${start_jumi}"
 collect_metric_values "${ARTIFACT_HANDOFF_SERVICE}" "ah" "metrics-ah-start-${RUN_STAMP,,}" >"${start_ah}"
 
-ssh_remote "
+if ssh_remote "
   export KUBECONFIG='${REMOTE_KUBECONFIG}'
   env \
     KUBECTL_CMD='kubectl' \
@@ -149,7 +169,12 @@ ssh_remote "
     JUMI_RUN_ID='${RUN_ID}' \
     JUMI_SAMPLE_RUN_ID='${SAMPLE_RUN_ID}' \
     bash '${REMOTE_TMP_DIR}/vm-lab-jumi-smoke-remote.sh'
-"
+"; then
+  log_stage "remote smoke" "PASS" "runId=${RUN_ID}"
+else
+  log_stage "remote smoke" "FAIL" "runId=${RUN_ID}"
+  exit 1
+fi
 
 collect_metric_values "jumi" "jumi" "metrics-jumi-end-${RUN_STAMP,,}" >"${end_jumi}"
 collect_metric_values "${ARTIFACT_HANDOFF_SERVICE}" "ah" "metrics-ah-end-${RUN_STAMP,,}" >"${end_ah}"
@@ -252,22 +277,49 @@ fixture = {
 fixture_path.write_text(json.dumps(fixture, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
 
-env FIXTURE_PATH="${FIXTURE_PATH}" OUTPUT_PATH="${SUMMARY_PATH}" PROFILE="smoke" \
-  bash "${ROOT_DIR}/scripts/generate-kubeslint-jumi-ah-summary.sh"
+if env FIXTURE_PATH="${FIXTURE_PATH}" OUTPUT_PATH="${SUMMARY_PATH}" PROFILE="smoke" \
+  bash "${ROOT_DIR}/scripts/generate-kubeslint-jumi-ah-summary.sh"; then
+  log_stage "summary generation" "PASS" "${SUMMARY_PATH}"
+else
+  log_stage "summary generation" "FAIL" "${SUMMARY_PATH}"
+  exit 1
+fi
 
-if ! command -v "${SLINT_GATE_BIN}" >/dev/null 2>&1; then
-  if [[ "${ALLOW_LOCAL_CHECKOUT_FALLBACK}" == "true" && "${SLINT_GATE_BIN}" == "slint-gate" && -x "${ROOT_DIR}/../kube-slint/slint-gate" ]]; then
-    SLINT_GATE_BIN="${ROOT_DIR}/../kube-slint/slint-gate"
+resolved_slint_gate_bin="${SLINT_GATE_BIN}"
+slint_gate_available="true"
+if ! command -v "${resolved_slint_gate_bin}" >/dev/null 2>&1; then
+  if [[ "${ALLOW_LOCAL_CHECKOUT_FALLBACK}" == "true" && "${resolved_slint_gate_bin}" == "slint-gate" && -x "${ROOT_DIR}/../kube-slint/slint-gate" ]]; then
+    resolved_slint_gate_bin="${ROOT_DIR}/../kube-slint/slint-gate"
   else
-    echo "missing slint-gate binary: ${SLINT_GATE_BIN}" >&2
-    exit 1
+    slint_gate_available="false"
   fi
 fi
 
-"${SLINT_GATE_BIN}" \
+if [[ "${SLINT_GATE_MODE}" == "skip" ]]; then
+  log_stage "slint gate" "SKIPPED" "mode=skip summary=${SUMMARY_PATH}"
+  printf 'smoke artifacts: fixture=%s summary=%s gate=%s\n' "${FIXTURE_PATH}" "${SUMMARY_PATH}" "${GATE_PATH}"
+  exit 0
+fi
+
+if [[ "${slint_gate_available}" != "true" ]]; then
+  if [[ "${SLINT_GATE_MODE}" == "optional" ]]; then
+    log_stage "slint gate" "SKIPPED" "missing ${SLINT_GATE_BIN}"
+    printf 'smoke artifacts: fixture=%s summary=%s gate=%s\n' "${FIXTURE_PATH}" "${SUMMARY_PATH}" "${GATE_PATH}"
+    exit 0
+  fi
+  log_stage "slint gate" "FAIL" "missing ${SLINT_GATE_BIN}"
+  exit 1
+fi
+
+if "${resolved_slint_gate_bin}" \
   --measurement-summary "${SUMMARY_PATH}" \
   --policy "${POLICY_FILE}" \
-  --output "${GATE_PATH}"
+  --output "${GATE_PATH}"; then
+  log_stage "slint gate" "PASS" "${GATE_PATH}"
+else
+  log_stage "slint gate" "FAIL" "${GATE_PATH}"
+  exit 1
+fi
 
 if [[ "${PUBLISH_SHIFT_LEFT_OBSERVABILITY}" == "true" ]]; then
   [[ -n "${PUBLISH_SHIFT_LEFT_OBSERVABILITY_SCRIPT}" ]] || {
