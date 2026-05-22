@@ -348,6 +348,13 @@ Sprint 3A 실제 결과:
 - local VM run에서는 `SLINT_GATE_MODE=optional` 또는 `skip`을 허용한다
 - CI 또는 release gate에서는 `SLINT_GATE_MODE=required`로 강제할 수 있다
 
+Smoke harness 정리 상태:
+
+- `remote smoke`, `summary generation`, `slint-gate`는 로그와 exit code에서 분리됐다
+- `SLINT_GATE_MODE=optional|required|skip`를 지원한다
+- local VM run에서는 `slint-gate` binary 부재가 smoke 실패로 간주되지 않는다
+- CI/release gate에서는 `SLINT_GATE_MODE=required`로 강제할 수 있다
+
 현재 판정:
 
 - 1MiB 단계는 완료
@@ -390,6 +397,10 @@ backlog:
 - auth-enabled object store backend
 - multi-input concurrent fetch policy
 - cache eviction policy
+- producer publish path
+- Artifact Source Registry / Materialization Source Layer
+- 1GiB+ remote_fetch stress
+- full gate environment standardization (`slint-gate` packaging / availability)
 
 완료 기준:
 
@@ -441,3 +452,39 @@ backlog:
 - Sprint 3B 이후: 대기
 
 즉 지금은 "consumer remote_fetch materialization happy path는 닫혔고, 이후는 producer publish path와 richer source wiring" 단계다.
+
+## 13. directK8s / library freeze 메모
+
+### 13.1 directK8s placement parity
+
+이번 정리 라운드에서 닫은 것:
+
+- directK8s fallback path도 `RequiredNodeName`을 `kubernetes.io/hostname` nodeSelector로 반영한다
+- directK8s fallback path도 `PreferredNodes`를 `preferredDuringSchedulingIgnoredDuringExecution` nodeAffinity로 반영한다
+
+즉 `RequiredNodeName` / `PreferredNodes` 번역은 일반 spawner K8s driver semantics와 맞췄다.
+
+여전히 backlog로 남는 것:
+
+- post-scheduling `ResolveBinding(targetNodeName=actualNode)`
+- `required_node` Pending/Unschedulable timeout policy 정교화
+- directK8s path와 일반 spawner path의 전체 behavioral parity 장기 검토
+
+### 13.2 library drift freeze
+
+현재 JUMI가 사용하는 버전:
+
+- `github.com/HeaInSeo/dag-go v1.2.0`
+- `github.com/HeaInSeo/spawner v0.0.0-20260518121823-6b4771360ac3`
+- `github.com/HeaInSeo/node-artifact-runtime@v0.1.5`
+
+GitHub main drift:
+
+- `dag-go` main은 현재 JUMI pin보다 앞서 있다
+- `spawner` main도 현재 JUMI pin보다 앞서 있다
+
+이번 스프린트 원칙:
+
+- drift는 문서로 고정한다
+- 이번 라운드에서는 업그레이드하지 않는다
+- 다음 라운드 task로 분리한다

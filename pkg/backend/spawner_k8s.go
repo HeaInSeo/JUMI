@@ -881,6 +881,7 @@ func buildDirectK8sJob(runSpec spapi.RunSpec, ns, workingDir, serviceAccountName
 					Containers:         []corev1.Container{container},
 					Volumes:            volumes,
 					NodeSelector:       buildDirectNodeSelector(runSpec.Placement),
+					Affinity:           buildDirectAffinity(runSpec.Placement),
 				},
 			},
 		},
@@ -943,14 +944,48 @@ func buildDirectVolumes(mounts []spapi.Mount) ([]corev1.Volume, []corev1.VolumeM
 }
 
 func buildDirectNodeSelector(p *spapi.Placement) map[string]string {
-	if p == nil || len(p.NodeSelector) == 0 {
+	if p == nil {
 		return nil
 	}
-	out := make(map[string]string, len(p.NodeSelector))
+	size := len(p.NodeSelector)
+	if p.RequiredNodeName != "" {
+		size++
+	}
+	if size == 0 {
+		return nil
+	}
+	out := make(map[string]string, size)
 	for k, v := range p.NodeSelector {
 		out[k] = v
 	}
+	if p.RequiredNodeName != "" {
+		out["kubernetes.io/hostname"] = p.RequiredNodeName
+	}
 	return out
+}
+
+func buildDirectAffinity(p *spapi.Placement) *corev1.Affinity {
+	if p == nil || len(p.PreferredNodes) == 0 {
+		return nil
+	}
+	terms := make([]corev1.PreferredSchedulingTerm, 0, len(p.PreferredNodes))
+	for _, pref := range p.PreferredNodes {
+		terms = append(terms, corev1.PreferredSchedulingTerm{
+			Weight: pref.Weight,
+			Preference: corev1.NodeSelectorTerm{
+				MatchExpressions: []corev1.NodeSelectorRequirement{{
+					Key:      "kubernetes.io/hostname",
+					Operator: corev1.NodeSelectorOpIn,
+					Values:   []string{pref.NodeName},
+				}},
+			},
+		})
+	}
+	return &corev1.Affinity{
+		NodeAffinity: &corev1.NodeAffinity{
+			PreferredDuringSchedulingIgnoredDuringExecution: terms,
+		},
+	}
 }
 
 func directSanitizeName(id string) string {

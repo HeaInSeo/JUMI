@@ -96,6 +96,43 @@ func TestToSpawnerRunSpecMapsPreferredPlacementFields(t *testing.T) {
 	}
 }
 
+func TestBuildDirectNodeSelectorMapsRequiredNodeName(t *testing.T) {
+	got := buildDirectNodeSelector(&spapi.Placement{
+		NodeSelector:     map[string]string{"topology.kubernetes.io/zone": "lab-a"},
+		RequiredNodeName: "lab-worker-1",
+	})
+
+	if got["topology.kubernetes.io/zone"] != "lab-a" {
+		t.Fatalf("zone selector = %q, want lab-a", got["topology.kubernetes.io/zone"])
+	}
+	if got["kubernetes.io/hostname"] != "lab-worker-1" {
+		t.Fatalf("hostname selector = %q, want lab-worker-1", got["kubernetes.io/hostname"])
+	}
+}
+
+func TestBuildDirectAffinityMapsPreferredNodes(t *testing.T) {
+	got := buildDirectAffinity(&spapi.Placement{
+		PreferredNodes: []spapi.WeightedNodePreference{
+			{NodeName: "lab-worker-1", Weight: 100},
+			{NodeName: "lab-worker-2", Weight: 50},
+		},
+	})
+
+	if got == nil || got.NodeAffinity == nil {
+		t.Fatal("Affinity = nil, want preferred node affinity")
+	}
+	terms := got.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution
+	if len(terms) != 2 {
+		t.Fatalf("preferred affinity terms = %d, want 2", len(terms))
+	}
+	if terms[0].Weight != 100 || terms[0].Preference.MatchExpressions[0].Values[0] != "lab-worker-1" {
+		t.Fatalf("unexpected first preferred term: %+v", terms[0])
+	}
+	if terms[1].Weight != 50 || terms[1].Preference.MatchExpressions[0].Values[0] != "lab-worker-2" {
+		t.Fatalf("unexpected second preferred term: %+v", terms[1])
+	}
+}
+
 func TestToSpawnerRunSpecMapsServiceAccountFromSmokeFixtureStyleNode(t *testing.T) {
 	run := spec.RunRecord{RunID: "run-fixture"}
 	node := spec.Node{
