@@ -43,6 +43,7 @@ Notes:
 - [JUMI AH nan Integration Review](docs/JUMI_AH_NAN_INTEGRATION_REVIEW.md)
 - [JUMI Remote Fetch v0 Sprint Plan](docs/JUMI_REMOTE_FETCH_V0_SPRINT_PLAN.md)
 - [JUMI simple_http Artifact Source v0 Plan](docs/JUMI_SIMPLE_HTTP_ARTIFACT_SOURCE_V0_PLAN.md)
+- [Sprint 3B Design: Pure K8s Node-local Handoff Happy Path](docs/JUMI_SPRINT_3B_PURE_K8S_NODE_LOCAL_HANDOFF.md)
 - [JUMI Durable Registry Options](docs/JUMI_DURABLE_REGISTRY_OPTIONS.ko.md)
 - [JUMI Implementation Status 2026-05-14](docs/JUMI_IMPLEMENTATION_STATUS_2026-05-14.ko.md)
 - [JUMI Layered Error Guidelines Review](docs/JUMI_LAYERED_ERROR_GUIDELINES_REVIEW.ko.md)

@@ -131,7 +131,7 @@ v0 기준으로 URI는 두 층으로 본다.
 | Sprint 1 | contract smoke 안정화 | Completed |
 | Sprint 2 | `nan` simple_http materializer 최소 구현 | Completed |
 | Sprint 3A | VM consumer materialization happy path | Completed |
-| Sprint 3B | producer publish path / richer source wiring | Pending |
+| Sprint 3B | pure K8s same-node local_reuse handoff | Preflight Required |
 | Sprint 4 | 정리와 backlog 고정 | Pending |
 
 ---
@@ -361,14 +361,57 @@ Smoke harness 정리 상태:
 - 10MiB 단계는 완료
 - 100MiB 단계는 완료
 
-### Sprint 3B — producer publish path / richer source wiring
+### Sprint 3B — pure K8s same-node local_reuse handoff
 
-Sprint 3B 이후 후보:
+Sprint 3B의 목적은 외부 upload path가 아니라 pure K8s same-node local handoff를 검증하는 것이다.
 
-- producer가 만든 artifact를 fetchable source에 실제 publish/upload
-- simple HTTP source writer 또는 upload endpoint
-- object storage backend
-- richer runtime/materialization profile wiring
+핵심:
+
+- producer-side node-local artifact promotion
+- same-node `local_reuse` materialization
+- `hostPath`는 validation mechanism으로만 사용
+
+happy path:
+
+```text
+A Pod on worker-2
+  ↓
+A가 artifact 생성
+  ↓
+node-local artifact area CAS path로 copy promotion
+  ↓
+manifest에 logicalUri + producerAttemptId + digest + node_local location 기록
+  ↓
+JUMI RegisterArtifact
+  ↓
+AH ResolveBinding
+  ↓
+B Pod도 worker-2에 배치
+  ↓
+B가 local_reuse로 /work/inputs에 copy materialization
+```
+
+Sprint 3B preflight:
+
+- 현재 manifest / RegisterArtifact seam이 아래 정보를 분리해서 전달할 수 있는지 먼저 확인해야 한다
+  - `logicalUri`
+  - `producerAttemptId`
+  - `digest`
+  - `sizeBytes`
+  - `locations[]`
+
+현재 preflight 결과:
+
+- `producerAttemptId`: 부분 통과
+- `logicalUri`: 미통과
+- `locations[]`: 미통과
+- `node_local only` artifact 등록: 미통과
+
+즉 Sprint 3B를 실제 구현하려면 현재 문서 기준으로는 `manifest/RegisterArtifact seam 보강`이 선행 작업이다.
+
+관련 문서:
+
+- [Sprint 3B Design: Pure K8s Node-local Handoff Happy Path](./JUMI_SPRINT_3B_PURE_K8S_NODE_LOCAL_HANDOFF.md)
 
 참고:
 
@@ -397,7 +440,7 @@ backlog:
 - auth-enabled object store backend
 - multi-input concurrent fetch policy
 - cache eviction policy
-- producer publish path
+- producer-side promotion + node-local same-node handoff
 - Artifact Source Registry / Materialization Source Layer
 - 1GiB+ remote_fetch stress
 - full gate environment standardization (`slint-gate` packaging / availability)
@@ -449,9 +492,9 @@ backlog:
 - Sprint 1: 완료
 - Sprint 2: 완료
 - Sprint 3A: 완료
-- Sprint 3B 이후: 대기
+- Sprint 3B: preflight required
 
-즉 지금은 "consumer remote_fetch materialization happy path는 닫혔고, 이후는 producer publish path와 richer source wiring" 단계다.
+즉 지금은 "consumer remote_fetch materialization happy path는 닫혔고, Sprint 3B는 same-node local_reuse handoff 설계와 seam 보강 preflight가 남아 있다"가 정확한 상태다.
 
 ## 13. directK8s / library freeze 메모
 
