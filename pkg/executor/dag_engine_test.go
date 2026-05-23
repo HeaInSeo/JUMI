@@ -993,12 +993,14 @@ func (f *fakeAdapter) CollectOutputMetadata(_ context.Context, handle backend.Ha
 		out := make(map[string]backend.OutputMetadata, len(node.Outputs))
 		for _, outputName := range node.Outputs {
 			out[outputName] = backend.OutputMetadata{
-				OutputName: outputName,
-				URI:        artifactOutputURI("test-run", h.nodeID, outputName),
-				Digest:     "sha256:test",
-				SizeBytes:  1,
-				NodeName:   "node-a",
-				PodName:    h.nodeID + "-pod",
+				OutputName:        outputName,
+				URI:               artifactOutputURI("test-run", h.nodeID, outputName),
+				LogicalURI:        "jumi://runs/test-run/nodes/" + h.nodeID + "/outputs/" + outputName,
+				Digest:            "sha256:test",
+				SizeBytes:         1,
+				ProducerAttemptID: "attempt-1",
+				NodeName:          "node-a",
+				PodName:           h.nodeID + "-pod",
 			}
 		}
 		return out, nil

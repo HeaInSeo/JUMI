@@ -348,18 +348,28 @@ func (a *SpawnerK8sAdapter) CollectOutputMetadata(ctx context.Context, handle Ha
 			continue
 		}
 		out[outputName] = OutputMetadata{
-			OutputName: outputName,
-			URI:        record.URI,
-			Digest:     record.Digest,
-			SizeBytes:  record.SizeBytes,
-			NodeName:   pod.Spec.NodeName,
-			PodName:    pod.Name,
+			OutputName:        outputName,
+			URI:               record.URI,
+			LogicalURI:        record.LogicalURI,
+			Digest:            record.Digest,
+			SizeBytes:         record.SizeBytes,
+			ProducerAttemptID: outputProducerAttemptID(record, manifest),
+			Locations:         append([]provenance.ArtifactLocation(nil), record.Locations...),
+			NodeName:          pod.Spec.NodeName,
+			PodName:           pod.Name,
 		}
 	}
 	if len(out) == 0 {
 		return nil, ErrOutputMetadataUnavailable
 	}
 	return out, nil
+}
+
+func outputProducerAttemptID(record provenance.ArtifactRecord, manifest provenance.ArtifactManifest) string {
+	if strings.TrimSpace(record.ProducerAttemptID) != "" {
+		return record.ProducerAttemptID
+	}
+	return manifest.AttemptID
 }
 
 func validateObservedManifest(manifest provenance.ArtifactManifest, node spec.Node) error {

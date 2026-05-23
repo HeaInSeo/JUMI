@@ -6,10 +6,39 @@ func TestParseArtifactManifest(t *testing.T) {
 	manifest, err := ParseArtifactManifest([]byte(`{
 		"schemaVersion": "jumi.observedArtifactManifest.v1",
 		"runId": "r1",
+		"sampleRunId": "sample-1",
 		"nodeId": "a",
 		"attemptId": "r1-a-attempt-1",
+		"outputRoot": "/out",
 		"artifacts": [
-			{"outputName":"result.json","declaredPath":"result.json","absolutePath":"/out/result.json","type":"file","uri":"jumi://runs/r1/nodes/a/outputs/result.json","digest":"sha256:abc","sizeBytes":2048}
+			{
+				"outputName":"result.json",
+				"declaredPath":"result.json",
+				"absolutePath":"/out/result.json",
+				"type":"file",
+				"uri":"jumi://runs/r1/nodes/a/outputs/result.json",
+				"logicalUri":"jumi://runs/r1/nodes/a/outputs/result",
+				"digest":"sha256:abc",
+				"sizeBytes":2048,
+				"producerAttemptId":"r1-a-attempt-1",
+				"locations":[
+					{
+						"nodeLocal":{
+							"nodeName":"worker-2",
+							"path":"/var/lib/jumi-artifacts/cas/sha256/abc"
+						}
+					}
+				],
+				"provenance":{
+					"inputs":[
+						{
+							"inputName":"dataset",
+							"artifactDigest":"sha256:def",
+							"producerLogicalUri":"jumi://runs/r1/nodes/z/outputs/dataset"
+						}
+					]
+				}
+			}
 		]
 	}`))
 	if err != nil {
@@ -21,6 +50,9 @@ func TestParseArtifactManifest(t *testing.T) {
 	if manifest.AttemptID != "r1-a-attempt-1" {
 		t.Fatalf("manifest.AttemptID = %q, want r1-a-attempt-1", manifest.AttemptID)
 	}
+	if manifest.OutputRoot != "/out" {
+		t.Fatalf("manifest.OutputRoot = %q, want /out", manifest.OutputRoot)
+	}
 	record, ok := manifest.ByOutputName("result.json")
 	if !ok {
 		t.Fatal("ByOutputName(result.json) = false, want true")
@@ -30,6 +62,24 @@ func TestParseArtifactManifest(t *testing.T) {
 	}
 	if record.AbsolutePath != "/out/result.json" {
 		t.Fatalf("record.AbsolutePath = %q, want /out/result.json", record.AbsolutePath)
+	}
+	if record.LogicalURI != "jumi://runs/r1/nodes/a/outputs/result" {
+		t.Fatalf("record.LogicalURI = %q, want logical URI", record.LogicalURI)
+	}
+	if record.ProducerAttemptID != "r1-a-attempt-1" {
+		t.Fatalf("record.ProducerAttemptID = %q, want r1-a-attempt-1", record.ProducerAttemptID)
+	}
+	if len(record.Locations) != 1 || record.Locations[0].NodeLocal == nil {
+		t.Fatalf("record.Locations = %#v, want one nodeLocal location", record.Locations)
+	}
+	if record.Locations[0].NodeLocal.NodeName != "worker-2" {
+		t.Fatalf("record.Locations[0].NodeLocal.NodeName = %q, want worker-2", record.Locations[0].NodeLocal.NodeName)
+	}
+	if record.Locations[0].NodeLocal.Path != "/var/lib/jumi-artifacts/cas/sha256/abc" {
+		t.Fatalf("record.Locations[0].NodeLocal.Path = %q, want CAS path", record.Locations[0].NodeLocal.Path)
+	}
+	if record.Provenance == nil || len(record.Provenance.Inputs) != 1 {
+		t.Fatalf("record.Provenance = %#v, want one input lineage", record.Provenance)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/HeaInSeo/JUMI/pkg/provenance"
 	"github.com/HeaInSeo/JUMI/pkg/spec"
 )
 
@@ -29,12 +30,15 @@ type Adapter interface {
 }
 
 type OutputMetadata struct {
-	OutputName string `json:"outputName"`
-	URI        string `json:"uri,omitempty"`
-	Digest     string `json:"digest,omitempty"`
-	SizeBytes  int64  `json:"sizeBytes,omitempty"`
-	NodeName   string `json:"nodeName,omitempty"`
-	PodName    string `json:"podName,omitempty"`
+	OutputName        string                        `json:"outputName"`
+	URI               string                        `json:"uri,omitempty"`
+	LogicalURI        string                        `json:"logicalUri,omitempty"`
+	Digest            string                        `json:"digest,omitempty"`
+	SizeBytes         int64                         `json:"sizeBytes,omitempty"`
+	ProducerAttemptID string                        `json:"producerAttemptId,omitempty"`
+	Locations         []provenance.ArtifactLocation `json:"locations,omitempty"`
+	NodeName          string                        `json:"nodeName,omitempty"`
+	PodName           string                        `json:"podName,omitempty"`
 }
 
 type OutputMetadataProvider interface {

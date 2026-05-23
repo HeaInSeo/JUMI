@@ -18,17 +18,41 @@ type ArtifactManifest struct {
 	ContainerName string           `json:"containerName,omitempty"`
 	HelperVersion string           `json:"helperVersion,omitempty"`
 	CreatedAt     string           `json:"createdAt,omitempty"`
+	OutputRoot    string           `json:"outputRoot,omitempty"`
 	Artifacts     []ArtifactRecord `json:"artifacts"`
 }
 
 type ArtifactRecord struct {
-	OutputName   string `json:"outputName"`
-	DeclaredPath string `json:"declaredPath,omitempty"`
-	AbsolutePath string `json:"absolutePath,omitempty"`
-	Type         string `json:"type,omitempty"`
-	URI          string `json:"uri,omitempty"`
-	Digest       string `json:"digest,omitempty"`
-	SizeBytes    int64  `json:"sizeBytes,omitempty"`
+	OutputName        string             `json:"outputName"`
+	DeclaredPath      string             `json:"declaredPath,omitempty"`
+	AbsolutePath      string             `json:"absolutePath,omitempty"`
+	Type              string             `json:"type,omitempty"`
+	URI               string             `json:"uri,omitempty"`
+	LogicalURI        string             `json:"logicalUri,omitempty"`
+	Digest            string             `json:"digest,omitempty"`
+	SizeBytes         int64              `json:"sizeBytes,omitempty"`
+	ProducerAttemptID string             `json:"producerAttemptId,omitempty"`
+	Locations         []ArtifactLocation `json:"locations,omitempty"`
+	Provenance        *ArtifactLineage   `json:"provenance,omitempty"`
+}
+
+type ArtifactLocation struct {
+	NodeLocal *NodeLocalLocation `json:"nodeLocal,omitempty"`
+}
+
+type NodeLocalLocation struct {
+	NodeName string `json:"nodeName,omitempty"`
+	Path     string `json:"path,omitempty"`
+}
+
+type ArtifactLineage struct {
+	Inputs []ArtifactLineageInput `json:"inputs,omitempty"`
+}
+
+type ArtifactLineageInput struct {
+	InputName          string `json:"inputName,omitempty"`
+	ArtifactDigest     string `json:"artifactDigest,omitempty"`
+	ProducerLogicalURI string `json:"producerLogicalUri,omitempty"`
 }
 
 func ParseArtifactManifest(data []byte) (ArtifactManifest, error) {
