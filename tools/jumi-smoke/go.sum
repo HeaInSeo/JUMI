@@ -2,6 +2,8 @@ github.com/HeaInSeo/dag-go v1.2.0 h1:geF8kMZrsA4AR3k6YGZLjhIJBE+I+u5gLpquRGwEDJE
 github.com/HeaInSeo/dag-go v1.2.0/go.mod h1:jJ20VHAglKZgOk/W46gXhI5QnuPLJdajNK7QOKaGxYg=
 github.com/HeaInSeo/spawner v0.0.0-20260518121823-6b4771360ac3 h1:jswcdkskOs76VcAm+uc2uEzDHXMAjM4cnjslqYow2ZM=
 github.com/HeaInSeo/spawner v0.0.0-20260518121823-6b4771360ac3/go.mod h1:J3gaVb8yEjd4qKPnWyEF9nBEBW4aNmQ6/lkD09Gg3cs=
+github.com/HeaInSeo/spawner v0.2.1 h1:u+WPfCUZ7MmstThVdzmO/vx07fAYFitCwLu584zg3yU=
+github.com/HeaInSeo/spawner v0.2.1/go.mod h1:tr1OgbRK+ItMB+tBDMrXPKvmW9lZgeCW4Ok7MnpvyvQ=
 github.com/HeaInSeo/utils v0.0.0-20260504053318-1547f9bc140b h1:pOiuBODJGy24Nu0siyPFkVvHENYwvhGEJhkPKYsSSMg=
 github.com/HeaInSeo/utils v0.0.0-20260504053318-1547f9bc140b/go.mod h1:K2kPw+3g7hZvitjvwthDr6rcQl0nQptjKOd7EOlm6k8=
 github.com/Masterminds/semver/v3 v3.4.0 h1:Zog+i5UMtVoCU8oKka5P7i9q9HgrJeGzI9SA1Xbatp0=

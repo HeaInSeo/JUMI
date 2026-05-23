@@ -475,16 +475,16 @@ backlog:
 현재 JUMI가 사용하는 버전:
 
 - `github.com/HeaInSeo/dag-go v1.2.0`
-- `github.com/HeaInSeo/spawner v0.0.0-20260518121823-6b4771360ac3`
+- `github.com/HeaInSeo/spawner v0.2.1`
 - `github.com/HeaInSeo/node-artifact-runtime@v0.1.5`
 
 GitHub main drift:
 
-- `dag-go` main은 현재 JUMI pin보다 앞서 있다
-- `spawner` main도 현재 JUMI pin보다 앞서 있다
+- `dag-go` main은 현재 JUMI pin `v1.2.0`와 일치한다
+- `spawner` main은 현재 JUMI pin `v0.2.1`와 일치한다
 
 이번 스프린트 원칙:
 
 - drift는 문서로 고정한다
-- 이번 라운드에서는 업그레이드하지 않는다
+- `dag-go`, `spawner`는 이번 라운드에서 GitHub 정본 최신으로 맞췄다
 - 다음 라운드 task로 분리한다
