@@ -32,10 +32,21 @@ type PlacementIntent struct {
 	NodeName string `json:"nodeName,omitempty"`
 }
 
+type ArtifactLocation struct {
+	NodeLocal *NodeLocalLocation `json:"nodeLocal,omitempty"`
+}
+
+type NodeLocalLocation struct {
+	NodeName string `json:"nodeName,omitempty"`
+	Path     string `json:"path,omitempty"`
+}
+
 type MaterializationPlan struct {
-	Mode           string `json:"mode,omitempty"`
-	URI            string `json:"uri,omitempty"`
-	ExpectedDigest string `json:"expectedDigest,omitempty"`
+	Mode           string            `json:"mode,omitempty"`
+	URI            string            `json:"uri,omitempty"`
+	ExpectedDigest string            `json:"expectedDigest,omitempty"`
+	SourceLocation *ArtifactLocation `json:"sourceLocation,omitempty"`
+	LocalPath      string            `json:"localPath,omitempty"`
 }
 
 type ResolveBindingResponse struct {
@@ -68,15 +79,17 @@ type EvaluateGCRequest struct {
 }
 
 type RegisterArtifactRequest struct {
-	SampleRunID       string `json:"sampleRunId"`
-	ProducerNodeID    string `json:"producerNodeId"`
-	ProducerAttemptID string `json:"producerAttemptId,omitempty"`
-	OutputName        string `json:"outputName"`
-	ArtifactID        string `json:"artifactId,omitempty"`
-	Digest            string `json:"digest,omitempty"`
-	NodeName          string `json:"nodeName,omitempty"`
-	URI               string `json:"uri,omitempty"`
-	SizeBytes         int64  `json:"sizeBytes,omitempty"`
+	SampleRunID       string             `json:"sampleRunId"`
+	ProducerNodeID    string             `json:"producerNodeId"`
+	ProducerAttemptID string             `json:"producerAttemptId,omitempty"`
+	OutputName        string             `json:"outputName"`
+	ArtifactID        string             `json:"artifactId,omitempty"`
+	Digest            string             `json:"digest,omitempty"`
+	NodeName          string             `json:"nodeName,omitempty"`
+	URI               string             `json:"uri,omitempty"`
+	LogicalURI        string             `json:"logicalUri,omitempty"`
+	Locations         []ArtifactLocation `json:"locations,omitempty"`
+	SizeBytes         int64              `json:"sizeBytes,omitempty"`
 }
 
 type Client interface {
@@ -202,15 +215,17 @@ func (c *HTTPClient) ResolveBinding(ctx context.Context, req ResolveBindingReque
 func (c *HTTPClient) RegisterArtifact(ctx context.Context, req RegisterArtifactRequest) error {
 	var body struct {
 		Artifact struct {
-			SampleRunID       string `json:"sampleRunId"`
-			ProducerNodeID    string `json:"producerNodeId"`
-			ProducerAttemptID string `json:"producerAttemptId,omitempty"`
-			OutputName        string `json:"outputName"`
-			ArtifactID        string `json:"artifactId,omitempty"`
-			Digest            string `json:"digest,omitempty"`
-			NodeName          string `json:"nodeName,omitempty"`
-			URI               string `json:"uri,omitempty"`
-			SizeBytes         int64  `json:"sizeBytes,omitempty"`
+			SampleRunID       string             `json:"sampleRunId"`
+			ProducerNodeID    string             `json:"producerNodeId"`
+			ProducerAttemptID string             `json:"producerAttemptId,omitempty"`
+			OutputName        string             `json:"outputName"`
+			ArtifactID        string             `json:"artifactId,omitempty"`
+			Digest            string             `json:"digest,omitempty"`
+			NodeName          string             `json:"nodeName,omitempty"`
+			URI               string             `json:"uri,omitempty"`
+			LogicalURI        string             `json:"logicalUri,omitempty"`
+			Locations         []ArtifactLocation `json:"locations,omitempty"`
+			SizeBytes         int64              `json:"sizeBytes,omitempty"`
 		} `json:"artifact"`
 	}
 	body.Artifact.SampleRunID = req.SampleRunID
@@ -221,6 +236,8 @@ func (c *HTTPClient) RegisterArtifact(ctx context.Context, req RegisterArtifactR
 	body.Artifact.Digest = req.Digest
 	body.Artifact.NodeName = req.NodeName
 	body.Artifact.URI = req.URI
+	body.Artifact.LogicalURI = req.LogicalURI
+	body.Artifact.Locations = req.Locations
 	body.Artifact.SizeBytes = req.SizeBytes
 	payload, err := json.Marshal(body)
 	if err != nil {

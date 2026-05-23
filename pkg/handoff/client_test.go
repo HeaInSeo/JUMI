@@ -24,7 +24,7 @@ func TestHTTPClientResolveBinding(t *testing.T) {
 				if err := json.Unmarshal(body, &resolvePayload); err != nil {
 					t.Fatalf("unmarshal resolve payload: %v", err)
 				}
-				return jsonResponse(http.StatusOK, `{"resolutionStatus":"RESOLVED","decision":"remote_fetch","placementIntent":{"mode":"required_node","nodeName":"node-a"},"materializationPlan":{"mode":"remote_fetch","uri":"http://artifact.local/a","expectedDigest":"sha256:abc"},"reason":"remote fetch required","retryable":false}`), nil
+				return jsonResponse(http.StatusOK, `{"resolutionStatus":"RESOLVED","decision":"remote_fetch","placementIntent":{"mode":"required_node","nodeName":"node-a"},"materializationPlan":{"mode":"local_reuse","uri":"http://artifact.local/a","expectedDigest":"sha256:abc","sourceLocation":{"nodeLocal":{"nodeName":"node-a","path":"/jumi-node-artifacts/cas/sha256/abc"}},"localPath":"/work/inputs/dataset"},"reason":"remote fetch required","retryable":false}`), nil
 			case "/v1/artifacts:register":
 				if err := json.Unmarshal(body, &registerPayload); err != nil {
 					t.Fatalf("unmarshal register payload: %v", err)
@@ -67,8 +67,17 @@ func TestHTTPClientResolveBinding(t *testing.T) {
 	if resp.MaterializationPlan.URI != "http://artifact.local/a" {
 		t.Fatalf("artifact URI = %q, want http://artifact.local/a", resp.MaterializationPlan.URI)
 	}
-	if resp.MaterializationPlan.Mode != "remote_fetch" {
-		t.Fatalf("materialization mode = %q, want remote_fetch", resp.MaterializationPlan.Mode)
+	if resp.MaterializationPlan.Mode != "local_reuse" {
+		t.Fatalf("materialization mode = %q, want local_reuse", resp.MaterializationPlan.Mode)
+	}
+	if resp.MaterializationPlan.SourceLocation == nil || resp.MaterializationPlan.SourceLocation.NodeLocal == nil {
+		t.Fatalf("sourceLocation = %#v, want nodeLocal source", resp.MaterializationPlan.SourceLocation)
+	}
+	if resp.MaterializationPlan.SourceLocation.NodeLocal.Path != "/jumi-node-artifacts/cas/sha256/abc" {
+		t.Fatalf("sourceLocation.nodeLocal.path = %q, want node-local path", resp.MaterializationPlan.SourceLocation.NodeLocal.Path)
+	}
+	if resp.MaterializationPlan.LocalPath != "/work/inputs/dataset" {
+		t.Fatalf("localPath = %q, want /work/inputs/dataset", resp.MaterializationPlan.LocalPath)
 	}
 	binding, ok := resolvePayload["binding"].(map[string]any)
 	if !ok {
@@ -91,7 +100,11 @@ func TestHTTPClientResolveBinding(t *testing.T) {
 		ArtifactID:        "sample-1/parent-a/attempt-1/output",
 		Digest:            "sha256:abc",
 		URI:               "jumi://runs/run-1/nodes/parent-a/outputs/output",
-		SizeBytes:         42,
+		LogicalURI:        "jumi://runs/run-1/nodes/parent-a/outputs/output",
+		Locations: []ArtifactLocation{{
+			NodeLocal: &NodeLocalLocation{NodeName: "node-a", Path: "/var/lib/jumi-artifacts/cas/sha256/abc"},
+		}},
+		SizeBytes: 42,
 	}); err != nil {
 		t.Fatalf("RegisterArtifact() error = %v", err)
 	}
@@ -101,6 +114,9 @@ func TestHTTPClientResolveBinding(t *testing.T) {
 	}
 	if artifact["producerAttemptId"] != "attempt-1" {
 		t.Fatalf("register payload producerAttemptId = %#v, want attempt-1", artifact["producerAttemptId"])
+	}
+	if artifact["logicalUri"] != "jumi://runs/run-1/nodes/parent-a/outputs/output" {
+		t.Fatalf("register payload logicalUri = %#v, want logical URI", artifact["logicalUri"])
 	}
 	if err := client.NotifyNodeTerminal(context.Background(), NotifyNodeTerminalRequest{
 		SampleRunID:   "sample-1",

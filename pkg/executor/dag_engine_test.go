@@ -421,9 +421,10 @@ func TestDagEngineRegistersOutputMetadataWhenAvailable(t *testing.T) {
 		outputs: map[string]map[string]backend.OutputMetadata{
 			"producer": {
 				"result.json": {
-					URI:       "jumi://runs/run-outputs-meta/nodes/producer/outputs/result.json",
-					Digest:    "sha256:abc",
-					SizeBytes: 4096,
+					URI:        "jumi://runs/run-outputs-meta/nodes/producer/outputs/result.json",
+					LogicalURI: "jumi://runs/run-outputs-meta/nodes/producer/outputs/result.json",
+					Digest:     "sha256:abc",
+					SizeBytes:  4096,
 				},
 			},
 		},
@@ -458,6 +459,12 @@ func TestDagEngineRegistersOutputMetadataWhenAvailable(t *testing.T) {
 	}
 	if req.SizeBytes != 4096 {
 		t.Fatalf("sizeBytes = %d, want 4096", req.SizeBytes)
+	}
+	if req.LogicalURI != "jumi://runs/run-outputs-meta/nodes/producer/outputs/result.json" {
+		t.Fatalf("logicalUri = %q, want logical artifact URI", req.LogicalURI)
+	}
+	if len(req.Locations) != 0 {
+		t.Fatalf("locations = %#v, want no explicit locations in legacy fake metadata", req.Locations)
 	}
 }
 

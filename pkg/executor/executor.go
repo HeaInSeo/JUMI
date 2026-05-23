@@ -944,8 +944,8 @@ func (r *nodeRunner) registerNodeOutputs(ctx context.Context, handle backend.Han
 		if strings.TrimSpace(metadata.Digest) == "" {
 			return fmt.Errorf("required output %s has empty digest for node %s", outputName, r.node.NodeID)
 		}
-		if strings.TrimSpace(metadata.URI) == "" {
-			return fmt.Errorf("required output %s has empty uri for node %s", outputName, r.node.NodeID)
+		if strings.TrimSpace(metadata.URI) == "" && len(metadata.Locations) == 0 {
+			return fmt.Errorf("required output %s has neither uri nor locations for node %s", outputName, r.node.NodeID)
 		}
 		if err := r.handoff.RegisterArtifact(ctx, handoff.RegisterArtifactRequest{
 			SampleRunID:       sampleRunID,
@@ -956,6 +956,8 @@ func (r *nodeRunner) registerNodeOutputs(ctx context.Context, handle backend.Han
 			Digest:            metadata.Digest,
 			NodeName:          metadata.NodeName,
 			URI:               metadata.URI,
+			LogicalURI:        metadata.LogicalURI,
+			Locations:         toHandoffLocations(metadata.Locations),
 			SizeBytes:         metadata.SizeBytes,
 		}); err != nil {
 			return fmt.Errorf("register artifact %s for node %s: %w", outputName, r.node.NodeID, err)
@@ -978,6 +980,24 @@ func (r *nodeRunner) collectOutputMetadata(ctx context.Context, handle backend.H
 		return nil, fmt.Errorf("collect output metadata for node %s: %w", r.node.NodeID, err)
 	}
 	return metadata, nil
+}
+
+func toHandoffLocations(locations []provenance.ArtifactLocation) []handoff.ArtifactLocation {
+	if len(locations) == 0 {
+		return nil
+	}
+	out := make([]handoff.ArtifactLocation, 0, len(locations))
+	for _, loc := range locations {
+		var converted handoff.ArtifactLocation
+		if loc.NodeLocal != nil {
+			converted.NodeLocal = &handoff.NodeLocalLocation{
+				NodeName: loc.NodeLocal.NodeName,
+				Path:     loc.NodeLocal.Path,
+			}
+		}
+		out = append(out, converted)
+	}
+	return out
 }
 
 func cloneNode(node spec.Node) spec.Node {
@@ -1018,6 +1038,12 @@ func injectResolvedBindingEnv(node *spec.Node, binding spec.ArtifactBinding, res
 	node.Env["JUMI_INPUT_"+keyBase+"_PLACEMENT_MODE"] = resolved.PlacementIntent.Mode
 	node.Env["JUMI_INPUT_"+keyBase+"_MATERIALIZATION_MODE"] = resolved.MaterializationPlan.Mode
 	node.Env["JUMI_INPUT_"+keyBase+"_EXPECTED_DIGEST"] = resolved.MaterializationPlan.ExpectedDigest
+	if resolved.MaterializationPlan.SourceLocation != nil && resolved.MaterializationPlan.SourceLocation.NodeLocal != nil {
+		node.Env["JUMI_INPUT_"+keyBase+"_NODE_LOCAL_PATH"] = resolved.MaterializationPlan.SourceLocation.NodeLocal.Path
+	}
+	if strings.TrimSpace(resolved.MaterializationPlan.LocalPath) != "" {
+		node.Env["JUMI_INPUT_"+keyBase+"_LOCAL_PATH"] = resolved.MaterializationPlan.LocalPath
+	}
 	if requiresMaterialization(resolved) {
 		node.Env["JUMI_INPUT_"+keyBase+"_REQUIRES_MATERIALIZATION"] = "true"
 	} else {
