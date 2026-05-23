@@ -813,7 +813,7 @@ func setOptionalStringField(target *spapi.RunSpec, fieldName string, value strin
 }
 
 func shouldUseDirectK8sStart(prepared preparedSpawnerNode) bool {
-	return prepared.serviceAccountName != "" || prepared.workingDir != ""
+	return prepared.serviceAccountName != "" || prepared.workingDir != "" || hasDirectHostPathMount(prepared.runSpec.Mounts)
 }
 
 func (a *SpawnerK8sAdapter) startDirectK8sNode(ctx context.Context, prepared preparedSpawnerNode) (Handle, error) {
@@ -935,15 +935,22 @@ func buildDirectVolumes(mounts []spapi.Mount) ([]corev1.Volume, []corev1.VolumeM
 	volumeMounts := make([]corev1.VolumeMount, 0, len(mounts))
 	for i, m := range mounts {
 		volName := fmt.Sprintf("vol-%d", i)
-		volumes = append(volumes, corev1.Volume{
-			Name: volName,
-			VolumeSource: corev1.VolumeSource{
+		volume := corev1.Volume{Name: volName}
+		if hostPath, ok := directHostPathSource(m.Source); ok {
+			volume.VolumeSource = corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: hostPath,
+				},
+			}
+		} else {
+			volume.VolumeSource = corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 					ClaimName: m.Source,
 					ReadOnly:  m.ReadOnly,
 				},
-			},
-		})
+			}
+		}
+		volumes = append(volumes, volume)
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name:      volName,
 			MountPath: m.Target,
@@ -951,6 +958,27 @@ func buildDirectVolumes(mounts []spapi.Mount) ([]corev1.Volume, []corev1.VolumeM
 		})
 	}
 	return volumes, volumeMounts
+}
+
+func hasDirectHostPathMount(mounts []spapi.Mount) bool {
+	for _, m := range mounts {
+		if _, ok := directHostPathSource(m.Source); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func directHostPathSource(source string) (string, bool) {
+	const prefix = "hostpath:"
+	if !strings.HasPrefix(source, prefix) {
+		return "", false
+	}
+	path := strings.TrimSpace(strings.TrimPrefix(source, prefix))
+	if path == "" {
+		return "", false
+	}
+	return path, true
 }
 
 func buildDirectNodeSelector(p *spapi.Placement) map[string]string {

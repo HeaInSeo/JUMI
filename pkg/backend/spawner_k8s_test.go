@@ -314,8 +314,31 @@ func TestShouldUseDirectK8sStartWhenOptionalFieldsRequested(t *testing.T) {
 	if !shouldUseDirectK8sStart(preparedSpawnerNode{workingDir: "/workspace"}) {
 		t.Fatal("expected direct start when workingDir is set")
 	}
+	if !shouldUseDirectK8sStart(preparedSpawnerNode{runSpec: spapi.RunSpec{Mounts: []spapi.Mount{{Source: "hostpath:/var/lib/jumi-artifacts", Target: "/var/lib/jumi-artifacts"}}}}) {
+		t.Fatal("expected direct start when hostpath mount is requested")
+	}
 	if shouldUseDirectK8sStart(preparedSpawnerNode{}) {
 		t.Fatal("did not expect direct start without optional fields")
+	}
+}
+
+func TestBuildDirectVolumesSupportsHostPathMounts(t *testing.T) {
+	volumes, mounts := buildDirectVolumes([]spapi.Mount{{
+		Source:   "hostpath:/var/lib/jumi-artifacts",
+		Target:   "/var/lib/jumi-artifacts",
+		ReadOnly: true,
+	}})
+	if len(volumes) != 1 || len(mounts) != 1 {
+		t.Fatalf("volumes=%d mounts=%d, want 1 each", len(volumes), len(mounts))
+	}
+	if volumes[0].HostPath == nil {
+		t.Fatalf("volume source = %#v, want hostPath", volumes[0].VolumeSource)
+	}
+	if volumes[0].HostPath.Path != "/var/lib/jumi-artifacts" {
+		t.Fatalf("hostPath.path = %q, want /var/lib/jumi-artifacts", volumes[0].HostPath.Path)
+	}
+	if mounts[0].MountPath != "/var/lib/jumi-artifacts" || !mounts[0].ReadOnly {
+		t.Fatalf("mount = %#v, want RO mount at node-local path", mounts[0])
 	}
 }
 
