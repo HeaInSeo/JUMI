@@ -465,8 +465,12 @@ const (
 )
 
 const (
-	resolveBindingMaxAttempts = 3
-	resolveBindingRetryDelay  = 100 * time.Millisecond
+	resolveBindingMaxAttempts          = 3
+	resolveBindingRetryDelay           = 100 * time.Millisecond
+	resolveBindingPendingMaxAttempts   = 5
+	resolveBindingPendingInitialDelay  = 1 * time.Second
+	resolveBindingPendingMaxDelay      = 10 * time.Second
+	resolveBindingPendingBackoffFactor = 2
 )
 
 const hostnameNodeSelectorKey = "kubernetes.io/hostname"
@@ -668,7 +672,6 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 		return r.failNode(err, attemptID, firstNonEmpty(result.TerminalStopCause, "failed"), firstNonEmpty(result.TerminalFailureReason, "backend_wait_error"))
 	}
 	finishedAt := time.Now().UTC()
-	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusCompleted, StartedAt: &startedAt, FinishedAt: &finishedAt, TerminalStopCause: firstNonEmpty(result.TerminalStopCause, "finished"), TerminalFailureReason: result.TerminalFailureReason})
 	r.recordLocalityFallbackSuccess(attemptID)
 	if err := r.registerNodeOutputs(context.Background(), handle, attemptID, executionNode); err != nil {
 		r.recordLocalityFallbackFailure(attemptID)
@@ -698,6 +701,16 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 		})
 		return r.failNode(err, attemptID, "failed", "notify_node_terminal_error")
 	}
+	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
+		RunID:                 r.runID,
+		NodeID:                r.node.NodeID,
+		AttemptID:             attemptID,
+		Status:                spec.AttemptStatusCompleted,
+		StartedAt:             &startedAt,
+		FinishedAt:            &finishedAt,
+		TerminalStopCause:     firstNonEmpty(result.TerminalStopCause, "finished"),
+		TerminalFailureReason: result.TerminalFailureReason,
+	})
 	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusSucceeded
 		current.TerminalStopCause = firstNonEmpty(result.TerminalStopCause, "finished")
@@ -1341,7 +1354,8 @@ func (r *nodeRunner) resolveBindingWithRetry(ctx context.Context, req handoff.Re
 
 func (r *nodeRunner) resolveBindingForExecution(ctx context.Context, req handoff.ResolveBindingRequest, attemptID string, binding spec.ArtifactBinding) (handoff.ResolveBindingResponse, error) {
 	var lastResolved handoff.ResolveBindingResponse
-	for attempt := 1; attempt <= resolveBindingMaxAttempts; attempt++ {
+	pendingDelay := resolveBindingPendingInitialDelay
+	for attempt := 1; attempt <= resolveBindingPendingMaxAttempts; attempt++ {
 		resolved, err := r.resolveBindingWithRetry(ctx, req, attemptID, binding.BindingName)
 		if err != nil {
 			return handoff.ResolveBindingResponse{}, err
@@ -1362,15 +1376,19 @@ func (r *nodeRunner) resolveBindingForExecution(ctx context.Context, req handoff
 				OccurredAt:    time.Now().UTC(),
 				Level:         "warn",
 				FailureReason: failureReason,
-				Message:       fmt.Sprintf("binding=%s status=%s attempt=%d/%d", binding.BindingName, resolved.ResolutionStatus, attempt, resolveBindingMaxAttempts),
+				Message:       fmt.Sprintf("binding=%s status=%s attempt=%d/%d nextDelay=%s", binding.BindingName, resolved.ResolutionStatus, attempt, resolveBindingPendingMaxAttempts, pendingDelay),
 			})
-			if attempt == resolveBindingMaxAttempts {
+			if attempt == resolveBindingPendingMaxAttempts {
 				return handoff.ResolveBindingResponse{}, fmt.Errorf("%s", failureReason)
 			}
 			select {
 			case <-ctx.Done():
 				return handoff.ResolveBindingResponse{}, ctx.Err()
-			case <-time.After(resolveBindingRetryDelay):
+			case <-time.After(pendingDelay):
+			}
+			pendingDelay *= resolveBindingPendingBackoffFactor
+			if pendingDelay > resolveBindingPendingMaxDelay {
+				pendingDelay = resolveBindingPendingMaxDelay
 			}
 		}
 	}

@@ -373,6 +373,13 @@ func outputProducerAttemptID(record provenance.ArtifactRecord, manifest provenan
 }
 
 func validateObservedManifest(manifest provenance.ArtifactManifest, node spec.Node) error {
+	if manifest.SchemaVersion != "" {
+		switch manifest.SchemaVersion {
+		case provenance.ArtifactManifestSchemaVersion, "nan.artifactManifest.v1":
+		default:
+			return fmt.Errorf("unsupported manifest schemaVersion %q", manifest.SchemaVersion)
+		}
+	}
 	if node.Env == nil {
 		return nil
 	}

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/HeaInSeo/JUMI/pkg/provenance"
 	"github.com/HeaInSeo/JUMI/pkg/spec"
 	spapi "github.com/HeaInSeo/spawner/pkg/api"
 	corev1 "k8s.io/api/core/v1"
@@ -271,6 +272,35 @@ func TestToSpawnerRunSpecPreservesAttemptAwareManifestPath(t *testing.T) {
 	}
 	if got.Env["JUMI_OUTPUT_MANIFEST_PATH"] != "/out/_meta/jumi/runs/run-5/nodes/worker/attempts/run-5-worker-attempt-1/artifacts.manifest.json" {
 		t.Fatalf("JUMI_OUTPUT_MANIFEST_PATH = %q, want attempt-aware path", got.Env["JUMI_OUTPUT_MANIFEST_PATH"])
+	}
+}
+
+func TestValidateObservedManifestAllowsSupportedSchemaVersions(t *testing.T) {
+	node := spec.Node{Env: map[string]string{"JUMI_RUN_ID": "run-1", "JUMI_NODE_ID": "node-1", "JUMI_ATTEMPT_ID": "attempt-1"}}
+	cases := []string{"", provenance.ArtifactManifestSchemaVersion, "nan.artifactManifest.v1"}
+	for _, schemaVersion := range cases {
+		manifest := provenance.ArtifactManifest{
+			SchemaVersion: schemaVersion,
+			RunID:         "run-1",
+			NodeID:        "node-1",
+			AttemptID:     "attempt-1",
+		}
+		if err := validateObservedManifest(manifest, node); err != nil {
+			t.Fatalf("schemaVersion %q rejected: %v", schemaVersion, err)
+		}
+	}
+}
+
+func TestValidateObservedManifestRejectsUnknownSchemaVersion(t *testing.T) {
+	node := spec.Node{Env: map[string]string{"JUMI_RUN_ID": "run-1", "JUMI_NODE_ID": "node-1", "JUMI_ATTEMPT_ID": "attempt-1"}}
+	manifest := provenance.ArtifactManifest{
+		SchemaVersion: "unknown.manifest.v1",
+		RunID:         "run-1",
+		NodeID:        "node-1",
+		AttemptID:     "attempt-1",
+	}
+	if err := validateObservedManifest(manifest, node); err == nil {
+		t.Fatal("validateObservedManifest() error = nil, want unsupported schema version")
 	}
 }
 

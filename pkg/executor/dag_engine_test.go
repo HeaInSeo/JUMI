@@ -44,6 +44,8 @@ type fakeHandoffClient struct {
 	notifyRequests   []handoff.NotifyNodeTerminalRequest
 	finalizeRequests []handoff.FinalizeSampleRunRequest
 	evaluateRequests []handoff.EvaluateGCRequest
+	registerHook     func(handoff.RegisterArtifactRequest)
+	notifyHook       func(handoff.NotifyNodeTerminalRequest)
 	response         handoff.ResolveBindingResponse
 	responses        []handoff.ResolveBindingResponse
 	resolveErr       error
@@ -95,6 +97,9 @@ func (f *fakeHandoffClient) RegisterArtifact(_ context.Context, req handoff.Regi
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.registerRequests = append(f.registerRequests, req)
+	if f.registerHook != nil {
+		f.registerHook(req)
+	}
 	return f.registerErr
 }
 
@@ -102,6 +107,9 @@ func (f *fakeHandoffClient) NotifyNodeTerminal(_ context.Context, req handoff.No
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.notifyRequests = append(f.notifyRequests, req)
+	if f.notifyHook != nil {
+		f.notifyHook(req)
+	}
 	return f.notifyErr
 }
 
@@ -934,6 +942,108 @@ func TestDagEngineRetriesResolveBindingForHTTP503(t *testing.T) {
 	assertEventPresent(t, reg, record.RunID, "node.input_resolve_retry", "resolve_handoff_error")
 }
 
+func TestDagEngineDoesNotMarkAttemptCompletedBeforeArtifactRegistrationOrNotify(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{failOn: map[string]bool{}}
+	handoffClient := &fakeHandoffClient{}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run:   spec.RunMetadata{RunID: "run-attempt-order", SampleRunID: "sample-attempt-order", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{Nodes: []spec.Node{{NodeID: "a", Image: "busybox:1.36", Outputs: []string{"output"}}}},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "a", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+
+	checkNotCompleted := func(where string) {
+		attempts, err := reg.ListAttempts(context.Background(), record.RunID, "a")
+		if err != nil {
+			t.Fatalf("%s: ListAttempts() error = %v", where, err)
+		}
+		if len(attempts) != 1 {
+			t.Fatalf("%s: attempts = %d, want 1", where, len(attempts))
+		}
+		if attempts[0].Status == spec.AttemptStatusCompleted {
+			t.Fatalf("%s: attempt status = Completed before final success bookkeeping", where)
+		}
+	}
+
+	handoffClient.registerHook = func(_ handoff.RegisterArtifactRequest) { checkNotCompleted("register") }
+	handoffClient.notifyHook = func(_ handoff.NotifyNodeTerminalRequest) { checkNotCompleted("notify") }
+
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusSucceeded)
+
+	attempts, err := reg.ListAttempts(context.Background(), record.RunID, "a")
+	if err != nil {
+		t.Fatalf("ListAttempts() error = %v", err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(attempts))
+	}
+	if attempts[0].Status != spec.AttemptStatusCompleted {
+		t.Fatalf("final attempt status = %q, want Completed", attempts[0].Status)
+	}
+}
+
+func TestDagEnginePendingResolveBindingUsesSeparateRetryBudget(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{failOn: map[string]bool{}}
+	handoffClient := &fakeHandoffClient{
+		responses: []handoff.ResolveBindingResponse{
+			{ResolutionStatus: "PENDING", Retryable: true},
+			{ResolutionStatus: "PENDING", Retryable: true},
+			{
+				ResolutionStatus: "RESOLVED",
+				Decision:         "remote_fetch",
+				PlacementIntent:  handoff.PlacementIntent{Mode: "required_node", NodeName: "node-a"},
+				MaterializationPlan: handoff.MaterializationPlan{
+					Mode: "remote_fetch",
+					URI:  "http://artifact.local/output",
+				},
+			},
+		},
+	}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run: spec.RunMetadata{RunID: "run-resolve-pending-then-ready", SampleRunID: "sample-resolve-pending-then-ready", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{
+			Nodes: []spec.Node{
+				{NodeID: "a", Image: "busybox:1.36", Outputs: []string{"output"}},
+				{NodeID: "b", Image: "busybox:1.36", ArtifactBindings: []spec.ArtifactBinding{{
+					BindingName:        "dataset",
+					ChildInputName:     "dataset",
+					ProducerNodeID:     "a",
+					ProducerOutputName: "output",
+					ConsumePolicy:      "RemoteOK",
+					Required:           true,
+				}}},
+			},
+			Edges: [][]string{{"a", "b"}},
+		},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "a", Status: spec.NodeStatusPending}, {RunID: record.RunID, NodeID: "b", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatusWithin(t, reg, record.RunID, spec.RunStatusSucceeded, 6*time.Second)
+
+	handoffClient.mu.Lock()
+	defer handoffClient.mu.Unlock()
+	if len(handoffClient.requests) != 3 {
+		t.Fatalf("resolve binding calls = %d, want 3", len(handoffClient.requests))
+	}
+	assertEventTypePresent(t, reg, record.RunID, "node.input_resolve_pending")
+}
+
 func (f *fakeAdapter) StartNode(ctx context.Context, prepared backend.PreparedNode) (backend.Handle, error) {
 	if f.startDelay > 0 {
 		select {
@@ -1316,7 +1426,12 @@ func TestDagEngineKeepsCancellationReasonWhenNotifyNodeTerminalFailsOnCanceledNo
 
 func waitForRunStatus(t *testing.T, reg registry.Registry, runID string, want spec.RunStatus) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	waitForRunStatusWithin(t, reg, runID, want, 3*time.Second)
+}
+
+func waitForRunStatusWithin(t *testing.T, reg registry.Registry, runID string, want spec.RunStatus, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		run, err := reg.GetRun(context.Background(), runID)
 		if err == nil && run.Status == want {
