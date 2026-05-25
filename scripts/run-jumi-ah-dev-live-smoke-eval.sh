@@ -168,6 +168,8 @@ if ssh_remote "
     PORT_FORWARD_PORT='${PORT_FORWARD_PORT}' \
     JUMI_RUN_ID='${RUN_ID}' \
     JUMI_SAMPLE_RUN_ID='${SAMPLE_RUN_ID}' \
+    JUMI_SMOKE_TIMEOUT='${JUMI_SMOKE_TIMEOUT:-}' \
+    JUMI_SMOKE_POLL='${JUMI_SMOKE_POLL:-}' \
     bash '${REMOTE_TMP_DIR}/vm-lab-jumi-smoke-remote.sh'
 "; then
   log_stage "remote smoke" "PASS" "runId=${RUN_ID}"

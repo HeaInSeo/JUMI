@@ -1,0 +1,88 @@
+{
+  "run": {
+    "runId": "vm-lab-same-node-local-reuse-smoke-1gib-20260525",
+    "sampleRunId": "vm-lab-same-node-local-reuse-smoke-1gib-sample-20260525",
+    "submittedAt": "2026-05-25T18:00:00Z",
+    "failurePolicy": {
+      "mode": "fail-fast"
+    },
+    "requesterId": "batch-integration",
+    "sourceSystem": "vm-lab-same-node-local-reuse-smoke-1gib"
+  },
+  "metadata": {
+    "jumi.testShortcut": "This fixture is a 1GiB Sprint 3B same-node local_reuse stress. The producer promotes a 1GiB artifact into node-local CAS and the consumer reuses it on the same worker node.",
+    "jumi.obsoleteCompatibility": "This is a stress profile for same-node local_reuse only. It does not validate remote fallback or external publish."
+  },
+  "graph": {
+    "nodes": [
+      {
+        "nodeId": "produce",
+        "image": "__RUNTIME_SHORTCUT_IMAGE__",
+        "command": [
+          "sh",
+          "-ceu",
+          "mkdir -p /out; dd if=/dev/zero of=/out/result bs=1048576 count=1024; sha256sum /out/result; wc -c /out/result"
+        ],
+        "env": {
+          "JUMI_NODE_LOCAL_ARTIFACT_ROOT": "/jumi-node-artifacts"
+        },
+        "serviceAccountName": "jumi",
+        "outputs": [
+          "result"
+        ],
+        "mounts": [
+          {
+            "source": "hostpath:/var/lib/jumi-artifacts",
+            "target": "/jumi-node-artifacts",
+            "mode": "rw"
+          }
+        ],
+        "placement": {
+          "requiredNodeName": "__WORKER_NODE_NAME__"
+        },
+        "metadata": {
+          "jumi.outputManifestMode": "runtime-helper"
+        }
+      },
+      {
+        "nodeId": "consume",
+        "image": "__RUNTIME_SHORTCUT_IMAGE__",
+        "command": [
+          "sh",
+          "-ceu",
+          "mkdir -p /out; printf 'mode=%s expectedDigest=%s nodeLocalPath=%s localPath=%s\\n' \"$JUMI_INPUT_RESULT_MATERIALIZATION_MODE\" \"$JUMI_INPUT_RESULT_EXPECTED_DIGEST\" \"$JUMI_INPUT_RESULT_NODE_LOCAL_PATH\" \"$JUMI_INPUT_RESULT_LOCAL_PATH\"; test -f \"$JUMI_INPUT_RESULT_LOCAL_PATH\"; sha256sum \"$JUMI_INPUT_RESULT_LOCAL_PATH\"; wc -c \"$JUMI_INPUT_RESULT_LOCAL_PATH\"; cp \"$JUMI_INPUT_RESULT_LOCAL_PATH\" /out/consumed"
+        ],
+        "serviceAccountName": "jumi",
+        "outputs": [
+          "consumed"
+        ],
+        "mounts": [
+          {
+            "source": "hostpath:/var/lib/jumi-artifacts",
+            "target": "/jumi-node-artifacts",
+            "mode": "ro"
+          }
+        ],
+        "metadata": {
+          "jumi.outputManifestMode": "runtime-helper"
+        },
+        "artifactBindings": [
+          {
+            "bindingName": "result",
+            "childInputName": "result",
+            "producerNodeId": "produce",
+            "producerOutputName": "result",
+            "consumePolicy": "SameNodeOnly",
+            "required": true
+          }
+        ]
+      }
+    ],
+    "edges": [
+      [
+        "produce",
+        "consume"
+      ]
+    ]
+  }
+}

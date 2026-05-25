@@ -10,6 +10,8 @@ PORT_FORWARD_PORT="${PORT_FORWARD_PORT:-19090}"
 JUMI_RUN_ID="${JUMI_RUN_ID:-}"
 JUMI_SAMPLE_RUN_ID="${JUMI_SAMPLE_RUN_ID:-}"
 KUBECTL_CMD="${KUBECTL_CMD:-sudo kubectl}"
+JUMI_SMOKE_TIMEOUT="${JUMI_SMOKE_TIMEOUT:-}"
+JUMI_SMOKE_POLL="${JUMI_SMOKE_POLL:-}"
 
 read -r -a kubectl_cmd <<<"${KUBECTL_CMD}"
 
@@ -44,5 +46,11 @@ if [[ -n "${JUMI_RUN_ID}" ]]; then
 fi
 if [[ -n "${JUMI_SAMPLE_RUN_ID}" ]]; then
   args+=(-sample-run-id "${JUMI_SAMPLE_RUN_ID}")
+fi
+if [[ -n "${JUMI_SMOKE_TIMEOUT}" ]]; then
+  args+=(-timeout "${JUMI_SMOKE_TIMEOUT}")
+fi
+if [[ -n "${JUMI_SMOKE_POLL}" ]]; then
+  args+=(-poll "${JUMI_SMOKE_POLL}")
 fi
 "${JUMI_SMOKE_BIN}" "${args[@]}"

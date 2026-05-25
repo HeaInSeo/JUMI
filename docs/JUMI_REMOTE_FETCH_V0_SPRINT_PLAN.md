@@ -415,9 +415,26 @@ Sprint 3B success run:
 - runId: `jumi-ah-dev-live-smoke-20260525T073733Z`
 - sampleRunId: `jumi-ah-dev-live-smoke-sample-20260525T073733Z`
 
+Sprint 3B local_reuse stress:
+
+- `1GiB` same-node local_reuse stress 성공
+- runId: `jumi-ah-dev-live-smoke-20260525T074939Z`
+- sampleRunId: `jumi-ah-dev-live-smoke-sample-20260525T074939Z`
+- producer artifact:
+  - `sizeBytes=1073741824`
+  - `digest=sha256:49bc20df15e412a64472421e13fe86ff1c5165e18b2afccf160d4dc19fe68a14`
+- consume는 `mode=local_reuse`, `nodeLocalPath=/jumi-node-artifacts/cas/sha256/<digest>`, `localPath=/work/inputs/result`로 성공
+- 현재 확인된 same-node local_reuse happy-path 범위는 `1GiB`까지다
+
+현재 한계 판정:
+
+- `1GiB` same-node local_reuse까지는 현재 경로에서 병목 없이 통과했다
+- 아직 검증하지 않은 것은 `multi-GiB` stress, cleanup/disk pressure, retry/resume, remote fallback이다
+
 관련 문서:
 
 - [Sprint 3B Design: Pure K8s Node-local Handoff Happy Path](./JUMI_SPRINT_3B_PURE_K8S_NODE_LOCAL_HANDOFF.md)
+- [Artifact Source Registry / Materialization Source Layer](./JUMI_ARTIFACT_SOURCE_REGISTRY_DESIGN.md)
 - live smoke wrapper: [scripts/run-jumi-same-node-local-reuse-live-smoke.sh](../scripts/run-jumi-same-node-local-reuse-live-smoke.sh)
 
 참고:
@@ -449,6 +466,7 @@ backlog:
 - cache eviction policy
 - Artifact Source Registry / Materialization Source Layer
 - 1GiB+ remote_fetch stress
+- multi-GiB same-node local_reuse stress
 - full gate environment standardization (`slint-gate` packaging / availability)
 
 완료 기준:
