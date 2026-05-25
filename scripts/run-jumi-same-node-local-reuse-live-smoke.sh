@@ -15,7 +15,7 @@ RUNTIME_SHORTCUT_IMAGE_REPO="${RUNTIME_SHORTCUT_IMAGE_REPO:-harbor.10.113.24.96.
 RUNTIME_SHORTCUT_IMAGE_TAG="${RUNTIME_SHORTCUT_IMAGE_TAG:-runtime-shortcut-local-reuse-$(git -C "${ROOT_DIR}" rev-parse --short HEAD)}"
 RUNTIME_SHORTCUT_IMAGE="${RUNTIME_SHORTCUT_IMAGE:-${RUNTIME_SHORTCUT_IMAGE_REPO}:${RUNTIME_SHORTCUT_IMAGE_TAG}}"
 AH_IMAGE_REPO="${AH_IMAGE_REPO:-harbor.10.113.24.96.nip.io/batch-int/artifact-handoff}"
-AH_IMAGE_TAG="${AH_IMAGE_TAG:-node-local-handoff-$(git -C "${ROOT_DIR}" rev-parse --short HEAD)}"
+AH_IMAGE_TAG="${AH_IMAGE_TAG:-node-local-handoff-$(date -u +%Y%m%d%H%M%S)}"
 AH_IMAGE="${AH_IMAGE:-${AH_IMAGE_REPO}:${AH_IMAGE_TAG}}"
 EVAL_SCRIPT="${EVAL_SCRIPT:-${ROOT_DIR}/scripts/run-jumi-ah-dev-live-smoke-eval.sh}"
 PUBLISH_JUMI_SERVICE_SCRIPT="${PUBLISH_JUMI_SERVICE_SCRIPT:-${ROOT_DIR}/scripts/publish-jumi-service-ko-remote.sh}"
@@ -67,14 +67,27 @@ REMOTE_KUBECONFIG="${REMOTE_KUBECONFIG}" \
 
 ssh_remote "
   set -euo pipefail
-  export KUBECONFIG='${REMOTE_KUBECONFIG}'
   cd '${REMOTE_AH_REPO_ROOT}'
   podman build -f Containerfile -t '${AH_IMAGE}' .
   podman push '${AH_IMAGE}'
+"
+
+ssh_remote "
+  set -euo pipefail
+  export KUBECONFIG='${REMOTE_KUBECONFIG}'
   kubectl -n '${VM_NAMESPACE}' set image deployment/artifact-handoff artifact-handoff='${AH_IMAGE}'
   kubectl -n '${VM_NAMESPACE}' rollout status deployment/artifact-handoff --timeout=180s
+"
+
+ssh_remote "
+  set -euo pipefail
+  export KUBECONFIG='${REMOTE_KUBECONFIG}'
   kubectl -n '${VM_NAMESPACE}' set env deploy/jumi JUMI_AH_GRPC_TARGET- >/dev/null
   kubectl -n '${VM_NAMESPACE}' rollout status deploy/jumi --timeout=180s
+"
+
+ssh_remote "
+  set -euo pipefail
   cd '${REMOTE_JUMI_REPO_ROOT}'
   podman build -f Containerfile -t '${RUNTIME_SHORTCUT_IMAGE}' .
   podman push '${RUNTIME_SHORTCUT_IMAGE}'

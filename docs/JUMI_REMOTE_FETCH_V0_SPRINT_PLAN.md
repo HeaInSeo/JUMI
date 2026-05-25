@@ -131,7 +131,7 @@ v0 기준으로 URI는 두 층으로 본다.
 | Sprint 1 | contract smoke 안정화 | Completed |
 | Sprint 2 | `nan` simple_http materializer 최소 구현 | Completed |
 | Sprint 3A | VM consumer materialization happy path | Completed |
-| Sprint 3B | pure K8s same-node local_reuse handoff | Preflight Required |
+| Sprint 3B | pure K8s same-node local_reuse handoff | Completed |
 | Sprint 4 | 정리와 backlog 고정 | Pending |
 
 ---
@@ -391,27 +391,34 @@ B Pod도 worker-2에 배치
 B가 local_reuse로 /work/inputs에 copy materialization
 ```
 
-Sprint 3B preflight:
+완료된 선행 작업:
 
-- 현재 manifest / RegisterArtifact seam이 아래 정보를 분리해서 전달할 수 있는지 먼저 확인해야 한다
-  - `logicalUri`
-  - `producerAttemptId`
-  - `digest`
-  - `sizeBytes`
-  - `locations[]`
+- JUMI가 output manifest의 `logicalUri`, `producerAttemptId`, `locations[]`를 보존하고 `RegisterArtifact` HTTP seam으로 전달
+- AH HTTP resolver가 `logicalUri`, `locations[]`, `node_local sourceLocation`, relative `localPath`를 저장/반환
+- `node-artifact-runtime`이 producer-side node-local CAS promotion과 consumer-side `LocalReuseMaterializer`를 수행
+- directK8s path가 `hostpath:` mount를 `HostPathVolumeSource`로 번역
 
-현재 preflight 결과:
+검증 결과:
 
-- `producerAttemptId`: 부분 통과
-- `logicalUri`: 미통과
-- `locations[]`: 미통과
-- `node_local only` artifact 등록: 미통과
+- same-node local_reuse live smoke 성공
+- producer는 `copy into CAS path` 방식으로 `/jumi-node-artifacts/cas/sha256/<digest>`에 promotion
+- AH 등록 artifact에는 `logicalUri`와 `locations[].nodeLocal.path`가 기록
+- consume env/log에서 아래가 확인됨
+  - `JUMI_INPUT_RESULT_MATERIALIZATION_MODE=local_reuse`
+  - `JUMI_INPUT_RESULT_NODE_LOCAL_PATH=/jumi-node-artifacts/cas/sha256/<digest>`
+  - `JUMI_INPUT_RESULT_LOCAL_PATH=/work/inputs/result`
+- consume는 same worker node에서 `/work/inputs/result`로 copy materialization 후 성공
+- 전체 run `Succeeded`
 
-즉 Sprint 3B를 실제 구현하려면 현재 문서 기준으로는 `manifest/RegisterArtifact seam 보강`이 선행 작업이다.
+Sprint 3B success run:
+
+- runId: `jumi-ah-dev-live-smoke-20260525T073733Z`
+- sampleRunId: `jumi-ah-dev-live-smoke-sample-20260525T073733Z`
 
 관련 문서:
 
 - [Sprint 3B Design: Pure K8s Node-local Handoff Happy Path](./JUMI_SPRINT_3B_PURE_K8S_NODE_LOCAL_HANDOFF.md)
+- live smoke wrapper: [scripts/run-jumi-same-node-local-reuse-live-smoke.sh](../scripts/run-jumi-same-node-local-reuse-live-smoke.sh)
 
 참고:
 
@@ -440,7 +447,6 @@ backlog:
 - auth-enabled object store backend
 - multi-input concurrent fetch policy
 - cache eviction policy
-- producer-side promotion + node-local same-node handoff
 - Artifact Source Registry / Materialization Source Layer
 - 1GiB+ remote_fetch stress
 - full gate environment standardization (`slint-gate` packaging / availability)
@@ -492,9 +498,9 @@ backlog:
 - Sprint 1: 완료
 - Sprint 2: 완료
 - Sprint 3A: 완료
-- Sprint 3B: preflight required
+- Sprint 3B: 완료
 
-즉 지금은 "consumer remote_fetch materialization happy path는 닫혔고, Sprint 3B는 same-node local_reuse handoff 설계와 seam 보강 preflight가 남아 있다"가 정확한 상태다.
+즉 지금은 "consumer remote_fetch materialization happy path와 pure K8s same-node local_reuse handoff happy path가 모두 닫혔다"가 정확한 상태다.
 
 ## 13. directK8s / library freeze 메모
 
