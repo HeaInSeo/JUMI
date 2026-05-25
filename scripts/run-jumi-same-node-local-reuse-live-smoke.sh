@@ -52,7 +52,7 @@ ssh_remote "
   set -euo pipefail
   git -C '${REMOTE_JUMI_REPO_ROOT}' fetch origin
   git -C '${REMOTE_JUMI_REPO_ROOT}' checkout '${REMOTE_GIT_REF}'
-  git -C '${REMOTE_JUMI_REPO_ROOT}' pull --ff-only origin '${REMOTE_GIT_REF}'
+  git -C '${REMOTE_JUMI_REPO_ROOT}' reset --hard 'origin/${REMOTE_GIT_REF}'
   cd '${REMOTE_JUMI_REPO_ROOT}'
   podman build -f Containerfile -t '${RUNTIME_SHORTCUT_IMAGE}' .
   podman push '${RUNTIME_SHORTCUT_IMAGE}'
