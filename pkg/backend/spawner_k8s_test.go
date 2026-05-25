@@ -337,6 +337,9 @@ func TestBuildDirectVolumesSupportsHostPathMounts(t *testing.T) {
 	if volumes[0].HostPath.Path != "/var/lib/jumi-artifacts" {
 		t.Fatalf("hostPath.path = %q, want /var/lib/jumi-artifacts", volumes[0].HostPath.Path)
 	}
+	if volumes[0].HostPath.Type == nil || *volumes[0].HostPath.Type != corev1.HostPathDirectoryOrCreate {
+		t.Fatalf("hostPath.type = %#v, want DirectoryOrCreate", volumes[0].HostPath.Type)
+	}
 	if mounts[0].MountPath != "/var/lib/jumi-artifacts" || !mounts[0].ReadOnly {
 		t.Fatalf("mount = %#v, want RO mount at node-local path", mounts[0])
 	}

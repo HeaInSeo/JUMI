@@ -937,9 +937,11 @@ func buildDirectVolumes(mounts []spapi.Mount) ([]corev1.Volume, []corev1.VolumeM
 		volName := fmt.Sprintf("vol-%d", i)
 		volume := corev1.Volume{Name: volName}
 		if hostPath, ok := directHostPathSource(m.Source); ok {
+			hostPathType := corev1.HostPathDirectoryOrCreate
 			volume.VolumeSource = corev1.VolumeSource{
 				HostPath: &corev1.HostPathVolumeSource{
 					Path: hostPath,
+					Type: &hostPathType,
 				},
 			}
 		} else {
