@@ -13,6 +13,7 @@ RUNTIME_SHORTCUT_IMAGE_REPO="${RUNTIME_SHORTCUT_IMAGE_REPO:-harbor.10.113.24.96.
 RUNTIME_SHORTCUT_IMAGE_TAG="${RUNTIME_SHORTCUT_IMAGE_TAG:-runtime-shortcut-local-reuse-$(git -C "${ROOT_DIR}" rev-parse --short HEAD)}"
 RUNTIME_SHORTCUT_IMAGE="${RUNTIME_SHORTCUT_IMAGE:-${RUNTIME_SHORTCUT_IMAGE_REPO}:${RUNTIME_SHORTCUT_IMAGE_TAG}}"
 EVAL_SCRIPT="${EVAL_SCRIPT:-${ROOT_DIR}/scripts/run-jumi-ah-dev-live-smoke-eval.sh}"
+PUBLISH_JUMI_SERVICE_SCRIPT="${PUBLISH_JUMI_SERVICE_SCRIPT:-${ROOT_DIR}/scripts/publish-jumi-service-ko-remote.sh}"
 FIXTURE_PATH="$(mktemp "${ROOT_DIR}/artifacts/devspace/jumi-same-node-local-reuse-fixture.XXXXXX.json")"
 
 ssh_remote() {
@@ -43,16 +44,21 @@ PY
 
 ssh_remote "
   set -euo pipefail
-  export KUBECONFIG='${REMOTE_KUBECONFIG}'
-  kubectl -n '${VM_NAMESPACE}' set env deploy/jumi JUMI_AH_GRPC_TARGET- >/dev/null
-  kubectl -n '${VM_NAMESPACE}' rollout status deploy/jumi --timeout=180s
-"
-
-ssh_remote "
-  set -euo pipefail
   git -C '${REMOTE_JUMI_REPO_ROOT}' fetch origin
   git -C '${REMOTE_JUMI_REPO_ROOT}' checkout '${REMOTE_GIT_REF}'
   git -C '${REMOTE_JUMI_REPO_ROOT}' reset --hard 'origin/${REMOTE_GIT_REF}'
+"
+
+REMOTE_SSH_TARGET="${REMOTE_SSH_TARGET}" \
+REMOTE_JUMI_REPO_ROOT="${REMOTE_JUMI_REPO_ROOT}" \
+REMOTE_KUBECONFIG="${REMOTE_KUBECONFIG}" \
+"${PUBLISH_JUMI_SERVICE_SCRIPT}"
+
+ssh_remote "
+  set -euo pipefail
+  export KUBECONFIG='${REMOTE_KUBECONFIG}'
+  kubectl -n '${VM_NAMESPACE}' set env deploy/jumi JUMI_AH_GRPC_TARGET- >/dev/null
+  kubectl -n '${VM_NAMESPACE}' rollout status deploy/jumi --timeout=180s
   cd '${REMOTE_JUMI_REPO_ROOT}'
   podman build -f Containerfile -t '${RUNTIME_SHORTCUT_IMAGE}' .
   podman push '${RUNTIME_SHORTCUT_IMAGE}'
