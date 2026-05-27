@@ -4,6 +4,17 @@
 > 상태: Confirmed Design  
 > 목적: `logicalUri`와 concrete fetch/materialization source를 분리하는 장기 구조를 고정한다.
 
+구현 상태 메모:
+
+- `Sprint 3C-1` 완료
+  - AH에 `ArtifactSourceRecord` 저장 모델 추가
+  - `RegisterArtifact -> initialSources` 추가
+  - `ListSources` HTTP API 추가
+- `Sprint 3C-2` 초기 구현 완료
+  - AH `ResolveBinding` 내부에서 source-aware candidate planner 생성
+  - 외부 legacy `MaterializationPlan` adapter는 유지
+  - JUMI/nan 실행 경로는 아직 legacy single-plan contract를 사용
+
 ---
 
 ## 1. 한 줄 요약
@@ -320,6 +331,10 @@ Sprint 3C는 한 번에 구현하지 않고 두 단계로 나눈다.
 
 즉 3C-1은 저장 모델과 backward compatibility를 먼저 닫는 단계다.
 
+현재 상태:
+
+- 완료
+
 ### 11.2 Sprint 3C-2
 
 목표:
@@ -330,6 +345,13 @@ Sprint 3C는 한 번에 구현하지 않고 두 단계로 나눈다.
 - legacy single-plan adapter는 유지한다.
 
 즉 3C-2는 source selection / candidate planner를 도입하는 단계다.
+
+현재 상태:
+
+- AH 내부 planner 기준 초기 구현 완료
+- `ResolvedHandoff.materializationCandidates[]` 생성
+- legacy `MaterializationPlan` adapter 유지
+- JUMI는 아직 candidate planner를 직접 소비하지 않음
 
 ## 12. 다음 구현 후보
 
