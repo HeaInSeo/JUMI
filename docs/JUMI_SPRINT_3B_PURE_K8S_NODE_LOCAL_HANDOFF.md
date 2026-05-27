@@ -681,6 +681,50 @@ v0에서 symlink/hardlink를 사용하지 않는 이유:
 - hardlink: 같은 filesystem 조건이 필요하고 cross-fs에서 실패할 수 있다.
 - copy: 디스크 사용량은 늘지만 가장 안전하고 예측 가능하다.
 
+### 14.3 BUG-2 재분류 메모
+
+`local_reuse`가 `/work/inputs`로 full copy materialization을 수행하는 현재 구현은
+Sprint 3B v0 기준에서는 버그로 보지 않는다.
+
+즉 다음 정책은 현재 설계와 일치한다.
+
+```text
+node-local CAS artifact
+  ↓ copy
+/work/inputs/<inputName>
+```
+
+이 정책을 유지하는 이유:
+
+- consumer command가 input을 수정해도 CAS 원본이 오염되지 않는다
+- same-filesystem, cross-filesystem, permission 차이를 단순하게 다룰 수 있다
+- `copy into /work/inputs` 경로가 가장 예측 가능하고 디버깅이 쉽다
+
+재분류:
+
+```text
+BUG-2 ❌
+LocalReuseMaterializer strategy optimization debt ✅
+```
+
+후속 설계 방향:
+
+```text
+default:
+  copy
+
+optional optimization:
+  reflink / copy-on-write clone
+
+explicit opt-in:
+  hardlink
+
+fallback:
+  copy
+```
+
+즉 `hardlink-first`는 즉시 버그 수정이 아니라 후속 materializer strategy 설계 항목으로 남긴다.
+
 ## 15. Manifest / RegisterArtifact seam 정책
 
 Sprint 3B 설계에서는 `logicalUri`, `producerAttemptId`, `digest`, `locations[]`를 분리한다.

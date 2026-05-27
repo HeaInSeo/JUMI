@@ -132,7 +132,7 @@ v0 기준으로 URI는 두 층으로 본다.
 | Sprint 2 | `nan` simple_http materializer 최소 구현 | Completed |
 | Sprint 3A | VM consumer materialization happy path | Completed |
 | Sprint 3B | pure K8s same-node local_reuse handoff | Completed |
-| Sprint 4 | 정리와 backlog 고정 | Pending |
+| Sprint 4 | 정리와 backlog 고정 | Completed |
 
 ---
 
@@ -475,6 +475,15 @@ backlog:
 - 다음 개발자가 `remote_fetch` 상태를 오해하지 않음
 - `simple_http` happy path 결과가 문서에 남음
 
+상태:
+
+- 완료
+- `remote_fetch` happy path와 `same-node local_reuse` happy path를 각각 독립적으로 문서화했다.
+- smoke 실행과 `slint-gate` 정책 평가는 분리됐다.
+- `BUG-1`, `BUG-4`, `BUG-5`, `BUG-6` 안정화 패치와 `BUG-3` producer promotion single-pass 최적화가 반영됐다.
+- `BUG-2`는 Sprint 3B v0의 의도된 `copy` 정책과 충돌하므로 후속 materializer strategy 설계 항목으로 남긴다.
+- `BUG-2` 후속 전략 기본값은 `copy default / reflink optional / hardlink explicit opt-in / copy fallback`으로 기록한다.
+
 ---
 
 ## 10. 재개 규칙
@@ -543,15 +552,17 @@ backlog:
 
 - `github.com/HeaInSeo/dag-go v1.2.0`
 - `github.com/HeaInSeo/spawner v0.2.1`
-- `github.com/HeaInSeo/node-artifact-runtime@v0.1.5`
+- `github.com/HeaInSeo/node-artifact-runtime@bee9f999c242180f3f447591b54ab511a8413ae5`
 
 GitHub main drift:
 
 - `dag-go` main은 현재 JUMI pin `v1.2.0`와 일치한다
 - `spawner` main은 현재 JUMI pin `v0.2.1`와 일치한다
+- `node-artifact-runtime`은 `v0.1.5` tag 이후 추가 커밋을 JUMI가 commit pin으로 소비하고 있다
 
 이번 스프린트 원칙:
 
 - drift는 문서로 고정한다
 - `dag-go`, `spawner`는 이번 라운드에서 GitHub 정본 최신으로 맞췄다
-- 다음 라운드 task로 분리한다
+- `node-artifact-runtime`은 다음 tag 정리 전까지 commit pin 상태를 유지한다
+- 외부 라이브러리의 tag/commit 소비 전략은 이후 변경 전에 명시적으로 확인한다
