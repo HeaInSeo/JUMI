@@ -34,11 +34,17 @@ type PlacementIntent struct {
 
 type ArtifactLocation struct {
 	NodeLocal *NodeLocalLocation `json:"nodeLocal,omitempty"`
+	HTTP      *HTTPSource        `json:"http,omitempty"`
 }
 
 type NodeLocalLocation struct {
 	NodeName string `json:"nodeName,omitempty"`
 	Path     string `json:"path,omitempty"`
+}
+
+type HTTPSource struct {
+	URI     string            `json:"uri,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 type MaterializationPlan struct {
@@ -49,13 +55,33 @@ type MaterializationPlan struct {
 	LocalPath      string            `json:"localPath,omitempty"`
 }
 
+type MaterializationCondition struct {
+	Kind      string `json:"kind"`
+	NodeName  string `json:"nodeName,omitempty"`
+	BackendID string `json:"backendId,omitempty"`
+	SourceRef string `json:"sourceRef,omitempty"`
+	State     string `json:"state,omitempty"`
+}
+
+type MaterializationCandidate struct {
+	Priority       int                        `json:"priority"`
+	Mode           string                     `json:"mode,omitempty"`
+	SourceRef      string                     `json:"sourceRef,omitempty"`
+	ExpectedDigest string                     `json:"expectedDigest,omitempty"`
+	LocalPath      string                     `json:"localPath,omitempty"`
+	SourceLocation *ArtifactLocation          `json:"sourceLocation,omitempty"`
+	URI            string                     `json:"uri,omitempty"`
+	Conditions     []MaterializationCondition `json:"conditions,omitempty"`
+}
+
 type ResolveBindingResponse struct {
-	ResolutionStatus    string              `json:"resolutionStatus"`
-	Decision            string              `json:"decision"`
-	PlacementIntent     PlacementIntent     `json:"placementIntent"`
-	MaterializationPlan MaterializationPlan `json:"materializationPlan"`
-	Reason              string              `json:"reason,omitempty"`
-	Retryable           bool                `json:"retryable,omitempty"`
+	ResolutionStatus          string                     `json:"resolutionStatus"`
+	Decision                  string                     `json:"decision"`
+	PlacementIntent           PlacementIntent            `json:"placementIntent"`
+	MaterializationPlan       MaterializationPlan        `json:"materializationPlan"`
+	MaterializationCandidates []MaterializationCandidate `json:"materializationCandidates,omitempty"`
+	Reason                    string                     `json:"reason,omitempty"`
+	Retryable                 bool                       `json:"retryable,omitempty"`
 
 	// Legacy HTTP shim fields kept for backward-compatible decoding.
 	SourceNodeName          string `json:"sourceNodeName,omitempty"`
@@ -346,6 +372,9 @@ func normalizeResolveBindingResponse(resolved ResolveBindingResponse) ResolveBin
 	if resolved.PlacementIntent.Mode == "" && resolved.PlacementIntent.NodeName != "" {
 		resolved.PlacementIntent.Mode = "required_node"
 	}
+	if isZeroMaterializationPlan(resolved.MaterializationPlan) && len(resolved.MaterializationCandidates) > 0 {
+		resolved.MaterializationPlan = planFromCandidate(resolved.MaterializationCandidates[0])
+	}
 	if resolved.MaterializationPlan.URI == "" && resolved.ArtifactURI != "" {
 		resolved.MaterializationPlan.URI = resolved.ArtifactURI
 	}
@@ -360,4 +389,22 @@ func normalizeResolveBindingResponse(resolved ResolveBindingResponse) ResolveBin
 		}
 	}
 	return resolved
+}
+
+func isZeroMaterializationPlan(plan MaterializationPlan) bool {
+	return strings.TrimSpace(plan.Mode) == "" &&
+		strings.TrimSpace(plan.URI) == "" &&
+		strings.TrimSpace(plan.ExpectedDigest) == "" &&
+		plan.SourceLocation == nil &&
+		strings.TrimSpace(plan.LocalPath) == ""
+}
+
+func planFromCandidate(candidate MaterializationCandidate) MaterializationPlan {
+	return MaterializationPlan{
+		Mode:           candidate.Mode,
+		URI:            candidate.URI,
+		ExpectedDigest: candidate.ExpectedDigest,
+		SourceLocation: candidate.SourceLocation,
+		LocalPath:      candidate.LocalPath,
+	}
 }

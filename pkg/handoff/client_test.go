@@ -171,6 +171,89 @@ func TestHTTPClientResolveBindingDecodesLegacyResponseShape(t *testing.T) {
 	}
 }
 
+func TestHTTPClientResolveBindingDecodesMaterializationCandidates(t *testing.T) {
+	client := NewHTTPClientWithClient("http://artifact-handoff.test", &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != "/v1/handoffs:resolve" {
+				t.Fatalf("unexpected path: %s", r.URL.Path)
+			}
+			return jsonResponse(http.StatusOK, `{
+				"resolutionStatus":"RESOLVED",
+				"decision":"remote_fetch",
+				"placementIntent":{"mode":"preferred_node","nodeName":"node-a"},
+				"materializationPlan":{"mode":"remote_fetch","uri":"http://artifact.local/output","expectedDigest":"sha256:abc"},
+				"materializationCandidates":[
+					{
+						"priority":1,
+						"mode":"local_reuse",
+						"sourceRef":"src-local",
+						"expectedDigest":"sha256:abc",
+						"localPath":"/work/inputs/dataset",
+						"sourceLocation":{"nodeLocal":{"nodeName":"node-a","path":"/jumi-node-artifacts/cas/sha256/abc"}},
+						"conditions":[{"kind":"scheduled_on_node","nodeName":"node-a"}]
+					},
+					{
+						"priority":2,
+						"mode":"remote_fetch",
+						"sourceRef":"src-http",
+						"uri":"http://artifact.local/output",
+						"expectedDigest":"sha256:abc",
+						"localPath":"/work/inputs/dataset",
+						"sourceLocation":{"http":{"uri":"http://artifact.local/output","headers":{"Authorization":"Bearer t"}}},
+						"conditions":[{"kind":"backend_available","backendId":"legacy-http"}]
+					}
+				]
+			}`), nil
+		}),
+	})
+	resp, err := client.ResolveBinding(context.Background(), ResolveBindingRequest{
+		SampleRunID:        "sample-candidates",
+		ChildNodeID:        "child-a",
+		BindingName:        "dataset",
+		ProducerNodeID:     "parent-a",
+		ProducerOutputName: "output",
+	})
+	if err != nil {
+		t.Fatalf("ResolveBinding() error = %v", err)
+	}
+	if len(resp.MaterializationCandidates) != 2 {
+		t.Fatalf("materializationCandidates len = %d, want 2", len(resp.MaterializationCandidates))
+	}
+	if resp.MaterializationCandidates[0].Mode != "local_reuse" {
+		t.Fatalf("candidate[0].mode = %q, want local_reuse", resp.MaterializationCandidates[0].Mode)
+	}
+	if resp.MaterializationCandidates[1].SourceLocation == nil || resp.MaterializationCandidates[1].SourceLocation.HTTP == nil {
+		t.Fatalf("candidate[1].sourceLocation = %#v, want http source", resp.MaterializationCandidates[1].SourceLocation)
+	}
+	if got := resp.MaterializationCandidates[1].SourceLocation.HTTP.Headers["Authorization"]; got != "Bearer t" {
+		t.Fatalf("candidate[1] auth header = %q, want Bearer t", got)
+	}
+	if resp.MaterializationPlan.Mode != "remote_fetch" {
+		t.Fatalf("legacy materializationPlan.mode = %q, want remote_fetch", resp.MaterializationPlan.Mode)
+	}
+}
+
+func TestNormalizeResolveBindingResponseFallsBackToCandidateZero(t *testing.T) {
+	resolved := normalizeResolveBindingResponse(ResolveBindingResponse{
+		ResolutionStatus: "RESOLVED",
+		Decision:         "local_reuse",
+		MaterializationCandidates: []MaterializationCandidate{{
+			Priority:       1,
+			Mode:           "local_reuse",
+			SourceRef:      "src-local",
+			ExpectedDigest: "sha256:abc",
+			LocalPath:      "/work/inputs/dataset",
+			SourceLocation: &ArtifactLocation{NodeLocal: &NodeLocalLocation{NodeName: "node-a", Path: "/jumi-node-artifacts/cas/sha256/abc"}},
+		}},
+	})
+	if resolved.MaterializationPlan.Mode != "local_reuse" {
+		t.Fatalf("materializationPlan.mode = %q, want local_reuse", resolved.MaterializationPlan.Mode)
+	}
+	if resolved.MaterializationPlan.SourceLocation == nil || resolved.MaterializationPlan.SourceLocation.NodeLocal == nil {
+		t.Fatalf("sourceLocation = %#v, want nodeLocal source", resolved.MaterializationPlan.SourceLocation)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
