@@ -13,7 +13,9 @@
 - `Sprint 3C-2` 초기 구현 완료
   - AH `ResolveBinding` 내부에서 source-aware candidate planner 생성
   - 외부 legacy `MaterializationPlan` adapter는 유지
-  - JUMI/nan 실행 경로는 아직 legacy single-plan contract를 사용
+  - JUMI handoff client가 `materializationCandidates[]`를 수용
+  - explicit legacy plan이 없을 때 candidate zero fallback 정규화 지원
+  - Sprint 3A / 3B live smoke 재검증 완료
 
 ---
 
@@ -348,10 +350,11 @@ Sprint 3C는 한 번에 구현하지 않고 두 단계로 나눈다.
 
 현재 상태:
 
-- AH 내부 planner 기준 초기 구현 완료
+- 완료
 - `ResolvedHandoff.materializationCandidates[]` 생성
 - legacy `MaterializationPlan` adapter 유지
-- JUMI는 아직 candidate planner를 직접 소비하지 않음
+- JUMI handoff client가 candidate-aware HTTP contract를 수용
+- JUMI/nan 실행 경로는 여전히 selected legacy single-plan을 사용
 
 ## 12. 다음 구현 후보
 

@@ -532,7 +532,7 @@ backlog:
 다음 활성 범위:
 
 - Sprint 3C-1: Artifact Source Registry 저장 모델 도입 — Completed
-- Sprint 3C-2: materialization candidate planner 도입 — Initial implementation completed in AH, legacy single-plan adapter still active in JUMI/nan
+- Sprint 3C-2: materialization candidate planner 도입 — Completed
 
 ## 13. directK8s / library freeze 메모
 

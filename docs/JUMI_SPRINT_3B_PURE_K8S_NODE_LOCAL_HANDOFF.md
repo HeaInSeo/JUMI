@@ -667,6 +667,14 @@ B Pod:
   /work                 RW
 ```
 
+단, final consumer가 자신의 declared output도 node-local CAS로 promotion해야 하는 smoke/profile에서는
+현재 v0 runtime helper 제약상 `/jumi-node-artifacts` RW mount가 필요할 수 있다.
+
+즉:
+
+- input-only consumer: RO가 이상적이다.
+- input + output promotion consumer: 현재 happy-path fixture에서는 RW를 사용한다.
+
 Sprint 3B v0에서 consumer materialization은 copy로 고정한다.
 
 ```text

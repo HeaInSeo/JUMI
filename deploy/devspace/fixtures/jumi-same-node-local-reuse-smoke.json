@@ -63,7 +63,7 @@
           {
             "source": "hostpath:/var/lib/jumi-artifacts",
             "target": "/jumi-node-artifacts",
-            "mode": "ro"
+            "mode": "rw"
           }
         ],
         "metadata": {
