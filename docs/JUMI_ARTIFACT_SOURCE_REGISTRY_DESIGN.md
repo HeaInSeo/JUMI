@@ -1,7 +1,7 @@
 # Artifact Source Registry / Materialization Source Layer
 
 > 작성일: 2026-05-25  
-> 상태: Draft  
+> 상태: Confirmed Design  
 > 목적: `logicalUri`와 concrete fetch/materialization source를 분리하는 장기 구조를 고정한다.
 
 ---
@@ -304,19 +304,46 @@ JUMI는 source selection orchestrator도 아니다.
 
 ---
 
-## 11. 다음 구현 후보
+## 11. Sprint 3C 분할
+
+Sprint 3C는 한 번에 구현하지 않고 두 단계로 나눈다.
+
+### 11.1 Sprint 3C-1
+
+목표:
+
+- `ArtifactRecord`와 `ArtifactSourceRecord`를 분리한다.
+- `node_local`과 `http`를 같은 source record 모델로 저장한다.
+- `RegisterArtifact -> initialSources` 경로를 도입한다.
+- `ListSources`를 추가한다.
+- 기존 `ResolveBinding` 외부 응답 shape는 최대한 유지한다.
+
+즉 3C-1은 저장 모델과 backward compatibility를 먼저 닫는 단계다.
+
+### 11.2 Sprint 3C-2
+
+목표:
+
+- `ResolveBinding` 내부 planner를 `materializationCandidates[]` 기반으로 올린다.
+- `node_local > http` 우선순위를 source-aware planner로 계산한다.
+- placement strength를 source 조합과 target context에 따라 계산한다.
+- legacy single-plan adapter는 유지한다.
+
+즉 3C-2는 source selection / candidate planner를 도입하는 단계다.
+
+## 12. 다음 구현 후보
 
 우선순위는 이 순서가 맞다.
 
-1. `artifact source` 용어와 `locations[]`를 `sources[]`로 일반화할지 결정
-2. AH storage 모델에서 source typed payload를 정식화
-3. `AddSource / UpdateSourceState` API 초안
-4. ResolveBinding candidate response shape 초안
+1. 3C-1: AH storage 모델에서 source typed payload를 정식화
+2. 3C-1: `RegisterArtifact -> initialSources`와 `ListSources` 추가
+3. 3C-2: ResolveBinding candidate response shape 도입
+4. 3C-2: source-aware placement / materialization planner 연결
 5. post-scheduling `ResolveBinding(targetNodeName=actualNode)` 연결
 
 ---
 
-## 12. 현재 결론
+## 13. 현재 결론
 
 현재 happy path 상태:
 

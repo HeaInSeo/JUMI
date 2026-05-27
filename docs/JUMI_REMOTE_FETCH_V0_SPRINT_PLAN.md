@@ -529,6 +529,11 @@ backlog:
 
 즉 지금은 "consumer remote_fetch materialization happy path와 pure K8s same-node local_reuse handoff happy path가 모두 닫혔다"가 정확한 상태다.
 
+다음 활성 범위:
+
+- Sprint 3C-1: Artifact Source Registry 저장 모델 도입
+- Sprint 3C-2: materialization candidate planner 도입
+
 ## 13. directK8s / library freeze 메모
 
 ### 13.1 directK8s placement parity
