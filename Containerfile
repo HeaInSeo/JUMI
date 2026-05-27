@@ -11,7 +11,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/jumi ./cmd/jumi
 # Runtime-side helper ownership lives in the separate node-artifact-runtime
 # repository. JUMI only consumes the published nan artifact.
 RUN GOBIN=/out CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go install github.com/HeaInSeo/node-artifact-runtime/cmd/node-artifact-runtime@b6d2915c6a0925e429974192e7a126115661a57b
+    go install github.com/HeaInSeo/node-artifact-runtime/cmd/node-artifact-runtime@bee9f999c242180f3f447591b54ab511a8413ae5
 
 FROM debian:bookworm-slim
 
