@@ -36,6 +36,10 @@ artifact content 는 무엇인가?
 
 이 문서는 그 셋을 분리하기 위해 `Artifact Source Registry / Materialization Source Layer`를 도입하는 장기 방향을 정리한다.
 
+Security / Integrity Guardrails
+
+Sprint 3C의 Source Registry 모델은 source location을 그대로 신뢰하지 않는다. `ArtifactSourceRecord`는 candidate 생성 전에 state, backend capability, typed location, digest, path boundary를 검증해야 한다. `node_local` source는 allowed artifact root 하위 경로만 허용하고, `local_reuse`는 CAS 원본 보호를 위해 `copy default`를 유지한다. HTTP source는 scheme, host, redirect, size 제한을 적용할 수 있어야 한다. credential은 `SourceRecord`에 직접 저장하지 않고 `credentialRef`로만 참조한다. 세부 기준은 [Sprint 3C-3 Security / Integrity Guardrails](./JUMI_SPRINT_3C_3_SECURITY_GUARDRAILS.md)를 따른다.
+
 ---
 
 ## 2. 왜 필요한가

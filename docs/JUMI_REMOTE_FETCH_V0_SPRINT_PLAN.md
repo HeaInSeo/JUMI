@@ -533,6 +533,7 @@ backlog:
 
 - Sprint 3C-1: Artifact Source Registry 저장 모델 도입 — Completed
 - Sprint 3C-2: materialization candidate planner 도입 — Completed
+- Sprint 3C-3: Security / Integrity Guardrails 문서화 — Draft Addendum
 
 ## 13. directK8s / library freeze 메모
 

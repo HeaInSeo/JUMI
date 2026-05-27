@@ -45,6 +45,7 @@ Notes:
 - [JUMI simple_http Artifact Source v0 Plan](docs/JUMI_SIMPLE_HTTP_ARTIFACT_SOURCE_V0_PLAN.md)
 - [Sprint 3B Design: Pure K8s Node-local Handoff Happy Path](docs/JUMI_SPRINT_3B_PURE_K8S_NODE_LOCAL_HANDOFF.md)
 - [Artifact Source Registry / Materialization Source Layer](docs/JUMI_ARTIFACT_SOURCE_REGISTRY_DESIGN.md)
+- [Sprint 3C-3 Security / Integrity Guardrails](docs/JUMI_SPRINT_3C_3_SECURITY_GUARDRAILS.md)
 - [JUMI Durable Registry Options](docs/JUMI_DURABLE_REGISTRY_OPTIONS.ko.md)
 - [JUMI Implementation Status 2026-05-14](docs/JUMI_IMPLEMENTATION_STATUS_2026-05-14.ko.md)
 - [JUMI Layered Error Guidelines Review](docs/JUMI_LAYERED_ERROR_GUIDELINES_REVIEW.ko.md)
