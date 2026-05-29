@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -1054,8 +1055,8 @@ func injectResolvedBindingEnv(node *spec.Node, binding spec.ArtifactBinding, res
 	if resolved.MaterializationPlan.SourceLocation != nil && resolved.MaterializationPlan.SourceLocation.NodeLocal != nil {
 		node.Env["JUMI_INPUT_"+keyBase+"_NODE_LOCAL_PATH"] = resolved.MaterializationPlan.SourceLocation.NodeLocal.Path
 	}
-	if strings.TrimSpace(resolved.MaterializationPlan.LocalPath) != "" {
-		node.Env["JUMI_INPUT_"+keyBase+"_LOCAL_PATH"] = resolved.MaterializationPlan.LocalPath
+	if safeLocalPath := sanitizeResolvedLocalPath(resolved.MaterializationPlan.LocalPath); safeLocalPath != "" {
+		node.Env["JUMI_INPUT_"+keyBase+"_LOCAL_PATH"] = safeLocalPath
 	}
 	if requiresMaterialization(resolved) {
 		node.Env["JUMI_INPUT_"+keyBase+"_REQUIRES_MATERIALIZATION"] = "true"
@@ -1296,6 +1297,25 @@ func sanitizeEnvSegment(value string) string {
 		return "UNSPECIFIED"
 	}
 	return result
+}
+
+func sanitizeResolvedLocalPath(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if filepath.IsAbs(trimmed) || !filepath.IsLocal(trimmed) {
+		return ""
+	}
+	cleaned := filepath.Clean(trimmed)
+	rel, err := filepath.Rel("inputs", cleaned)
+	if err != nil {
+		return ""
+	}
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return cleaned
 }
 
 func (r *nodeRunner) sampleRunID(ctx context.Context) string {
