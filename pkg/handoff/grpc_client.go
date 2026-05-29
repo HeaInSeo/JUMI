@@ -78,9 +78,13 @@ func (c *GRPCClient) ResolveBinding(ctx context.Context, req ResolveBindingReque
 			Mode:           resp.GetMaterializationPlan().GetMode(),
 			URI:            resp.GetMaterializationPlan().GetUri(),
 			ExpectedDigest: resp.GetMaterializationPlan().GetExpectedDigest(),
+			ExpectedSize:   resp.GetMaterializationPlan().GetExpectedSizeBytes(),
+			SourceLocation: grpcArtifactLocation(resp.GetMaterializationPlan().GetSourceLocation()),
+			LocalPath:      resp.GetMaterializationPlan().GetLocalPath(),
 		},
-		Reason:    resp.GetReason(),
-		Retryable: resp.GetRetryable(),
+		MaterializationCandidates: grpcMaterializationCandidates(resp.GetMaterializationCandidates()),
+		Reason:                    resp.GetReason(),
+		Retryable:                 resp.GetRetryable(),
 	}), nil
 }
 
@@ -99,6 +103,8 @@ func (c *GRPCClient) RegisterArtifact(ctx context.Context, req RegisterArtifactR
 			NodeName:          req.NodeName,
 			Uri:               req.URI,
 			SizeBytes:         req.SizeBytes,
+			LogicalUri:        req.LogicalURI,
+			Locations:         grpcArtifactLocations(req.Locations),
 		},
 	}); err != nil {
 		if c.metrics != nil {
@@ -107,6 +113,102 @@ func (c *GRPCClient) RegisterArtifact(ctx context.Context, req RegisterArtifactR
 		return fmt.Errorf("handoff register artifact failed: %w", err)
 	}
 	return nil
+}
+
+func grpcArtifactLocations(locations []ArtifactLocation) []*ahv1.ArtifactLocation {
+	if len(locations) == 0 {
+		return nil
+	}
+	out := make([]*ahv1.ArtifactLocation, 0, len(locations))
+	for _, location := range locations {
+		if converted := grpcArtifactLocationFromClient(location); converted != nil {
+			out = append(out, converted)
+		}
+	}
+	return out
+}
+
+func grpcArtifactLocationFromClient(location ArtifactLocation) *ahv1.ArtifactLocation {
+	switch {
+	case location.NodeLocal != nil:
+		return &ahv1.ArtifactLocation{
+			Backend: &ahv1.ArtifactLocation_NodeLocal{
+				NodeLocal: &ahv1.NodeLocalLocation{
+					NodeName: location.NodeLocal.NodeName,
+					Path:     location.NodeLocal.Path,
+				},
+			},
+		}
+	case location.HTTP != nil:
+		return &ahv1.ArtifactLocation{
+			Backend: &ahv1.ArtifactLocation_Http{
+				Http: &ahv1.HttpSource{
+					Uri: location.HTTP.URI,
+				},
+			},
+		}
+	default:
+		return nil
+	}
+}
+
+func grpcArtifactLocation(location *ahv1.ArtifactLocation) *ArtifactLocation {
+	if location == nil {
+		return nil
+	}
+	switch backend := location.GetBackend().(type) {
+	case *ahv1.ArtifactLocation_NodeLocal:
+		return &ArtifactLocation{
+			NodeLocal: &NodeLocalLocation{
+				NodeName: backend.NodeLocal.GetNodeName(),
+				Path:     backend.NodeLocal.GetPath(),
+			},
+		}
+	case *ahv1.ArtifactLocation_Http:
+		return &ArtifactLocation{
+			HTTP: &HTTPSource{
+				URI: backend.Http.GetUri(),
+			},
+		}
+	default:
+		return nil
+	}
+}
+
+func grpcMaterializationCandidates(candidates []*ahv1.MaterializationCandidate) []MaterializationCandidate {
+	if len(candidates) == 0 {
+		return nil
+	}
+	out := make([]MaterializationCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate == nil {
+			continue
+		}
+		item := MaterializationCandidate{
+			Priority:       int(candidate.GetPriority()),
+			Mode:           candidate.GetMode(),
+			SourceRef:      candidate.GetSourceRef(),
+			ExpectedDigest: candidate.GetExpectedDigest(),
+			ExpectedSize:   candidate.GetExpectedSizeBytes(),
+			LocalPath:      candidate.GetLocalPath(),
+			SourceLocation: grpcArtifactLocation(candidate.GetSourceLocation()),
+			URI:            candidate.GetUri(),
+		}
+		if len(candidate.GetConditions()) != 0 {
+			item.Conditions = make([]MaterializationCondition, 0, len(candidate.GetConditions()))
+			for _, condition := range candidate.GetConditions() {
+				item.Conditions = append(item.Conditions, MaterializationCondition{
+					Kind:      condition.GetKind(),
+					NodeName:  condition.GetNodeName(),
+					BackendID: condition.GetBackendId(),
+					SourceRef: condition.GetSourceRef(),
+					State:     condition.GetState(),
+				})
+			}
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (c *GRPCClient) NotifyNodeTerminal(ctx context.Context, req NotifyNodeTerminalRequest) error {

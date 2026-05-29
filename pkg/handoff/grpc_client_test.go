@@ -51,11 +51,24 @@ func TestGRPCClientRoundTrip(t *testing.T) {
 	if resolved.MaterializationPlan.Mode != "remote_fetch" {
 		t.Fatalf("materialization mode = %q, want remote_fetch", resolved.MaterializationPlan.Mode)
 	}
+	if resolved.MaterializationPlan.ExpectedSize != 17 {
+		t.Fatalf("materialization expected size = %d, want 17", resolved.MaterializationPlan.ExpectedSize)
+	}
+	if resolved.MaterializationPlan.SourceLocation == nil || resolved.MaterializationPlan.SourceLocation.HTTP == nil {
+		t.Fatalf("sourceLocation = %#v, want http source", resolved.MaterializationPlan.SourceLocation)
+	}
+	if resolved.MaterializationPlan.LocalPath != "/work/inputs/dataset" {
+		t.Fatalf("localPath = %q, want /work/inputs/dataset", resolved.MaterializationPlan.LocalPath)
+	}
 	if err := client.RegisterArtifact(context.Background(), RegisterArtifactRequest{
 		SampleRunID:       "sample-1",
 		ProducerNodeID:    "node-a",
 		ProducerAttemptID: "attempt-1",
 		OutputName:        "output",
+		LogicalURI:        "jumi://runs/sample-1/nodes/node-a/outputs/output",
+		Locations: []ArtifactLocation{{
+			NodeLocal: &NodeLocalLocation{NodeName: "node-a", Path: "/jumi-node-artifacts/cas/sha256/abc"},
+		}},
 		SizeBytes:         2048,
 	}); err != nil {
 		t.Fatalf("RegisterArtifact() error = %v", err)
@@ -68,6 +81,12 @@ func TestGRPCClientRoundTrip(t *testing.T) {
 	}
 	if stub.lastRegister.GetArtifact().GetProducerAttemptId() != "attempt-1" {
 		t.Fatalf("producer attempt = %q, want attempt-1", stub.lastRegister.GetArtifact().GetProducerAttemptId())
+	}
+	if stub.lastRegister.GetArtifact().GetLogicalUri() != "jumi://runs/sample-1/nodes/node-a/outputs/output" {
+		t.Fatalf("logical URI = %q, want logical URI", stub.lastRegister.GetArtifact().GetLogicalUri())
+	}
+	if len(stub.lastRegister.GetArtifact().GetLocations()) != 1 {
+		t.Fatalf("locations len = %d, want 1", len(stub.lastRegister.GetArtifact().GetLocations()))
 	}
 }
 
@@ -85,9 +104,16 @@ func (stubResolverServer) ResolveHandoff(context.Context, *ahv1.ResolveHandoffRe
 			NodeName: "node-a",
 		},
 		MaterializationPlan: &ahv1.MaterializationPlan{
-			Mode:           "remote_fetch",
-			Uri:            "http://artifact.local/output",
-			ExpectedDigest: "sha256:abc",
+			Mode:              "remote_fetch",
+			Uri:               "http://artifact.local/output",
+			ExpectedDigest:    "sha256:abc",
+			ExpectedSizeBytes: 17,
+			SourceLocation: &ahv1.ArtifactLocation{
+				Backend: &ahv1.ArtifactLocation_Http{
+					Http: &ahv1.HttpSource{Uri: "http://artifact.local/output"},
+				},
+			},
+			LocalPath: "/work/inputs/dataset",
 		},
 	}, nil
 }
