@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -155,11 +156,11 @@ func TestToSpawnerRunSpecMapsServiceAccountFromSmokeFixtureStyleNode(t *testing.
 	if value, ok := optionalStringField(got, "ServiceAccountName"); ok && value != "jumi" {
 		t.Fatalf("ServiceAccountName = %q, want jumi", value)
 	}
-	if got.Command[0] != ArtifactHelperPath {
-		t.Fatalf("runtime-helper command prefix = %q, want %q", got.Command[0], ArtifactHelperPath)
+	if got.Command[0] != "/bin/sh" || got.Command[1] != "-ceu" {
+		t.Fatalf("runtime-helper command prefix = %q, want [/bin/sh -ceu]", got.Command[:2])
 	}
-	if len(got.Command) < 5 || got.Command[1] != "run" || got.Command[2] != "--" {
-		t.Fatalf("runtime-helper command prefix = %q, want [helper run -- ...]", got.Command[:min(len(got.Command), 4)])
+	if !strings.Contains(got.Command[2], ArtifactHelperPath+"\" run --contract") && !strings.Contains(got.Command[2], ArtifactHelperPath+" run --contract") {
+		t.Fatalf("runtime-helper wrapper missing contract execution: %q", got.Command[2])
 	}
 }
 
@@ -176,11 +177,11 @@ func TestToSpawnerRunSpecUsesConfiguredArtifactHelperPath(t *testing.T) {
 
 	got := toSpawnerRunSpec(run, node)
 
-	if got.Command[0] != ArtifactHelperPath {
-		t.Fatalf("runtime-helper command prefix = %q, want %q", got.Command[0], ArtifactHelperPath)
+	if got.Command[0] != "/bin/sh" || got.Command[1] != "-ceu" {
+		t.Fatalf("runtime-helper command prefix = %q, want [/bin/sh -ceu]", got.Command[:2])
 	}
-	if got.Command[1] != "run" || got.Command[2] != "--" {
-		t.Fatalf("runtime-helper command prefix = %q, want [%s run -- ...]", got.Command[:min(len(got.Command), 4)], ArtifactHelperPath)
+	if !strings.Contains(got.Command[2], ArtifactHelperPath+"\" run --contract") && !strings.Contains(got.Command[2], ArtifactHelperPath+" run --contract") {
+		t.Fatalf("runtime-helper wrapper missing contract execution: %q", got.Command[2])
 	}
 }
 
@@ -241,14 +242,55 @@ func TestToSpawnerRunSpecWrapsCommandForRuntimeHelperMode(t *testing.T) {
 	if len(got.Command) < 6 {
 		t.Fatalf("runtime-helper command length = %d, want >= 6", len(got.Command))
 	}
-	if got.Command[0] != ArtifactHelperPath {
-		t.Fatalf("runtime-helper command prefix = %q, want %q", got.Command[0], ArtifactHelperPath)
+	if got.Command[0] != "/bin/sh" || got.Command[1] != "-ceu" {
+		t.Fatalf("runtime-helper command prefix = %q, want [/bin/sh -ceu]", got.Command[:2])
 	}
-	if got.Command[1] != "run" || got.Command[2] != "--" {
-		t.Fatalf("runtime-helper subcommand = %q, want [run --]", got.Command[1:3])
+	if !strings.Contains(got.Command[2], "node-contract.json") {
+		t.Fatalf("runtime-helper wrapper missing contract path: %q", got.Command[2])
 	}
-	if got.Command[3] != "sh" || got.Command[4] != "-c" {
-		t.Fatalf("runtime-helper original command = %q, want [sh -c ...]", got.Command[3:5])
+	if !strings.Contains(got.Command[2], ArtifactHelperPath+"\" run --contract") && !strings.Contains(got.Command[2], ArtifactHelperPath+" run --contract") {
+		t.Fatalf("runtime-helper wrapper missing nan contract invocation: %q", got.Command[2])
+	}
+	if got.Command[4] != "sh" || got.Command[5] != "-c" {
+		t.Fatalf("runtime-helper original command = %q, want [sh -c ...]", got.Command[4:6])
+	}
+	if got.Env["JUMI_NODE_CONTRACT_PATH"] != defaultNodeContractPath {
+		t.Fatalf("JUMI_NODE_CONTRACT_PATH = %q, want %q", got.Env["JUMI_NODE_CONTRACT_PATH"], defaultNodeContractPath)
+	}
+	raw := got.Env["JUMI_NODE_CONTRACT_JSON"]
+	if raw == "" {
+		t.Fatal("JUMI_NODE_CONTRACT_JSON = empty, want serialized contract")
+	}
+	var contract struct {
+		SchemaVersion string `json:"schemaVersion"`
+		RunID         string `json:"runId"`
+		SampleRunID   string `json:"sampleRunId"`
+		NodeID        string `json:"nodeId"`
+		Paths         struct {
+			InputRoot    string `json:"inputRoot"`
+			WorkRoot     string `json:"workRoot"`
+			OutputRoot   string `json:"outputRoot"`
+			ManifestPath string `json:"manifestPath"`
+		} `json:"paths"`
+		Outputs []struct {
+			Name string `json:"name"`
+			Path string `json:"path"`
+		} `json:"outputs"`
+	}
+	if err := json.Unmarshal([]byte(raw), &contract); err != nil {
+		t.Fatalf("unmarshal contract json: %v", err)
+	}
+	if contract.SchemaVersion != nodeContractSchemaVersion {
+		t.Fatalf("schemaVersion = %q, want %q", contract.SchemaVersion, nodeContractSchemaVersion)
+	}
+	if contract.RunID != "run-4" || contract.SampleRunID != "sample-4" || contract.NodeID != "worker" {
+		t.Fatalf("unexpected contract identity: %+v", contract)
+	}
+	if contract.Paths.InputRoot != "/work/inputs" || contract.Paths.WorkRoot != "/work" || contract.Paths.OutputRoot != "/out" {
+		t.Fatalf("unexpected contract paths: %+v", contract.Paths)
+	}
+	if len(contract.Outputs) != 1 || contract.Outputs[0].Name != "report" || contract.Outputs[0].Path != "report" {
+		t.Fatalf("unexpected contract outputs: %+v", contract.Outputs)
 	}
 }
 

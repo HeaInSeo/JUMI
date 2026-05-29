@@ -3,8 +3,10 @@ package backend
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -46,6 +48,11 @@ const ArtifactHelperPath = "/usr/local/bin/nan"
 // ArtifactHelperPathEnv optionally overrides the helper path for runtime image
 // migrations while keeping the legacy path as the default.
 const ArtifactHelperPathEnv = "JUMI_ARTIFACT_HELPER_PATH"
+
+const (
+	nodeContractSchemaVersion = "nan.nodeContract.v1"
+	defaultNodeContractPath   = "/jumi/node-contract.json"
+)
 
 type SpawnerK8sAdapter struct {
 	driver     spdriver.Driver
@@ -675,6 +682,10 @@ func injectOutputContractEnv(env map[string]string, run spec.RunRecord, node spe
 	if sampleRunID := run.Spec.Run.SampleRunID; sampleRunID != "" {
 		setEnvDefault(env, "JUMI_SAMPLE_RUN_ID", sampleRunID)
 	}
+	if contractJSON, err := buildNodeContractJSON(run, node, outputs); err == nil {
+		setEnvDefault(env, "JUMI_NODE_CONTRACT_PATH", defaultNodeContractPath)
+		setEnvDefault(env, "JUMI_NODE_CONTRACT_JSON", contractJSON)
+	}
 }
 
 func setEnvDefault(env map[string]string, key string, value string) {
@@ -697,7 +708,17 @@ func wrapCommandForManifestExport(command []string, node spec.Node) []string {
 		//
 		// TODO(runtime-contract): remove this obsolete compatibility path after
 		// the node runtime images no longer carry the legacy helper alias.
-		wrapped := []string{artifactHelperCommandPath(), "run", "--"}
+		script := fmt.Sprintf(`
+contract_path="${JUMI_NODE_CONTRACT_PATH:-%s}"
+contract_dir="${contract_path%%/*}"
+if [ "$contract_dir" = "$contract_path" ]; then
+  contract_dir="."
+fi
+mkdir -p "${contract_path%%/*}"
+printf '%%s' "${JUMI_NODE_CONTRACT_JSON:?missing JUMI_NODE_CONTRACT_JSON}" > "$contract_path"
+exec "%s" run --contract "$contract_path" -- "$@"
+`, defaultNodeContractPath, artifactHelperCommandPath())
+		wrapped := []string{"/bin/sh", "-ceu", script, "jumi-node-contract"}
 		wrapped = append(wrapped, command...)
 		return wrapped
 	}
@@ -751,6 +772,86 @@ func artifactHelperCommandPath() string {
 		return configured
 	}
 	return ArtifactHelperPath
+}
+
+type nodeContractFile struct {
+	SchemaVersion string               `json:"schemaVersion"`
+	RunID         string               `json:"runId"`
+	SampleRunID   string               `json:"sampleRunId,omitempty"`
+	NodeID        string               `json:"nodeId"`
+	AttemptID     string               `json:"attemptId,omitempty"`
+	Paths         nodeContractPaths    `json:"paths"`
+	Outputs       []nodeContractOutput `json:"outputs,omitempty"`
+	Runtime       nodeContractRuntime  `json:"runtime,omitempty"`
+}
+
+type nodeContractPaths struct {
+	InputRoot    string `json:"inputRoot,omitempty"`
+	WorkRoot     string `json:"workRoot,omitempty"`
+	OutputRoot   string `json:"outputRoot"`
+	ManifestPath string `json:"manifestPath"`
+}
+
+type nodeContractOutput struct {
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	Required bool   `json:"required,omitempty"`
+	Type     string `json:"type,omitempty"`
+}
+
+type nodeContractRuntime struct {
+	InspectOnSuccessOnly        bool `json:"inspectOnSuccessOnly,omitempty"`
+	FailOnMissingRequiredOutput bool `json:"failOnMissingRequiredOutput,omitempty"`
+	AllowDirectoryOutput        bool `json:"allowDirectoryOutput,omitempty"`
+}
+
+func buildNodeContractJSON(run spec.RunRecord, node spec.Node, outputs []string) (string, error) {
+	contract := nodeContractFile{
+		SchemaVersion: nodeContractSchemaVersion,
+		RunID:         run.RunID,
+		SampleRunID:   run.Spec.Run.SampleRunID,
+		NodeID:        node.NodeID,
+		AttemptID:     strings.TrimSpace(node.Env["JUMI_ATTEMPT_ID"]),
+		Paths: nodeContractPaths{
+			InputRoot:    filepath.Join("/work", "inputs"),
+			WorkRoot:     "/work",
+			OutputRoot:   strings.TrimSpace(contractFirstNonEmpty(node.Env["JUMI_OUTPUT_ROOT"], "/out")),
+			ManifestPath: strings.TrimSpace(contractFirstNonEmpty(node.Env["JUMI_OUTPUT_MANIFEST_PATH"], provenance.DefaultArtifactsManifestPath)),
+		},
+		Runtime: nodeContractRuntime{
+			InspectOnSuccessOnly:        true,
+			FailOnMissingRequiredOutput: true,
+			AllowDirectoryOutput:        false,
+		},
+	}
+	if len(outputs) != 0 {
+		contract.Outputs = make([]nodeContractOutput, 0, len(outputs))
+		for _, output := range outputs {
+			if strings.TrimSpace(output) == "" {
+				continue
+			}
+			contract.Outputs = append(contract.Outputs, nodeContractOutput{
+				Name:     output,
+				Path:     output,
+				Required: true,
+				Type:     "file",
+			})
+		}
+	}
+	raw, err := json.Marshal(contract)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func contractFirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func manifestExportMode(node spec.Node) string {
