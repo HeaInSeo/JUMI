@@ -4,6 +4,12 @@
 // - protoc             v7.34.1
 // source: ah_v1.proto
 
+// Field number assignment rules (enforced from first consumer integration):
+//   - Field numbers must never be reused within a message, even if the original field is removed.
+//   - Removing a field requires reserving its number: reserve 3; reserve "old_field_name";
+//   - Breaking changes require a new package (ah.v2) or an explicit pre-v1 reset documented in git.
+//   - See docs/CONTRACT_OWNERSHIP.md for the full contract policy.
+
 package ahv1
 
 import (
