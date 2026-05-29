@@ -4,6 +4,14 @@
 > 상태: Active  
 > 목적: `remote_fetch` / artifact materialization v0 범위를 고정하고, 작업이 중단되더라도 같은 기준에서 재개할 수 있게 한다.
 
+구현 상태 업데이트:
+
+- Sprint 3A `remote_fetch` happy path 완료
+- Sprint 3B same-node `local_reuse` happy path 완료
+- Sprint 3C-1 / 3C-2 source registry 저장 모델 및 candidate planner 완료
+- Sprint 3C-3A / 3C-3B / 3C-3C / 3C-3D / 3C-3E guardrail hardening 완료
+- 현재 문서의 초기 v0 설명 일부는 보존하되, 최신 기준선은 위 상태 업데이트를 우선한다
+
 ---
 
 ## 1. 한 줄 요약
@@ -133,6 +141,40 @@ v0 기준으로 URI는 두 층으로 본다.
 | Sprint 3A | VM consumer materialization happy path | Completed |
 | Sprint 3B | pure K8s same-node local_reuse handoff | Completed |
 | Sprint 4 | 정리와 backlog 고정 | Completed |
+| Sprint 3C-1 | Artifact Source Registry 저장 모델 | Completed |
+| Sprint 3C-2 | materialization candidate planner | Completed |
+| Sprint 3C-3A | AH source admission / planner 최소 검증 | Completed |
+| Sprint 3C-3B | node_local path / contract 경계 검증 | Completed |
+| Sprint 3C-3C | HTTP source 최소 정책 | Completed |
+| Sprint 3C-3D | credential / logging / policy hardening | Completed |
+| Sprint 3C-3E | guardrail closure / contract parity | Completed |
+
+### 4.1 Sprint 3C-3E 완료 메모
+
+범위:
+
+- HTTP/gRPC contract parity 완전 동등화
+- `logicalUri` / env contract / source location 의미 고정
+- fail-open 기본값 제거
+- timeout / size / digest / path 검증 fail-closed화
+- release gate 이전의 최소 regression test 추가
+
+의도적으로 하지 않은 것:
+
+- post-scheduling re-resolve
+- AddSource lifecycle 확장
+- `node-contract.json`
+- cleanup / TTL
+- 새 backend
+- hardlink / reflink 최적화
+
+Verification commands:
+
+```bash
+env TMPDIR=/dev/shm/go-tmp-ah GOCACHE=/dev/shm/go-build-ah GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/domain ./pkg/resolver
+env TMPDIR=/dev/shm/go-tmp-nan GOCACHE=/dev/shm/go-build-nan GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/runtimehelper ./cmd/node-artifact-runtime
+env TMPDIR=/dev/shm/go-tmp-jumi GOCACHE=/dev/shm/go-build-jumi GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/handoff ./pkg/executor
+```
 
 ---
 

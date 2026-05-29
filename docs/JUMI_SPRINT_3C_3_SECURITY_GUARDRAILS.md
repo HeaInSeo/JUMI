@@ -3,7 +3,7 @@
 Security / Integrity Guardrails for Artifact Source Registry
 
 > 작성일: 2026-05-27  
-> 상태: Draft Addendum  
+> 상태: Reviewed Baseline  
 > 상위 문서: [Artifact Source Registry / Materialization Source Layer](./JUMI_ARTIFACT_SOURCE_REGISTRY_DESIGN.md)  
 > 범위: Artifact Source Registry / Materialization Source Layer의 보안·무결성 보강
 
@@ -219,7 +219,25 @@ Sprint 3C v0에서는 candidate로 사용하지 않는다.
 
 ## 9. HTTP Source 기준
 
-### 9.1 허용 scheme
+### 9.1 URI credential policy
+
+기본 정책:
+
+- URI `userinfo`는 무조건 거부한다.
+- query string은 3C-3E 기준으로 기본 거부한다.
+- signed URL 지원은 future work로 미루며, 이번 스프린트에서는 예외 플래그를 두지 않는다.
+
+거부 예:
+
+- `https://user:pass@example.com/file`
+- `https://example.com/file?token=secret`
+- `https://example.com/file?X-Amz-Signature=...`
+
+후속 메모:
+
+- signed URL을 지원하려면 저장 정책, redaction 정책, runtime-only short-lived 사용 정책을 별도로 정의해야 한다.
+
+### 9.2 허용 scheme
 
 개발 환경:
 
@@ -236,7 +254,7 @@ Sprint 3C v0에서는 candidate로 사용하지 않는다.
 - `ssh://`
 - `gopher://`
 
-### 9.2 redirect 정책
+### 9.3 redirect 정책
 
 기본값:
 
@@ -248,9 +266,14 @@ Sprint 3C v0에서는 candidate로 사용하지 않는다.
 - redirect 후 host allowlist 재검증
 - scheme downgrade 금지
 
-### 9.3 host allowlist
+### 9.4 host allowlist
 
 운영 환경에서는 HTTP source host를 제한한다.
+
+기본 정책:
+
+- allowlist가 비어 있으면 `remote_fetch/http` source는 거부한다.
+- 개발 편의를 위한 `allow any`는 명시적 opt-in이 있을 때만 허용한다.
 
 예:
 
@@ -259,7 +282,7 @@ Sprint 3C v0에서는 candidate로 사용하지 않는다.
 
 dev/test profile에서는 explicit override로 완화할 수 있다.
 
-### 9.4 size limit
+### 9.5 size limit
 
 가능하면 `expectedSizeBytes`를 검증한다.
 
@@ -525,13 +548,69 @@ credential / logging / policy hardening
   - `node-artifact-runtime`의 safe input name normalize 유지
   - `local_reuse copy default` 정책 유지
 
-## 17. 3C 본문에 넣을 짧은 문구
+### Sprint 3C-3E
+
+Guardrail closure / contract parity
+
+1. HTTP/gRPC contract parity 정리
+2. `logicalUri`와 materialization source 의미 분리 강제
+3. fail-open 기본값 제거
+4. timeout / size / digest / path 검증 fail-closed화
+5. repo별 최소 regression verification command 고정
+
+상태:
+
+- Completed
+
+구현 반영:
+
+- `artifact-handoff` gRPC parity
+  - `logicalUri`
+  - `locations`
+  - `expectedSizeBytes`
+  - `sourceLocation`
+  - `localPath`
+  - `materializationCandidates`
+- `artifact-handoff`가 `logicalUri`를 synthetic `local_reuse` source로 사용하지 않도록 planner hardening
+- `artifact-handoff`와 `node-artifact-runtime`의 HTTP URI credential 정책
+  - `userinfo` reject
+  - query reject
+- `node-artifact-runtime`의 default HTTP timeout
+- `node-artifact-runtime`의 `EXPECTED_SIZE_BYTES` parse fail-closed
+- `node-artifact-runtime`의 `local_reuse expected size` 검증
+- `node-artifact-runtime`의 node-local realpath containment 강화
+- `JUMI`의 gRPC parity 수용
+- `JUMI`의 binding env key collision fail-fast
+
+## 17. Verification Commands
+
+repo별 최소 재현 검증 명령은 다음과 같다.
+
+`artifact-handoff`
+
+```bash
+env TMPDIR=/dev/shm/go-tmp-ah GOCACHE=/dev/shm/go-build-ah GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/domain ./pkg/resolver
+```
+
+`node-artifact-runtime`
+
+```bash
+env TMPDIR=/dev/shm/go-tmp-nan GOCACHE=/dev/shm/go-build-nan GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/runtimehelper ./cmd/node-artifact-runtime
+```
+
+`JUMI`
+
+```bash
+env TMPDIR=/dev/shm/go-tmp-jumi GOCACHE=/dev/shm/go-build-jumi GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/handoff ./pkg/executor
+```
+
+## 18. 3C 본문에 넣을 짧은 문구
 
 Security / Integrity Guardrails
 
 Sprint 3C의 Source Registry 모델은 source location을 그대로 신뢰하지 않는다. `ArtifactSourceRecord`는 candidate 생성 전에 state, backend capability, typed location, digest, path boundary를 검증해야 한다. `node_local` source는 allowed artifact root 하위 경로만 허용하고, `local_reuse`는 CAS 원본 보호를 위해 `copy default`를 유지한다. HTTP source는 scheme, host, redirect, size 제한을 적용할 수 있어야 한다. credential은 `SourceRecord`에 직접 저장하지 않고 `credentialRef`로만 참조한다.
 
-## 18. 최종 결론
+## 19. 최종 결론
 
 3C-3은 새로운 기능 문서가 아니다.
 

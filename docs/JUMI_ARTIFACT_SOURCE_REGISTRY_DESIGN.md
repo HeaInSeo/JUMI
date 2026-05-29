@@ -16,6 +16,11 @@
   - JUMI handoff client가 `materializationCandidates[]`를 수용
   - explicit legacy plan이 없을 때 candidate zero fallback 정규화 지원
   - Sprint 3A / 3B live smoke 재검증 완료
+- `Sprint 3C-3E` 완료
+  - HTTP/gRPC contract parity 정리
+  - `logicalUri`와 materialization source 의미 분리 강제
+  - fail-open 기본값 제거
+  - timeout / size / digest / path 검증 fail-closed화
 
 ---
 
@@ -38,7 +43,7 @@ artifact content 는 무엇인가?
 
 Security / Integrity Guardrails
 
-Sprint 3C의 Source Registry 모델은 source location을 그대로 신뢰하지 않는다. `ArtifactSourceRecord`는 candidate 생성 전에 state, backend capability, typed location, digest, path boundary를 검증해야 한다. `node_local` source는 allowed artifact root 하위 경로만 허용하고, `local_reuse`는 CAS 원본 보호를 위해 `copy default`를 유지한다. HTTP source는 scheme, host, redirect, size 제한을 적용할 수 있어야 한다. credential은 `SourceRecord`에 직접 저장하지 않고 `credentialRef`로만 참조한다. 세부 기준은 [Sprint 3C-3 Security / Integrity Guardrails](./JUMI_SPRINT_3C_3_SECURITY_GUARDRAILS.md)를 따른다.
+Sprint 3C의 Source Registry 모델은 source location을 그대로 신뢰하지 않는다. `ArtifactSourceRecord`는 candidate 생성 전에 state, backend capability, typed location, digest, path boundary를 검증해야 한다. `node_local` source는 allowed artifact root 하위 경로만 허용하고, `local_reuse`는 CAS 원본 보호를 위해 `copy default`를 유지한다. HTTP source는 scheme, host, redirect, size 제한을 적용할 수 있어야 한다. URI `userinfo`는 거부하고, query string은 3C-3E 기준으로 기본 거부한다. signed URL 지원은 future work다. credential은 `SourceRecord`에 직접 저장하지 않고 `credentialRef`로만 참조한다. 세부 기준은 [Sprint 3C-3 Security / Integrity Guardrails](./JUMI_SPRINT_3C_3_SECURITY_GUARDRAILS.md)를 따른다.
 
 ---
 
