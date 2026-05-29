@@ -503,6 +503,19 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusPrepared, StartedAt: &now})
 	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.ready", OccurredAt: now, Level: "info", Message: "node became ready for release"})
 	if len(r.node.ArtifactBindings) > 0 {
+		if err := validateResolvedBindingEnvKeys(r.node.ArtifactBindings); err != nil {
+			_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
+				RunID:                 r.runID,
+				NodeID:                r.node.NodeID,
+				AttemptID:             attemptID,
+				Status:                spec.AttemptStatusErrored,
+				StartedAt:             &now,
+				FinishedAt:            timePtr(time.Now().UTC()),
+				TerminalStopCause:     "failed",
+				TerminalFailureReason: "input_env_key_collision",
+			})
+			return r.failNode(err, attemptID, "failed", "input_env_key_collision")
+		}
 		if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 			current.Status = spec.NodeStatusBuildingBindings
 			current.CurrentBottleneckLocation = "building_bindings"
@@ -1304,6 +1317,19 @@ func sanitizeEnvSegment(value string) string {
 		return "UNSPECIFIED"
 	}
 	return result
+}
+
+func validateResolvedBindingEnvKeys(bindings []spec.ArtifactBinding) error {
+	seen := make(map[string]string, len(bindings))
+	for _, binding := range bindings {
+		original := firstNonEmpty(binding.ChildInputName, binding.BindingName, binding.ProducerOutputName)
+		key := sanitizeEnvSegment(original)
+		if existing, ok := seen[key]; ok {
+			return fmt.Errorf("input env key collision: %q and %q both sanitize to %q", existing, original, key)
+		}
+		seen[key] = original
+	}
+	return nil
 }
 
 func sanitizeResolvedLocalPath(value string) string {

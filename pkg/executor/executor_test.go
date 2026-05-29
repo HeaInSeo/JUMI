@@ -96,3 +96,13 @@ func TestToHandoffLocationsBackfillsNodeName(t *testing.T) {
 		t.Fatalf("nodeLocal.nodeName = %q, want worker-2", locations[0].NodeLocal.NodeName)
 	}
 }
+
+func TestValidateResolvedBindingEnvKeysRejectsCollisions(t *testing.T) {
+	err := validateResolvedBindingEnvKeys([]spec.ArtifactBinding{
+		{BindingName: "a-b", ProducerOutputName: "out-a"},
+		{BindingName: "a_b", ProducerOutputName: "out-b"},
+	})
+	if err == nil {
+		t.Fatal("expected env key collision error")
+	}
+}
