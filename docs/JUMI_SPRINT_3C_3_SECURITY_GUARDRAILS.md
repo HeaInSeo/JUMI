@@ -496,6 +496,12 @@ HTTP source 최소 정책
 특징:
 
 - `artifact-handoff` planner 정책과 `node-artifact-runtime` fetcher 정책을 병렬로 다룰 수 있다
+- 상태:
+  - Completed
+- 구현 반영:
+  - `artifact-handoff` candidate planner의 HTTP source validation
+  - `node-artifact-runtime` remote_fetch의 scheme / allowlist / redirect / expected size guardrail
+  - `JUMI` contract의 `expectedSizeBytes` 전달
 
 ### Sprint 3C-3D
 
@@ -510,6 +516,14 @@ credential / logging / policy hardening
 특징:
 
 - 문서화와 구현이 함께 필요한 최종 hardening 단계다
+- 상태:
+  - Completed
+- 구현 반영:
+  - `artifact-handoff` SourceRecord의 HTTP headers direct embed 거부
+  - `JUMI` handoff client의 HTTP header redaction
+  - `artifact-handoff` deleted source 기본 조회 제외
+  - `node-artifact-runtime`의 safe input name normalize 유지
+  - `local_reuse copy default` 정책 유지
 
 ## 17. 3C 본문에 넣을 짧은 문구
 

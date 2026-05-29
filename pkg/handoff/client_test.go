@@ -181,13 +181,14 @@ func TestHTTPClientResolveBindingDecodesMaterializationCandidates(t *testing.T) 
 				"resolutionStatus":"RESOLVED",
 				"decision":"remote_fetch",
 				"placementIntent":{"mode":"preferred_node","nodeName":"node-a"},
-				"materializationPlan":{"mode":"remote_fetch","uri":"http://artifact.local/output","expectedDigest":"sha256:abc"},
+				"materializationPlan":{"mode":"remote_fetch","uri":"http://artifact.local/output","expectedDigest":"sha256:abc","expectedSizeBytes":17},
 				"materializationCandidates":[
 					{
 						"priority":1,
 						"mode":"local_reuse",
 						"sourceRef":"src-local",
 						"expectedDigest":"sha256:abc",
+						"expectedSizeBytes":17,
 						"localPath":"/work/inputs/dataset",
 						"sourceLocation":{"nodeLocal":{"nodeName":"node-a","path":"/jumi-node-artifacts/cas/sha256/abc"}},
 						"conditions":[{"kind":"scheduled_on_node","nodeName":"node-a"}]
@@ -198,6 +199,7 @@ func TestHTTPClientResolveBindingDecodesMaterializationCandidates(t *testing.T) 
 						"sourceRef":"src-http",
 						"uri":"http://artifact.local/output",
 						"expectedDigest":"sha256:abc",
+						"expectedSizeBytes":17,
 						"localPath":"/work/inputs/dataset",
 						"sourceLocation":{"http":{"uri":"http://artifact.local/output","headers":{"Authorization":"Bearer t"}}},
 						"conditions":[{"kind":"backend_available","backendId":"legacy-http"}]
@@ -225,8 +227,11 @@ func TestHTTPClientResolveBindingDecodesMaterializationCandidates(t *testing.T) 
 	if resp.MaterializationCandidates[1].SourceLocation == nil || resp.MaterializationCandidates[1].SourceLocation.HTTP == nil {
 		t.Fatalf("candidate[1].sourceLocation = %#v, want http source", resp.MaterializationCandidates[1].SourceLocation)
 	}
-	if got := resp.MaterializationCandidates[1].SourceLocation.HTTP.Headers["Authorization"]; got != "Bearer t" {
-		t.Fatalf("candidate[1] auth header = %q, want Bearer t", got)
+	if resp.MaterializationCandidates[1].SourceLocation.HTTP.Headers != nil {
+		t.Fatalf("candidate[1] headers = %#v, want redacted nil", resp.MaterializationCandidates[1].SourceLocation.HTTP.Headers)
+	}
+	if resp.MaterializationPlan.ExpectedSize != 17 {
+		t.Fatalf("materializationPlan.expectedSize = %d, want 17", resp.MaterializationPlan.ExpectedSize)
 	}
 	if resp.MaterializationPlan.Mode != "remote_fetch" {
 		t.Fatalf("legacy materializationPlan.mode = %q, want remote_fetch", resp.MaterializationPlan.Mode)
@@ -242,6 +247,7 @@ func TestNormalizeResolveBindingResponseFallsBackToCandidateZero(t *testing.T) {
 			Mode:           "local_reuse",
 			SourceRef:      "src-local",
 			ExpectedDigest: "sha256:abc",
+			ExpectedSize:   17,
 			LocalPath:      "/work/inputs/dataset",
 			SourceLocation: &ArtifactLocation{NodeLocal: &NodeLocalLocation{NodeName: "node-a", Path: "/jumi-node-artifacts/cas/sha256/abc"}},
 		}},
@@ -251,6 +257,34 @@ func TestNormalizeResolveBindingResponseFallsBackToCandidateZero(t *testing.T) {
 	}
 	if resolved.MaterializationPlan.SourceLocation == nil || resolved.MaterializationPlan.SourceLocation.NodeLocal == nil {
 		t.Fatalf("sourceLocation = %#v, want nodeLocal source", resolved.MaterializationPlan.SourceLocation)
+	}
+	if resolved.MaterializationPlan.ExpectedSize != 17 {
+		t.Fatalf("materializationPlan.expectedSize = %d, want 17", resolved.MaterializationPlan.ExpectedSize)
+	}
+}
+
+func TestNormalizeResolveBindingResponseRedactsPlanHTTPHeaders(t *testing.T) {
+	resolved := normalizeResolveBindingResponse(ResolveBindingResponse{
+		ResolutionStatus: "RESOLVED",
+		Decision:         "remote_fetch",
+		MaterializationPlan: MaterializationPlan{
+			Mode:           "remote_fetch",
+			URI:            "http://artifact.local/output",
+			ExpectedDigest: "sha256:abc",
+			SourceLocation: &ArtifactLocation{
+				HTTP: &HTTPSource{
+					URI:     "http://artifact.local/output",
+					Headers: map[string]string{"Authorization": "Bearer t"},
+				},
+			},
+		},
+	})
+
+	if resolved.MaterializationPlan.SourceLocation == nil || resolved.MaterializationPlan.SourceLocation.HTTP == nil {
+		t.Fatalf("sourceLocation = %#v, want http source", resolved.MaterializationPlan.SourceLocation)
+	}
+	if resolved.MaterializationPlan.SourceLocation.HTTP.Headers != nil {
+		t.Fatalf("materializationPlan http headers = %#v, want redacted nil", resolved.MaterializationPlan.SourceLocation.HTTP.Headers)
 	}
 }
 

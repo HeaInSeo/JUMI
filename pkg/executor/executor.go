@@ -1052,6 +1052,9 @@ func injectResolvedBindingEnv(node *spec.Node, binding spec.ArtifactBinding, res
 	node.Env["JUMI_INPUT_"+keyBase+"_PLACEMENT_MODE"] = resolved.PlacementIntent.Mode
 	node.Env["JUMI_INPUT_"+keyBase+"_MATERIALIZATION_MODE"] = resolved.MaterializationPlan.Mode
 	node.Env["JUMI_INPUT_"+keyBase+"_EXPECTED_DIGEST"] = resolved.MaterializationPlan.ExpectedDigest
+	if resolved.MaterializationPlan.ExpectedSize > 0 {
+		node.Env["JUMI_INPUT_"+keyBase+"_EXPECTED_SIZE_BYTES"] = strconv.FormatInt(resolved.MaterializationPlan.ExpectedSize, 10)
+	}
 	if resolved.MaterializationPlan.SourceLocation != nil && resolved.MaterializationPlan.SourceLocation.NodeLocal != nil {
 		node.Env["JUMI_INPUT_"+keyBase+"_NODE_LOCAL_PATH"] = resolved.MaterializationPlan.SourceLocation.NodeLocal.Path
 	}

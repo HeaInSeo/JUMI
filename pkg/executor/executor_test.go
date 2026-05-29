@@ -52,3 +52,31 @@ func TestInjectResolvedBindingEnvIgnoresUnsafeLocalPath(t *testing.T) {
 		t.Fatal("expected unsafe local path to be omitted from env")
 	}
 }
+
+func TestInjectResolvedBindingEnvAddsExpectedSizeBytes(t *testing.T) {
+	node := &spec.Node{}
+	binding := spec.ArtifactBinding{
+		BindingName:        "dataset",
+		ChildInputName:     "dataset",
+		ProducerOutputName: "dataset",
+	}
+	resolved := handoff.ResolveBindingResponse{
+		ResolutionStatus: "RESOLVED",
+		Decision:         "remote_fetch",
+		MaterializationPlan: handoff.MaterializationPlan{
+			Mode:           "remote_fetch",
+			ExpectedDigest: "sha256:abc",
+			ExpectedSize:   17,
+			LocalPath:      "inputs/result",
+		},
+	}
+
+	injectResolvedBindingEnv(node, binding, resolved)
+
+	if got := node.Env["JUMI_INPUT_DATASET_EXPECTED_SIZE_BYTES"]; got != "17" {
+		t.Fatalf("JUMI_INPUT_DATASET_EXPECTED_SIZE_BYTES = %q, want 17", got)
+	}
+	if got := node.Env["JUMI_INPUT_DATASET_LOCAL_PATH"]; got != "inputs/result" {
+		t.Fatalf("JUMI_INPUT_DATASET_LOCAL_PATH = %q, want inputs/result", got)
+	}
+}

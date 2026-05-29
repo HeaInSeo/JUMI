@@ -51,6 +51,7 @@ type MaterializationPlan struct {
 	Mode           string            `json:"mode,omitempty"`
 	URI            string            `json:"uri,omitempty"`
 	ExpectedDigest string            `json:"expectedDigest,omitempty"`
+	ExpectedSize   int64             `json:"expectedSizeBytes,omitempty"`
 	SourceLocation *ArtifactLocation `json:"sourceLocation,omitempty"`
 	LocalPath      string            `json:"localPath,omitempty"`
 }
@@ -68,6 +69,7 @@ type MaterializationCandidate struct {
 	Mode           string                     `json:"mode,omitempty"`
 	SourceRef      string                     `json:"sourceRef,omitempty"`
 	ExpectedDigest string                     `json:"expectedDigest,omitempty"`
+	ExpectedSize   int64                      `json:"expectedSizeBytes,omitempty"`
 	LocalPath      string                     `json:"localPath,omitempty"`
 	SourceLocation *ArtifactLocation          `json:"sourceLocation,omitempty"`
 	URI            string                     `json:"uri,omitempty"`
@@ -375,6 +377,7 @@ func normalizeResolveBindingResponse(resolved ResolveBindingResponse) ResolveBin
 	if isZeroMaterializationPlan(resolved.MaterializationPlan) && len(resolved.MaterializationCandidates) > 0 {
 		resolved.MaterializationPlan = planFromCandidate(resolved.MaterializationCandidates[0])
 	}
+	redactResolveBindingResponse(&resolved)
 	if resolved.MaterializationPlan.URI == "" && resolved.ArtifactURI != "" {
 		resolved.MaterializationPlan.URI = resolved.ArtifactURI
 	}
@@ -404,7 +407,25 @@ func planFromCandidate(candidate MaterializationCandidate) MaterializationPlan {
 		Mode:           candidate.Mode,
 		URI:            candidate.URI,
 		ExpectedDigest: candidate.ExpectedDigest,
+		ExpectedSize:   candidate.ExpectedSize,
 		SourceLocation: candidate.SourceLocation,
 		LocalPath:      candidate.LocalPath,
 	}
+}
+
+func redactResolveBindingResponse(resolved *ResolveBindingResponse) {
+	if resolved == nil {
+		return
+	}
+	redactArtifactLocation(resolved.MaterializationPlan.SourceLocation)
+	for i := range resolved.MaterializationCandidates {
+		redactArtifactLocation(resolved.MaterializationCandidates[i].SourceLocation)
+	}
+}
+
+func redactArtifactLocation(location *ArtifactLocation) {
+	if location == nil || location.HTTP == nil {
+		return
+	}
+	location.HTTP.Headers = nil
 }
