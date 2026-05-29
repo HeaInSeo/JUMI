@@ -449,34 +449,67 @@ planner는 safe default `localPath`만 생성하고, JUMI/nan은 defense-in-dept
 19. `localPath`를 `/work/inputs` 하위로 제한
 20. `local_reuse copy default` 유지
 
-## 16. 단계적 구현 5개
+## 16. 단계적 구현 스프린트
 
-### Phase 1
+20개 항목은 단순 번호 순서가 아니라 같은 write scope와 회귀 범위를 공유하는 단위로 5개씩 묶는다.
 
-1. planner/source 최소 검증
-   - `ready`만 candidate 허용
-   - backend/type mismatch 거부
-   - `source.digest == artifact.digest` 검증
+### Sprint 3C-3A
 
-2. node_local path guardrail
-   - absolute path
-   - `allowedRoot`
-   - `filepath.Rel` 기반 경계 검증
-   - symlink 기본 거부
+AH source admission / planner 최소 검증
 
-3. candidate / contract sanitization
-   - safe `inputName`
-   - `localPath`를 `/work/inputs` 하위로 제한
-   - `expectedDigest` 비어 있으면 candidate 거부
+1. `SourceLocation` typed union 검증
+2. backend/type mismatch 거부
+3. `ready` 상태만 candidate 허용
+4. `stale` / `unreachable` / `deleted` source candidate 제외
+5. `source.digest == artifact.digest` 검증
 
-4. HTTP source 최소 정책
-   - scheme allowlist
-   - host allowlist
-   - redirect 제한
+특징:
 
-5. credential / logging guardrail
-   - SourceRecord에 secret 직접 저장 금지
-   - contract/log redaction 적용
+- `artifact-handoff` 단일 write scope
+- 저장 모델과 planner 필터링만 건드리므로 회귀 범위가 작다
+
+### Sprint 3C-3B
+
+node_local path / contract 경계 검증
+
+1. `node_local` allowedRoot 검증
+2. symlink source path 기본 거부
+3. unsafe `inputName` 거부 또는 normalize
+4. `localPath`를 `/work/inputs` 하위로 제한
+5. candidate `expectedDigest` 필수화
+
+특징:
+
+- `node-artifact-runtime`과 `JUMI` contract/env 경계로 나뉜다
+- 같은 스프린트 안에서 repo write scope별 병렬 구현이 가능하다
+
+### Sprint 3C-3C
+
+HTTP source 최소 정책
+
+1. HTTP scheme allowlist
+2. HTTP host allowlist
+3. HTTP redirect 제한
+4. HTTP size limit / expected size 검증
+5. unsupported / disallowed source를 candidate에서 거부
+
+특징:
+
+- `artifact-handoff` planner 정책과 `node-artifact-runtime` fetcher 정책을 병렬로 다룰 수 있다
+
+### Sprint 3C-3D
+
+credential / logging / policy hardening
+
+1. credential direct embed 금지
+2. contract/log redaction
+3. `deleted` source 기본 조회 제외
+4. `local_reuse copy default` 정책 고정
+5. 감사 로그 / 이벤트 기준 정리
+
+특징:
+
+- 문서화와 구현이 함께 필요한 최종 hardening 단계다
 
 ## 17. 3C 본문에 넣을 짧은 문구
 
