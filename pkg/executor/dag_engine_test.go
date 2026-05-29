@@ -10,6 +10,7 @@ import (
 
 	"github.com/HeaInSeo/JUMI/pkg/backend"
 	"github.com/HeaInSeo/JUMI/pkg/handoff"
+	"github.com/HeaInSeo/JUMI/pkg/provenance"
 	"github.com/HeaInSeo/JUMI/pkg/registry"
 	"github.com/HeaInSeo/JUMI/pkg/spec"
 	"google.golang.org/grpc/codes"
@@ -405,8 +406,8 @@ func TestDagEngineRegistersNodeOutputsOnSuccess(t *testing.T) {
 	if handoffClient.registerRequests[0].ProducerAttemptID == "" {
 		t.Fatal("expected producerAttemptID to be populated")
 	}
-	if handoffClient.registerRequests[0].URI == "" {
-		t.Fatal("expected non-empty output URI")
+	if handoffClient.registerRequests[0].URI == "" && len(handoffClient.registerRequests[0].Locations) == 0 {
+		t.Fatal("expected output source location or fetchable URI")
 	}
 	if handoffClient.registerRequests[0].Digest == "" {
 		t.Fatal("expected non-empty digest")
@@ -429,7 +430,7 @@ func TestDagEngineRegistersOutputMetadataWhenAvailable(t *testing.T) {
 		outputs: map[string]map[string]backend.OutputMetadata{
 			"producer": {
 				"result.json": {
-					URI:        "jumi://runs/run-outputs-meta/nodes/producer/outputs/result.json",
+					URI:        "https://artifact-source.local/runs/run-outputs-meta/producer/result.json",
 					LogicalURI: "jumi://runs/run-outputs-meta/nodes/producer/outputs/result.json",
 					Digest:     "sha256:abc",
 					SizeBytes:  4096,
@@ -471,8 +472,65 @@ func TestDagEngineRegistersOutputMetadataWhenAvailable(t *testing.T) {
 	if req.LogicalURI != "jumi://runs/run-outputs-meta/nodes/producer/outputs/result.json" {
 		t.Fatalf("logicalUri = %q, want logical artifact URI", req.LogicalURI)
 	}
+	if req.URI != "https://artifact-source.local/runs/run-outputs-meta/producer/result.json" {
+		t.Fatalf("uri = %q, want fetchable artifact URI", req.URI)
+	}
 	if len(req.Locations) != 0 {
 		t.Fatalf("locations = %#v, want no explicit locations in legacy fake metadata", req.Locations)
+	}
+}
+
+func TestDagEngineTreatsJumiOutputURIAsLogicalOnly(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{
+		failOn: map[string]bool{},
+		outputs: map[string]map[string]backend.OutputMetadata{
+			"producer": {
+				"result.json": {
+					URI:        "jumi://runs/run-outputs-logical/nodes/producer/outputs/result.json",
+					LogicalURI: "jumi://runs/run-outputs-logical/nodes/producer/outputs/result.json",
+					Digest:     "sha256:abc",
+					SizeBytes:  4096,
+					NodeName:   "node-a",
+					Locations: []provenance.ArtifactLocation{{
+						NodeLocal: &provenance.NodeLocalLocation{
+							NodeName: "node-a",
+							Path:     "/var/lib/jumi-artifacts/cas/sha256/abc",
+						},
+					}},
+				},
+			},
+		},
+	}
+	handoffClient := &fakeHandoffClient{}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run:   spec.RunMetadata{RunID: "run-outputs-logical", SampleRunID: "sample-out-logical", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{Nodes: []spec.Node{{NodeID: "producer", Image: "busybox:1.36", Outputs: []string{"result.json"}}}},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "producer", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusSucceeded)
+	handoffClient.mu.Lock()
+	defer handoffClient.mu.Unlock()
+	if len(handoffClient.registerRequests) != 1 {
+		t.Fatalf("register artifact calls = %d, want 1", len(handoffClient.registerRequests))
+	}
+	req := handoffClient.registerRequests[0]
+	if req.URI != "" {
+		t.Fatalf("uri = %q, want empty for logical-only jumi URI", req.URI)
+	}
+	if req.LogicalURI != "jumi://runs/run-outputs-logical/nodes/producer/outputs/result.json" {
+		t.Fatalf("logicalUri = %q, want logical artifact URI", req.LogicalURI)
+	}
+	if len(req.Locations) != 1 || req.Locations[0].NodeLocal == nil {
+		t.Fatalf("locations = %#v, want node-local fallback source", req.Locations)
 	}
 }
 
@@ -1111,13 +1169,18 @@ func (f *fakeAdapter) CollectOutputMetadata(_ context.Context, handle backend.Ha
 		for _, outputName := range node.Outputs {
 			out[outputName] = backend.OutputMetadata{
 				OutputName:        outputName,
-				URI:               artifactOutputURI("test-run", h.nodeID, outputName),
 				LogicalURI:        "jumi://runs/test-run/nodes/" + h.nodeID + "/outputs/" + outputName,
 				Digest:            "sha256:test",
 				SizeBytes:         1,
 				ProducerAttemptID: "attempt-1",
 				NodeName:          "node-a",
 				PodName:           h.nodeID + "-pod",
+				Locations: []provenance.ArtifactLocation{{
+					NodeLocal: &provenance.NodeLocalLocation{
+						NodeName: "node-a",
+						Path:     "/var/lib/jumi-artifacts/cas/sha256/test",
+					},
+				}},
 			}
 		}
 		return out, nil

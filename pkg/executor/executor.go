@@ -971,6 +971,12 @@ func (r *nodeRunner) registerNodeOutputs(ctx context.Context, handle backend.Han
 		if strings.TrimSpace(metadata.Digest) == "" {
 			return fmt.Errorf("required output %s has empty digest for node %s", outputName, r.node.NodeID)
 		}
+		if strings.HasPrefix(strings.TrimSpace(metadata.URI), "jumi://") {
+			if strings.TrimSpace(metadata.LogicalURI) == "" {
+				metadata.LogicalURI = metadata.URI
+			}
+			metadata.URI = ""
+		}
 		if strings.TrimSpace(metadata.URI) == "" && len(metadata.Locations) == 0 {
 			return fmt.Errorf("required output %s has neither uri nor locations for node %s", outputName, r.node.NodeID)
 		}
