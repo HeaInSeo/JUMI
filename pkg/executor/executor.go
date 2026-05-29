@@ -971,7 +971,7 @@ func (r *nodeRunner) registerNodeOutputs(ctx context.Context, handle backend.Han
 			NodeName:          metadata.NodeName,
 			URI:               metadata.URI,
 			LogicalURI:        metadata.LogicalURI,
-			Locations:         toHandoffLocations(metadata.Locations),
+			Locations:         toHandoffLocations(metadata.Locations, metadata.NodeName),
 			SizeBytes:         metadata.SizeBytes,
 		}); err != nil {
 			return fmt.Errorf("register artifact %s for node %s: %w", outputName, r.node.NodeID, err)
@@ -996,7 +996,7 @@ func (r *nodeRunner) collectOutputMetadata(ctx context.Context, handle backend.H
 	return metadata, nil
 }
 
-func toHandoffLocations(locations []provenance.ArtifactLocation) []handoff.ArtifactLocation {
+func toHandoffLocations(locations []provenance.ArtifactLocation, fallbackNodeName string) []handoff.ArtifactLocation {
 	if len(locations) == 0 {
 		return nil
 	}
@@ -1004,8 +1004,12 @@ func toHandoffLocations(locations []provenance.ArtifactLocation) []handoff.Artif
 	for _, loc := range locations {
 		var converted handoff.ArtifactLocation
 		if loc.NodeLocal != nil {
+			nodeName := loc.NodeLocal.NodeName
+			if nodeName == "" {
+				nodeName = fallbackNodeName
+			}
 			converted.NodeLocal = &handoff.NodeLocalLocation{
-				NodeName: loc.NodeLocal.NodeName,
+				NodeName: nodeName,
 				Path:     loc.NodeLocal.Path,
 			}
 		}

@@ -76,6 +76,8 @@ ssh_remote "
   set -euo pipefail
   export KUBECONFIG='${REMOTE_KUBECONFIG}'
   kubectl -n '${VM_NAMESPACE}' apply -f '${ARTIFACT_SOURCE_REMOTE_PATH}'
+  kubectl -n '${VM_NAMESPACE}' set env deployment/artifact-handoff AH_ALLOWED_HTTP_SOURCE_HOSTS='simple-http-artifact-source' >/dev/null
+  kubectl -n '${VM_NAMESPACE}' rollout status deployment/artifact-handoff --timeout=180s
   kubectl -n '${VM_NAMESPACE}' rollout status deployment/simple-http-artifact-source --timeout=180s
   kubectl -n '${VM_NAMESPACE}' get svc simple-http-artifact-source
 "

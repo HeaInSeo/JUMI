@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/HeaInSeo/JUMI/pkg/handoff"
+	"github.com/HeaInSeo/JUMI/pkg/provenance"
 	"github.com/HeaInSeo/JUMI/pkg/spec"
 )
 
@@ -78,5 +79,20 @@ func TestInjectResolvedBindingEnvAddsExpectedSizeBytes(t *testing.T) {
 	}
 	if got := node.Env["JUMI_INPUT_DATASET_LOCAL_PATH"]; got != "inputs/result" {
 		t.Fatalf("JUMI_INPUT_DATASET_LOCAL_PATH = %q, want inputs/result", got)
+	}
+}
+
+func TestToHandoffLocationsBackfillsNodeName(t *testing.T) {
+	locations := toHandoffLocations([]provenance.ArtifactLocation{{
+		NodeLocal: &provenance.NodeLocalLocation{
+			Path: "/var/lib/jumi-artifacts/cas/sha256/abc",
+		},
+	}}, "worker-2")
+
+	if len(locations) != 1 || locations[0].NodeLocal == nil {
+		t.Fatalf("locations = %#v, want one nodeLocal location", locations)
+	}
+	if locations[0].NodeLocal.NodeName != "worker-2" {
+		t.Fatalf("nodeLocal.nodeName = %q, want worker-2", locations[0].NodeLocal.NodeName)
 	}
 }
