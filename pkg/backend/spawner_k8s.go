@@ -648,6 +648,15 @@ func toSpawnerRunSpec(run spec.RunRecord, node spec.Node) spapi.RunSpec {
 	return runSpec
 }
 
+var contractInputEnvSuffixes = []string{
+	"_URI",
+	"_EXPECTED_DIGEST",
+	"_EXPECTED_SIZE_BYTES",
+	"_MATERIALIZATION_MODE",
+	"_NODE_LOCAL_PATH",
+	"_LOCAL_PATH",
+}
+
 func cloneEnv(src map[string]string) map[string]string {
 	if len(src) == 0 {
 		return map[string]string{}
@@ -686,6 +695,23 @@ func injectOutputContractEnv(env map[string]string, run spec.RunRecord, node spe
 	if contractJSON, err := buildNodeContractJSON(run, node, outputs); err == nil {
 		setEnvDefault(env, "JUMI_NODE_CONTRACT_PATH", defaultNodeContractPath)
 		setEnvDefault(env, "JUMI_NODE_CONTRACT_JSON", contractJSON)
+		if manifestExportMode(node) == outputManifestModeRuntimeHelper {
+			stripContractInputEnv(env)
+		}
+	}
+}
+
+func stripContractInputEnv(env map[string]string) {
+	for key := range env {
+		if !strings.HasPrefix(key, "JUMI_INPUT_") {
+			continue
+		}
+		for _, suffix := range contractInputEnvSuffixes {
+			if strings.HasSuffix(key, suffix) {
+				delete(env, key)
+				break
+			}
+		}
 	}
 }
 

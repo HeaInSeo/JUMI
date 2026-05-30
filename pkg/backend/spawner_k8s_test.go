@@ -264,6 +264,17 @@ func TestToSpawnerRunSpecWrapsCommandForRuntimeHelperMode(t *testing.T) {
 	if got.Env["JUMI_NODE_CONTRACT_PATH"] != defaultNodeContractPath {
 		t.Fatalf("JUMI_NODE_CONTRACT_PATH = %q, want %q", got.Env["JUMI_NODE_CONTRACT_PATH"], defaultNodeContractPath)
 	}
+	for _, key := range []string{
+		"JUMI_INPUT_DATASET_URI",
+		"JUMI_INPUT_DATASET_EXPECTED_DIGEST",
+		"JUMI_INPUT_DATASET_EXPECTED_SIZE_BYTES",
+		"JUMI_INPUT_DATASET_MATERIALIZATION_MODE",
+		"JUMI_INPUT_DATASET_LOCAL_PATH",
+	} {
+		if _, ok := got.Env[key]; ok {
+			t.Fatalf("%s should be omitted in runtime-helper contract mode", key)
+		}
+	}
 	raw := got.Env["JUMI_NODE_CONTRACT_JSON"]
 	if raw == "" {
 		t.Fatal("JUMI_NODE_CONTRACT_JSON = empty, want serialized contract")
