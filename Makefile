@@ -24,7 +24,7 @@ PKGS_REGRESSION := ./cmd/... ./pkg/executor ./pkg/handoff ./pkg/metrics ./pkg/ob
 PKGS_COVER := ./cmd/... ./pkg/...
 PKGS_SECURITY := ./cmd/... ./pkg/...
 
-.PHONY: test test-regression coverage fmt vet lint lint-depguard lint-security vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-align-check runtime-smoke-remote ko-publish-remote ko-smoke-remote verify-sprint-3d-baseline
+.PHONY: test test-regression coverage fmt vet lint lint-depguard lint-security vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-align-check runtime-smoke-remote ko-publish-remote ko-smoke-remote verify-sprint-3d-baseline verify-sprint-3d-remote
 
 REMOTE_SSH_TARGET ?= seoy@100.123.80.48
 REGISTRY_HOST ?= harbor.10.113.24.96.nip.io
@@ -162,3 +162,7 @@ verify-sprint-3d-baseline: runtime-align-check handoff-proto-sync-check
 	cd "$(AH_REPO_ROOT)" && env TMPDIR=/tmp/ah-addsource-tmp GOCACHE=/tmp/ah-addsource-cache GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/domain ./pkg/inventory ./pkg/resolver
 	test -d "$(NAN_REPO_ROOT)"
 	cd "$(NAN_REPO_ROOT)" && env TMPDIR=/tmp/nan-node-contract-tmp GOCACHE=/tmp/nan-node-contract-cache GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/contract ./pkg/runtimehelper ./cmd/node-artifact-runtime
+
+verify-sprint-3d-remote:
+	env SYNC_BACKUP_REGISTRY=true K8SGPT_MODE=required ./scripts/run-jumi-same-node-local-reuse-live-smoke.sh
+	env SYNC_BACKUP_REGISTRY=true K8SGPT_MODE=required ENABLE_HTTP_AH=1 ./scripts/run-jumi-remote-fetch-simple-http-live-smoke.sh

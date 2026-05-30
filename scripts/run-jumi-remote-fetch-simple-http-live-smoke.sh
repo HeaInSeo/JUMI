@@ -49,6 +49,16 @@ trap cleanup EXIT
 
 mkdir -p "${ROOT_DIR}/artifacts/devspace"
 
+ssh_remote "
+  set -euo pipefail
+  if [ ! -d '${REMOTE_JUMI_REPO_ROOT}/.git' ]; then
+    git clone https://github.com/HeaInSeo/JUMI.git '${REMOTE_JUMI_REPO_ROOT}'
+  fi
+  git -C '${REMOTE_JUMI_REPO_ROOT}' fetch origin
+  git -C '${REMOTE_JUMI_REPO_ROOT}' checkout main
+  git -C '${REMOTE_JUMI_REPO_ROOT}' reset --hard origin/main
+"
+
 if [[ "${ENABLE_HTTP_AH}" == "1" ]]; then
   ORIGINAL_AH_GRPC_TARGET="$(ssh_remote "set -euo pipefail; export KUBECONFIG='${REMOTE_KUBECONFIG}'; kubectl -n '${VM_NAMESPACE}' get deploy jumi -o jsonpath='{range .spec.template.spec.containers[0].env[?(@.name==\"JUMI_AH_GRPC_TARGET\")]}{.value}{end}'")"
   ssh_remote "

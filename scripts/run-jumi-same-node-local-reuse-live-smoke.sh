@@ -57,6 +57,9 @@ PY
 
 ssh_remote "
   set -euo pipefail
+  if [ ! -d '${REMOTE_JUMI_REPO_ROOT}/.git' ]; then
+    git clone https://github.com/HeaInSeo/JUMI.git '${REMOTE_JUMI_REPO_ROOT}'
+  fi
   git -C '${REMOTE_JUMI_REPO_ROOT}' fetch origin
   git -C '${REMOTE_JUMI_REPO_ROOT}' checkout '${REMOTE_GIT_REF}'
   git -C '${REMOTE_JUMI_REPO_ROOT}' reset --hard 'origin/${REMOTE_GIT_REF}'
