@@ -16,6 +16,7 @@ Policy-agnostic in-cluster execution data-plane app for Kubernetes, built on a K
 - `make preflight-ko-remote`: verify remote `ko`, Harbor TLS trust, and Docker auth on `100.123.80.48`
 - `make runtime-build-local`: local runtime image build for CLI validation only
 - `make runtime-check-local`: local `nan` CLI contract check against the local image
+- `make runtime-align-check`: compare the JUMI `Containerfile` runtime pin with the local `node-artifact-runtime` checkout
 - `make runtime-smoke-remote`: remote K8s smoke entrypoint
 - `make ko-publish-remote`: build and deploy the JUMI service image with `ko` on `100.123.80.48`
 - `make ko-smoke-remote`: run the live smoke after a `ko` service image publish
@@ -25,6 +26,8 @@ Notes:
 - `make lint-security` is intentionally observation-only; current findings should be triaged separately from the fail gate.
 - Local build is not publish authority. Runtime image publish and K8s smoke authority live on `100.123.80.48`.
 - Remote `ko` publish requires Harbor TLS trust in the remote OS trust store and Harbor auth in `~/.docker/config.json`.
+- GitHub is the source of truth. Harbor is the primary runtime registry. GHCR is the backup registry.
+- When `SYNC_BACKUP_REGISTRY=true`, Harbor and GHCR publish must both succeed for the same source commit.
 
 ## Documents
 
@@ -54,3 +57,4 @@ Notes:
 - [JUMI spawner Integration Contract Review](docs/JUMI_SPAWNER_INTEGRATION_CONTRACT_REVIEW.ko.md)
 - [JUMI Locality Semantics Review](docs/JUMI_LOCALITY_SEMANTICS_REVIEW.ko.md)
 - [JUMI Execution Environment Boundary](docs/JUMI_EXECUTION_ENVIRONMENT_BOUNDARY.md)
+- [JUMI Registry Sync Policy](docs/JUMI_REGISTRY_SYNC_POLICY.md)
