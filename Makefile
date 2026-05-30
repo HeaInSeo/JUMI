@@ -24,7 +24,7 @@ PKGS_REGRESSION := ./cmd/... ./pkg/executor ./pkg/handoff ./pkg/metrics ./pkg/ob
 PKGS_COVER := ./cmd/... ./pkg/...
 PKGS_SECURITY := ./cmd/... ./pkg/...
 
-.PHONY: test test-regression coverage fmt vet lint lint-depguard lint-security vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-smoke-remote ko-publish-remote ko-smoke-remote
+.PHONY: test test-regression coverage fmt vet lint lint-depguard lint-security vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-align-check runtime-smoke-remote ko-publish-remote ko-smoke-remote
 
 REMOTE_SSH_TARGET ?= seoy@100.123.80.48
 REGISTRY_HOST ?= harbor.10.113.24.96.nip.io
@@ -140,6 +140,9 @@ runtime-build-local:
 
 runtime-check-local:
 	podman run --rm --entrypoint /usr/local/bin/nan "$(RUNTIME_IMAGE_LOCAL_TAG)" version
+
+runtime-align-check:
+	./scripts/check-runtime-alignment.sh
 
 runtime-smoke-remote: preflight-publish-remote
 	./scripts/run-jumi-ah-dev-live-smoke-eval.sh

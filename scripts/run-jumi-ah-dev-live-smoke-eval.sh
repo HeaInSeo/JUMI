@@ -15,12 +15,15 @@ REMOTE_HELPER_PATH="${REMOTE_HELPER_PATH:-${ROOT_DIR}/scripts/vm-lab-jumi-smoke-
 FIXTURE_PATH="${FIXTURE_PATH:-${ROOT_DIR}/artifacts/devspace/kube-slint-jumi-ah-smoke-metrics.live.json}"
 SUMMARY_PATH="${SUMMARY_PATH:-${ROOT_DIR}/artifacts/devspace/jumi-ah-smoke-live-sli-summary.json}"
 GATE_PATH="${GATE_PATH:-${ROOT_DIR}/artifacts/devspace/gate/slint-gate-live-summary.json}"
+K8SGPT_JSON_PATH="${K8SGPT_JSON_PATH:-${ROOT_DIR}/artifacts/devspace/k8sgpt/jumi-ah-dev-live-smoke.json}"
 POLICY_FILE="${POLICY_FILE:-${ROOT_DIR}/policy/devspace/jumi-ah-live-thresholds.yaml}"
 PUBLISH_SHIFT_LEFT_OBSERVABILITY="${PUBLISH_SHIFT_LEFT_OBSERVABILITY:-${PUBLISH_DEV_SPACE:-false}}"
 PUBLISH_SHIFT_LEFT_OBSERVABILITY_SCRIPT="${PUBLISH_SHIFT_LEFT_OBSERVABILITY_SCRIPT:-}"
 PORT_FORWARD_PORT="${PORT_FORWARD_PORT:-19190}"
 SLINT_GATE_BIN="${SLINT_GATE_BIN:-slint-gate}"
 SLINT_GATE_MODE="${SLINT_GATE_MODE:-optional}"
+K8SGPT_BIN="${K8SGPT_BIN:-k8sgpt}"
+K8SGPT_MODE="${K8SGPT_MODE:-optional}"
 ALLOW_LOCAL_CHECKOUT_FALLBACK="${ALLOW_LOCAL_CHECKOUT_FALLBACK:-false}"
 
 RUN_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -116,6 +119,14 @@ case "${SLINT_GATE_MODE}" in
     ;;
 esac
 
+case "${K8SGPT_MODE}" in
+  skip|optional|required) ;;
+  *)
+    echo "invalid K8SGPT_MODE: ${K8SGPT_MODE}" >&2
+    exit 1
+    ;;
+esac
+
 require_file "$FIXTURE_SOURCE_PATH"
 require_file "$REMOTE_HELPER_PATH"
 require_file "$POLICY_FILE"
@@ -125,6 +136,7 @@ require_file "$POLICY_FILE"
 }
 
 mkdir -p "$(dirname "${FIXTURE_PATH}")" "$(dirname "${SUMMARY_PATH}")" "$(dirname "${GATE_PATH}")"
+mkdir -p "$(dirname "${K8SGPT_JSON_PATH}")"
 
 start_jumi="$(mktemp)"
 start_ah="$(mktemp)"
@@ -132,8 +144,12 @@ end_jumi="$(mktemp)"
 end_ah="$(mktemp)"
 lifecycle_json="$(mktemp)"
 artifacts_json="$(mktemp)"
+k8sgpt_raw=""
 cleanup() {
   rm -f "${start_jumi}" "${start_ah}" "${end_jumi}" "${end_ah}" "${lifecycle_json}" "${artifacts_json}"
+  if [[ -n "${k8sgpt_raw}" ]]; then
+    rm -f "${k8sgpt_raw}"
+  fi
   ssh_remote "rm -rf '${REMOTE_TMP_DIR}'" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -287,6 +303,51 @@ else
   exit 1
 fi
 
+if [[ "${K8SGPT_MODE}" == "skip" ]]; then
+  log_stage "k8sgpt" "SKIPPED" "mode=skip"
+else
+  k8sgpt_raw="$(mktemp)"
+  if ssh_remote "
+    set -euo pipefail
+    if ! command -v '${K8SGPT_BIN}' >/dev/null 2>&1; then
+      echo '__JUMI_K8SGPT_MISSING__'
+      exit 0
+    fi
+    if ${K8SGPT_BIN} analyze --help 2>&1 | grep -q -- '--output'; then
+      ${K8SGPT_BIN} analyze --output json
+    else
+      ${K8SGPT_BIN} analyze -o json
+    fi
+  " >"${k8sgpt_raw}"; then
+    if grep -q '^__JUMI_K8SGPT_MISSING__$' "${k8sgpt_raw}"; then
+      if [[ "${K8SGPT_MODE}" == "optional" ]]; then
+        log_stage "k8sgpt" "SKIPPED" "missing ${K8SGPT_BIN}"
+      else
+        log_stage "k8sgpt" "FAIL" "missing ${K8SGPT_BIN}"
+        exit 1
+      fi
+    else
+      python3 - <<PY
+from pathlib import Path
+raw = Path("${k8sgpt_raw}").read_text(encoding="utf-8")
+start = raw.find("{")
+end = raw.rfind("}")
+if start == -1 or end == -1 or end < start:
+    raise SystemExit("k8sgpt did not return a JSON object")
+Path("${K8SGPT_JSON_PATH}").write_text(raw[start:end + 1] + "\n", encoding="utf-8")
+PY
+      log_stage "k8sgpt" "PASS" "${K8SGPT_JSON_PATH}"
+    fi
+  else
+    if [[ "${K8SGPT_MODE}" == "optional" ]]; then
+      log_stage "k8sgpt" "SKIPPED" "analyze failed"
+    else
+      log_stage "k8sgpt" "FAIL" "analyze failed"
+      exit 1
+    fi
+  fi
+fi
+
 resolved_slint_gate_bin="${SLINT_GATE_BIN}"
 slint_gate_available="true"
 if ! command -v "${resolved_slint_gate_bin}" >/dev/null 2>&1; then
@@ -343,6 +404,7 @@ gate = json.loads(Path("${GATE_PATH}").read_text(encoding="utf-8"))
 print(f"fixture: ${FIXTURE_PATH}")
 print(f"summary: ${SUMMARY_PATH}")
 print(f"gate: ${GATE_PATH}")
+print(f"k8sgpt: ${K8SGPT_JSON_PATH}")
 print(f"live_run_id={fixture['runId']}")
 print(f"live_sample_run_id={fixture['evidencePaths']['live_sample_run_id']}")
 print(f"results={len(summary.get('results', []))} gate_result={gate.get('gate_result')}")
