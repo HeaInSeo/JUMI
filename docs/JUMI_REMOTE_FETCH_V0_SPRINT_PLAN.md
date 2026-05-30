@@ -149,6 +149,7 @@ v0 기준으로 URI는 두 층으로 본다.
 | Sprint 3C-3D | credential / logging / policy hardening | Completed |
 | Sprint 3C-3E | guardrail closure / contract parity | Completed |
 | Sprint 3C-4A | node-contract input baseline | Completed |
+| Sprint 3D-1 | AddSource lifecycle minimal API | Completed |
 
 ### 4.1 Sprint 3C-3E 완료 메모
 
@@ -191,6 +192,29 @@ Verification commands:
 ```bash
 env TMPDIR=/tmp/jumi-node-contract-tmp GOCACHE=/tmp/jumi-node-contract-cache GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/backend ./pkg/executor
 env TMPDIR=/tmp/nan-node-contract-tmp GOCACHE=/tmp/nan-node-contract-cache GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/contract ./pkg/runtimehelper ./cmd/node-artifact-runtime
+```
+
+### 4.3 Sprint 3D-1 완료 메모
+
+범위:
+
+- `artifact-handoff`에 `AddSource`, `UpdateSourceState`, `ListSources` 최소 API 추가
+- HTTP/gRPC parity 유지
+- artifact/source lookup을 위한 store direct lookup 추가
+- `AddSource` 시 artifact digest / source digest / typed location guardrail 재사용
+- `UpdateSourceState`는 source state 변경만 허용하고 background verifier는 포함하지 않음
+
+의도적으로 하지 않은 것:
+
+- JUMI에서 `AddSource` 호출하는 orchestration
+- source verifier / health checker
+- post-scheduling re-resolve
+- cleanup / TTL
+
+Verification commands:
+
+```bash
+env TMPDIR=/tmp/ah-addsource-tmp GOCACHE=/tmp/ah-addsource-cache GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/domain ./pkg/inventory ./pkg/resolver
 ```
 
 ---
