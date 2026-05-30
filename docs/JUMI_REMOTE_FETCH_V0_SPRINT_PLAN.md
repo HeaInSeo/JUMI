@@ -152,6 +152,7 @@ v0 기준으로 URI는 두 층으로 본다.
 | Sprint 3D-1 | AddSource lifecycle minimal API | Completed |
 | Sprint 3D-2 | source verifier minimal API | Completed |
 | Sprint 3D-3 | verification baseline target | Completed |
+| Sprint 3D-4 | remote smoke verification baseline | Completed |
 
 ### 4.1 Sprint 3C-3E 완료 메모
 
@@ -261,6 +262,30 @@ Verification commands:
 ```bash
 make verify-sprint-3d-baseline
 make runtime-align-check
+```
+
+### 4.6 Sprint 3D-4 완료 메모
+
+범위:
+
+- same-node local_reuse와 remote_fetch live smoke를 하나의 remote verification baseline으로 고정
+- Harbor primary / GHCR backup sync를 baseline smoke에 포함
+- `k8sgpt` JSON lint를 baseline smoke에서 `required`로 강제
+- full CI wiring 없이, 운영 전 사람이 재현 가능한 원격 검증 명령만 고정
+
+의도적으로 하지 않은 것:
+
+- GitHub Actions / CI wiring
+- cleanup / TTL
+- post-scheduling re-resolve
+- signed URL 지원
+
+Verification commands:
+
+```bash
+make verify-sprint-3d-remote
+env SYNC_BACKUP_REGISTRY=true K8SGPT_MODE=required ./scripts/run-jumi-same-node-local-reuse-live-smoke.sh
+env SYNC_BACKUP_REGISTRY=true K8SGPT_MODE=required ENABLE_HTTP_AH=1 ./scripts/run-jumi-remote-fetch-simple-http-live-smoke.sh
 ```
 
 ---
