@@ -169,7 +169,7 @@ make preflight-ko-remote
 ```bash
 SYNC_BACKUP_REGISTRY=true \
 BACKUP_REGISTRY_HOST=ghcr.io \
-BACKUP_KO_DOCKER_REPO=ghcr.io/HeaInSeo \
+BACKUP_KO_DOCKER_REPO=ghcr.io/heainseo \
 make ko-publish-remote
 ```
 
@@ -188,4 +188,3 @@ SYNC_BACKUP_REGISTRY=true \
 BACKUP_REGISTRY_HOST=ghcr.io \
 ./scripts/run-jumi-remote-fetch-simple-http-live-smoke.sh
 ```
-
