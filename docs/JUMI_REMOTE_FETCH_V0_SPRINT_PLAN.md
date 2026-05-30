@@ -148,6 +148,7 @@ v0 기준으로 URI는 두 층으로 본다.
 | Sprint 3C-3C | HTTP source 최소 정책 | Completed |
 | Sprint 3C-3D | credential / logging / policy hardening | Completed |
 | Sprint 3C-3E | guardrail closure / contract parity | Completed |
+| Sprint 3C-4A | node-contract input baseline | Completed |
 
 ### 4.1 Sprint 3C-3E 완료 메모
 
@@ -174,6 +175,22 @@ Verification commands:
 env TMPDIR=/dev/shm/go-tmp-ah GOCACHE=/dev/shm/go-build-ah GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/domain ./pkg/resolver
 env TMPDIR=/dev/shm/go-tmp-nan GOCACHE=/dev/shm/go-build-nan GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/runtimehelper ./cmd/node-artifact-runtime
 env TMPDIR=/dev/shm/go-tmp-jumi GOCACHE=/dev/shm/go-build-jumi GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/handoff ./pkg/executor
+```
+
+### 4.2 Sprint 3C-4A 완료 메모
+
+범위:
+
+- `JUMI_NODE_CONTRACT_JSON`에 materialization input spec 직렬화
+- `node-artifact-runtime`이 contract `inputs[]`를 env보다 우선 사용
+- runtime-helper mode에서 `JUMI_INPUT_*_{URI,EXPECTED_DIGEST,EXPECTED_SIZE_BYTES,MATERIALIZATION_MODE,NODE_LOCAL_PATH,LOCAL_PATH}` env 제거
+- contract input `expectedSizeBytes >= 0` validation 추가
+
+Verification commands:
+
+```bash
+env TMPDIR=/tmp/jumi-node-contract-tmp GOCACHE=/tmp/jumi-node-contract-cache GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/backend ./pkg/executor
+env TMPDIR=/tmp/nan-node-contract-tmp GOCACHE=/tmp/nan-node-contract-cache GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/contract ./pkg/runtimehelper ./cmd/node-artifact-runtime
 ```
 
 ---
