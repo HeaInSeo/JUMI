@@ -151,6 +151,7 @@ v0 기준으로 URI는 두 층으로 본다.
 | Sprint 3C-4A | node-contract input baseline | Completed |
 | Sprint 3D-1 | AddSource lifecycle minimal API | Completed |
 | Sprint 3D-2 | source verifier minimal API | Completed |
+| Sprint 3D-3 | verification baseline target | Completed |
 
 ### 4.1 Sprint 3C-3E 완료 메모
 
@@ -238,6 +239,28 @@ Verification commands:
 
 ```bash
 env TMPDIR=/tmp/ah-addsource-tmp GOCACHE=/tmp/ah-addsource-cache GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/domain ./pkg/inventory ./pkg/resolver
+```
+
+### 4.5 Sprint 3D-3 완료 메모
+
+범위:
+
+- JUMI / artifact-handoff / node-artifact-runtime focused verification command를 하나의 baseline 타깃으로 묶음
+- runtime alignment check와 handoff proto sync check를 verification baseline에 포함
+- full CI wiring은 하지 않고, 사람 기준 재현 가능한 release-adjacent 검증 명령만 고정
+
+의도적으로 하지 않은 것:
+
+- GitHub Actions / CI wiring
+- remote live smoke 자동 실행
+- post-scheduling re-resolve
+- cleanup / TTL
+
+Verification commands:
+
+```bash
+make verify-sprint-3d-baseline
+make runtime-align-check
 ```
 
 ---
