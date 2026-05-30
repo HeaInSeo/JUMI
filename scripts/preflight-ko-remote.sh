@@ -3,6 +3,8 @@ set -euo pipefail
 
 REMOTE_SSH_TARGET="${REMOTE_SSH_TARGET:-seoy@100.123.80.48}"
 REGISTRY_HOST="${REGISTRY_HOST:-harbor.10.113.24.96.nip.io}"
+SYNC_BACKUP_REGISTRY="${SYNC_BACKUP_REGISTRY:-false}"
+BACKUP_REGISTRY_HOST="${BACKUP_REGISTRY_HOST:-ghcr.io}"
 REMOTE_GO_BIN="${REMOTE_GO_BIN:-/usr/local/go/bin/go}"
 REMOTE_KO_BIN="${REMOTE_KO_BIN:-\$HOME/.local/bin/ko}"
 
@@ -12,6 +14,9 @@ ssh_remote() {
 
 echo "[ko-preflight] target=${REMOTE_SSH_TARGET}"
 echo "[ko-preflight] registry=${REGISTRY_HOST}"
+if [[ "${SYNC_BACKUP_REGISTRY}" == "true" ]]; then
+  echo "[ko-preflight] backup-registry=${BACKUP_REGISTRY_HOST}"
+fi
 
 ssh_remote "
   set -euo pipefail
@@ -24,17 +29,19 @@ import pathlib
 import socket
 import ssl
 
-registry = '${REGISTRY_HOST}'
+registries = ['${REGISTRY_HOST}']
+if '${SYNC_BACKUP_REGISTRY}' == 'true':
+    registries.append('${BACKUP_REGISTRY_HOST}')
 cfg = pathlib.Path.home() / '.docker' / 'config.json'
 data = json.loads(cfg.read_text())
-if registry not in data.get('auths', {}):
-    raise SystemExit('missing docker auth entry for %s' % registry)
-
-ctx = ssl.create_default_context()
-with ctx.wrap_socket(socket.socket(), server_hostname=registry) as s:
-    s.settimeout(5)
-    s.connect((registry, 443))
-print('tls-ok')
+for registry in registries:
+    if registry not in data.get('auths', {}):
+        raise SystemExit('missing docker auth entry for %s' % registry)
+    ctx = ssl.create_default_context()
+    with ctx.wrap_socket(socket.socket(), server_hostname=registry) as s:
+        s.settimeout(5)
+        s.connect((registry, 443))
+        print('tls-ok %s' % registry)
 PY
 "
 

@@ -14,9 +14,17 @@ FIXTURE_TEMPLATE="${FIXTURE_TEMPLATE:-${ROOT_DIR}/deploy/devspace/fixtures/jumi-
 RUNTIME_SHORTCUT_IMAGE_REPO="${RUNTIME_SHORTCUT_IMAGE_REPO:-harbor.10.113.24.96.nip.io/batch-int/jumi}"
 RUNTIME_SHORTCUT_IMAGE_TAG="${RUNTIME_SHORTCUT_IMAGE_TAG:-runtime-shortcut-local-reuse-$(git -C "${ROOT_DIR}" rev-parse --short HEAD)}"
 RUNTIME_SHORTCUT_IMAGE="${RUNTIME_SHORTCUT_IMAGE:-${RUNTIME_SHORTCUT_IMAGE_REPO}:${RUNTIME_SHORTCUT_IMAGE_TAG}}"
+SYNC_BACKUP_REGISTRY="${SYNC_BACKUP_REGISTRY:-false}"
+BACKUP_REGISTRY_HOST="${BACKUP_REGISTRY_HOST:-ghcr.io}"
+BACKUP_RUNTIME_SHORTCUT_IMAGE_REPO="${BACKUP_RUNTIME_SHORTCUT_IMAGE_REPO:-ghcr.io/HeaInSeo/jumi}"
+BACKUP_RUNTIME_SHORTCUT_IMAGE_TAG="${BACKUP_RUNTIME_SHORTCUT_IMAGE_TAG:-${RUNTIME_SHORTCUT_IMAGE_TAG}}"
+BACKUP_RUNTIME_SHORTCUT_IMAGE="${BACKUP_RUNTIME_SHORTCUT_IMAGE:-${BACKUP_RUNTIME_SHORTCUT_IMAGE_REPO}:${BACKUP_RUNTIME_SHORTCUT_IMAGE_TAG}}"
 AH_IMAGE_REPO="${AH_IMAGE_REPO:-harbor.10.113.24.96.nip.io/batch-int/artifact-handoff}"
 AH_IMAGE_TAG="${AH_IMAGE_TAG:-node-local-handoff-$(date -u +%Y%m%d%H%M%S)}"
 AH_IMAGE="${AH_IMAGE:-${AH_IMAGE_REPO}:${AH_IMAGE_TAG}}"
+BACKUP_AH_IMAGE_REPO="${BACKUP_AH_IMAGE_REPO:-ghcr.io/HeaInSeo/artifact-handoff}"
+BACKUP_AH_IMAGE_TAG="${BACKUP_AH_IMAGE_TAG:-${AH_IMAGE_TAG}}"
+BACKUP_AH_IMAGE="${BACKUP_AH_IMAGE:-${BACKUP_AH_IMAGE_REPO}:${BACKUP_AH_IMAGE_TAG}}"
 EVAL_SCRIPT="${EVAL_SCRIPT:-${ROOT_DIR}/scripts/run-jumi-ah-dev-live-smoke-eval.sh}"
 PUBLISH_JUMI_SERVICE_SCRIPT="${PUBLISH_JUMI_SERVICE_SCRIPT:-${ROOT_DIR}/scripts/publish-jumi-service-ko-remote.sh}"
 FIXTURE_PATH="$(mktemp "${ROOT_DIR}/artifacts/devspace/jumi-same-node-local-reuse-fixture.XXXXXX.json")"
@@ -63,13 +71,22 @@ ssh_remote "
 REMOTE_SSH_TARGET="${REMOTE_SSH_TARGET}" \
 REMOTE_JUMI_REPO_ROOT="${REMOTE_JUMI_REPO_ROOT}" \
 REMOTE_KUBECONFIG="${REMOTE_KUBECONFIG}" \
+SYNC_BACKUP_REGISTRY="${SYNC_BACKUP_REGISTRY}" \
+BACKUP_REGISTRY_HOST="${BACKUP_REGISTRY_HOST}" \
 "${PUBLISH_JUMI_SERVICE_SCRIPT}"
 
 ssh_remote "
   set -euo pipefail
   cd '${REMOTE_AH_REPO_ROOT}'
-  podman build -f Containerfile -t '${AH_IMAGE}' .
+  if [ '${SYNC_BACKUP_REGISTRY}' = 'true' ]; then
+    podman build -f Containerfile -t '${AH_IMAGE}' -t '${BACKUP_AH_IMAGE}' .
+  else
+    podman build -f Containerfile -t '${AH_IMAGE}' .
+  fi
   podman push '${AH_IMAGE}'
+  if [ '${SYNC_BACKUP_REGISTRY}' = 'true' ]; then
+    podman push '${BACKUP_AH_IMAGE}'
+  fi
 "
 
 ssh_remote "
@@ -89,8 +106,15 @@ ssh_remote "
 ssh_remote "
   set -euo pipefail
   cd '${REMOTE_JUMI_REPO_ROOT}'
-  podman build -f Containerfile -t '${RUNTIME_SHORTCUT_IMAGE}' .
+  if [ '${SYNC_BACKUP_REGISTRY}' = 'true' ]; then
+    podman build -f Containerfile -t '${RUNTIME_SHORTCUT_IMAGE}' -t '${BACKUP_RUNTIME_SHORTCUT_IMAGE}' .
+  else
+    podman build -f Containerfile -t '${RUNTIME_SHORTCUT_IMAGE}' .
+  fi
   podman push '${RUNTIME_SHORTCUT_IMAGE}'
+  if [ '${SYNC_BACKUP_REGISTRY}' = 'true' ]; then
+    podman push '${BACKUP_RUNTIME_SHORTCUT_IMAGE}'
+  fi
 "
 
 FIXTURE_SOURCE_PATH="${FIXTURE_PATH}" \

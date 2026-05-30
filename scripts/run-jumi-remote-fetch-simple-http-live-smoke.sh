@@ -13,10 +13,18 @@ FIXTURE_TEMPLATE="${FIXTURE_TEMPLATE:-${ROOT_DIR}/deploy/devspace/fixtures/jumi-
 RUNTIME_SHORTCUT_IMAGE_REPO="${RUNTIME_SHORTCUT_IMAGE_REPO:-harbor.10.113.24.96.nip.io/batch-int/jumi}"
 RUNTIME_SHORTCUT_IMAGE_TAG="${RUNTIME_SHORTCUT_IMAGE_TAG:-runtime-shortcut-simple-http-$(git -C "${ROOT_DIR}" rev-parse --short HEAD)}"
 RUNTIME_SHORTCUT_IMAGE="${RUNTIME_SHORTCUT_IMAGE:-${RUNTIME_SHORTCUT_IMAGE_REPO}:${RUNTIME_SHORTCUT_IMAGE_TAG}}"
+SYNC_BACKUP_REGISTRY="${SYNC_BACKUP_REGISTRY:-false}"
+BACKUP_REGISTRY_HOST="${BACKUP_REGISTRY_HOST:-ghcr.io}"
+BACKUP_RUNTIME_SHORTCUT_IMAGE_REPO="${BACKUP_RUNTIME_SHORTCUT_IMAGE_REPO:-ghcr.io/HeaInSeo/jumi}"
+BACKUP_RUNTIME_SHORTCUT_IMAGE_TAG="${BACKUP_RUNTIME_SHORTCUT_IMAGE_TAG:-${RUNTIME_SHORTCUT_IMAGE_TAG}}"
+BACKUP_RUNTIME_SHORTCUT_IMAGE="${BACKUP_RUNTIME_SHORTCUT_IMAGE:-${BACKUP_RUNTIME_SHORTCUT_IMAGE_REPO}:${BACKUP_RUNTIME_SHORTCUT_IMAGE_TAG}}"
 ENABLE_HTTP_AH="${ENABLE_HTTP_AH:-0}"
 AH_IMAGE_REPO="${AH_IMAGE_REPO:-harbor.10.113.24.96.nip.io/batch-int/artifact-handoff}"
 AH_IMAGE_TAG="${AH_IMAGE_TAG:-remote-fetch-$(date -u +%Y%m%d%H%M%S)}"
 AH_IMAGE="${AH_IMAGE:-${AH_IMAGE_REPO}:${AH_IMAGE_TAG}}"
+BACKUP_AH_IMAGE_REPO="${BACKUP_AH_IMAGE_REPO:-ghcr.io/HeaInSeo/artifact-handoff}"
+BACKUP_AH_IMAGE_TAG="${BACKUP_AH_IMAGE_TAG:-${AH_IMAGE_TAG}}"
+BACKUP_AH_IMAGE="${BACKUP_AH_IMAGE:-${BACKUP_AH_IMAGE_REPO}:${BACKUP_AH_IMAGE_TAG}}"
 EVAL_SCRIPT="${EVAL_SCRIPT:-${ROOT_DIR}/scripts/run-jumi-ah-dev-live-smoke-eval.sh}"
 FIXTURE_PATH="$(mktemp "${ROOT_DIR}/artifacts/devspace/jumi-remote-fetch-simple-http-fixture.XXXXXX.json")"
 ARTIFACT_SOURCE_REMOTE_PATH="${REMOTE_TMP_DIR:-/tmp/jumi-simple-http-artifact-source}/simple-http-artifact-source.yaml"
@@ -52,8 +60,15 @@ if [[ "${ENABLE_HTTP_AH}" == "1" ]]; then
     git -C '${REMOTE_AH_REPO_ROOT}' checkout '${REMOTE_AH_GIT_REF}'
     git -C '${REMOTE_AH_REPO_ROOT}' reset --hard 'origin/${REMOTE_AH_GIT_REF}'
     cd '${REMOTE_AH_REPO_ROOT}'
-    podman build -f Containerfile -t '${AH_IMAGE}' .
+    if [ '${SYNC_BACKUP_REGISTRY}' = 'true' ]; then
+      podman build -f Containerfile -t '${AH_IMAGE}' -t '${BACKUP_AH_IMAGE}' .
+    else
+      podman build -f Containerfile -t '${AH_IMAGE}' .
+    fi
     podman push '${AH_IMAGE}'
+    if [ '${SYNC_BACKUP_REGISTRY}' = 'true' ]; then
+      podman push '${BACKUP_AH_IMAGE}'
+    fi
     export KUBECONFIG='${REMOTE_KUBECONFIG}'
     kubectl -n '${VM_NAMESPACE}' set image deployment/artifact-handoff artifact-handoff='${AH_IMAGE}'
     kubectl -n '${VM_NAMESPACE}' rollout status deployment/artifact-handoff --timeout=180s
@@ -85,8 +100,15 @@ ssh_remote "
 ssh_remote "
   set -euo pipefail
   cd '${REMOTE_JUMI_REPO_ROOT}'
-  podman build -f Containerfile -t '${RUNTIME_SHORTCUT_IMAGE}' .
+  if [ '${SYNC_BACKUP_REGISTRY}' = 'true' ]; then
+    podman build -f Containerfile -t '${RUNTIME_SHORTCUT_IMAGE}' -t '${BACKUP_RUNTIME_SHORTCUT_IMAGE}' .
+  else
+    podman build -f Containerfile -t '${RUNTIME_SHORTCUT_IMAGE}' .
+  fi
   podman push '${RUNTIME_SHORTCUT_IMAGE}'
+  if [ '${SYNC_BACKUP_REGISTRY}' = 'true' ]; then
+    podman push '${BACKUP_RUNTIME_SHORTCUT_IMAGE}'
+  fi
 "
 
 FIXTURE_SOURCE_PATH="${FIXTURE_PATH}" \
