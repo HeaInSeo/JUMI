@@ -37,11 +37,20 @@
           "mkdir -p /out; printf 'uri=%s materialization=%s expectedDigest=%s localPath=%s\\n' \"$JUMI_INPUT_DATASET_URI\" \"$JUMI_INPUT_DATASET_MATERIALIZATION_MODE\" \"$JUMI_INPUT_DATASET_EXPECTED_DIGEST\" \"$JUMI_INPUT_DATASET_LOCAL_PATH\"; test -f \"$JUMI_INPUT_DATASET_LOCAL_PATH\"; sha256sum \"$JUMI_INPUT_DATASET_LOCAL_PATH\"; wc -c \"$JUMI_INPUT_DATASET_LOCAL_PATH\"; cp \"$JUMI_INPUT_DATASET_LOCAL_PATH\" /out/consumed"
         ],
         "env": {
-          "JUMI_ALLOWED_HTTP_SOURCE_HOSTS": "simple-http-artifact-source"
+          "JUMI_ALLOWED_HTTP_SOURCE_HOSTS": "simple-http-artifact-source",
+          "JUMI_NODE_LOCAL_ARTIFACT_ROOT": "/jumi-node-artifacts"
         },
         "serviceAccountName": "jumi",
         "outputs": [
           "consumed"
+        ],
+        "volumeMounts": [
+          {
+            "name": "node-local-artifacts",
+            "source": "hostpath:/var/lib/jumi-artifacts",
+            "target": "/jumi-node-artifacts",
+            "readOnly": false
+          }
         ],
         "metadata": {
           "jumi.outputManifestMode": "runtime-helper"
