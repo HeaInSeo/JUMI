@@ -26,6 +26,10 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	ArtifactHandoffResolver_RegisterArtifact_FullMethodName      = "/ah.v1.ArtifactHandoffResolver/RegisterArtifact"
+	ArtifactHandoffResolver_AddSource_FullMethodName             = "/ah.v1.ArtifactHandoffResolver/AddSource"
+	ArtifactHandoffResolver_UpdateSourceState_FullMethodName     = "/ah.v1.ArtifactHandoffResolver/UpdateSourceState"
+	ArtifactHandoffResolver_ListSources_FullMethodName           = "/ah.v1.ArtifactHandoffResolver/ListSources"
+	ArtifactHandoffResolver_VerifySource_FullMethodName          = "/ah.v1.ArtifactHandoffResolver/VerifySource"
 	ArtifactHandoffResolver_ResolveHandoff_FullMethodName        = "/ah.v1.ArtifactHandoffResolver/ResolveHandoff"
 	ArtifactHandoffResolver_NotifyNodeTerminal_FullMethodName    = "/ah.v1.ArtifactHandoffResolver/NotifyNodeTerminal"
 	ArtifactHandoffResolver_FinalizeSampleRun_FullMethodName     = "/ah.v1.ArtifactHandoffResolver/FinalizeSampleRun"
@@ -38,6 +42,10 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ArtifactHandoffResolverClient interface {
 	RegisterArtifact(ctx context.Context, in *RegisterArtifactRequest, opts ...grpc.CallOption) (*RegisterArtifactResponse, error)
+	AddSource(ctx context.Context, in *AddSourceRequest, opts ...grpc.CallOption) (*AddSourceResponse, error)
+	UpdateSourceState(ctx context.Context, in *UpdateSourceStateRequest, opts ...grpc.CallOption) (*UpdateSourceStateResponse, error)
+	ListSources(ctx context.Context, in *ListSourcesRequest, opts ...grpc.CallOption) (*ListSourcesResponse, error)
+	VerifySource(ctx context.Context, in *VerifySourceRequest, opts ...grpc.CallOption) (*VerifySourceResponse, error)
 	ResolveHandoff(ctx context.Context, in *ResolveHandoffRequest, opts ...grpc.CallOption) (*ResolveHandoffResponse, error)
 	NotifyNodeTerminal(ctx context.Context, in *NotifyNodeTerminalRequest, opts ...grpc.CallOption) (*NotifyNodeTerminalResponse, error)
 	FinalizeSampleRun(ctx context.Context, in *FinalizeSampleRunRequest, opts ...grpc.CallOption) (*FinalizeSampleRunResponse, error)
@@ -57,6 +65,46 @@ func (c *artifactHandoffResolverClient) RegisterArtifact(ctx context.Context, in
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RegisterArtifactResponse)
 	err := c.cc.Invoke(ctx, ArtifactHandoffResolver_RegisterArtifact_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *artifactHandoffResolverClient) AddSource(ctx context.Context, in *AddSourceRequest, opts ...grpc.CallOption) (*AddSourceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AddSourceResponse)
+	err := c.cc.Invoke(ctx, ArtifactHandoffResolver_AddSource_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *artifactHandoffResolverClient) UpdateSourceState(ctx context.Context, in *UpdateSourceStateRequest, opts ...grpc.CallOption) (*UpdateSourceStateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateSourceStateResponse)
+	err := c.cc.Invoke(ctx, ArtifactHandoffResolver_UpdateSourceState_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *artifactHandoffResolverClient) ListSources(ctx context.Context, in *ListSourcesRequest, opts ...grpc.CallOption) (*ListSourcesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListSourcesResponse)
+	err := c.cc.Invoke(ctx, ArtifactHandoffResolver_ListSources_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *artifactHandoffResolverClient) VerifySource(ctx context.Context, in *VerifySourceRequest, opts ...grpc.CallOption) (*VerifySourceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VerifySourceResponse)
+	err := c.cc.Invoke(ctx, ArtifactHandoffResolver_VerifySource_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +166,10 @@ func (c *artifactHandoffResolverClient) GetSampleRunLifecycle(ctx context.Contex
 // for forward compatibility.
 type ArtifactHandoffResolverServer interface {
 	RegisterArtifact(context.Context, *RegisterArtifactRequest) (*RegisterArtifactResponse, error)
+	AddSource(context.Context, *AddSourceRequest) (*AddSourceResponse, error)
+	UpdateSourceState(context.Context, *UpdateSourceStateRequest) (*UpdateSourceStateResponse, error)
+	ListSources(context.Context, *ListSourcesRequest) (*ListSourcesResponse, error)
+	VerifySource(context.Context, *VerifySourceRequest) (*VerifySourceResponse, error)
 	ResolveHandoff(context.Context, *ResolveHandoffRequest) (*ResolveHandoffResponse, error)
 	NotifyNodeTerminal(context.Context, *NotifyNodeTerminalRequest) (*NotifyNodeTerminalResponse, error)
 	FinalizeSampleRun(context.Context, *FinalizeSampleRunRequest) (*FinalizeSampleRunResponse, error)
@@ -135,6 +187,18 @@ type UnimplementedArtifactHandoffResolverServer struct{}
 
 func (UnimplementedArtifactHandoffResolverServer) RegisterArtifact(context.Context, *RegisterArtifactRequest) (*RegisterArtifactResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RegisterArtifact not implemented")
+}
+func (UnimplementedArtifactHandoffResolverServer) AddSource(context.Context, *AddSourceRequest) (*AddSourceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddSource not implemented")
+}
+func (UnimplementedArtifactHandoffResolverServer) UpdateSourceState(context.Context, *UpdateSourceStateRequest) (*UpdateSourceStateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateSourceState not implemented")
+}
+func (UnimplementedArtifactHandoffResolverServer) ListSources(context.Context, *ListSourcesRequest) (*ListSourcesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListSources not implemented")
+}
+func (UnimplementedArtifactHandoffResolverServer) VerifySource(context.Context, *VerifySourceRequest) (*VerifySourceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method VerifySource not implemented")
 }
 func (UnimplementedArtifactHandoffResolverServer) ResolveHandoff(context.Context, *ResolveHandoffRequest) (*ResolveHandoffResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResolveHandoff not implemented")
@@ -187,6 +251,78 @@ func _ArtifactHandoffResolver_RegisterArtifact_Handler(srv interface{}, ctx cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ArtifactHandoffResolverServer).RegisterArtifact(ctx, req.(*RegisterArtifactRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ArtifactHandoffResolver_AddSource_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddSourceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArtifactHandoffResolverServer).AddSource(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ArtifactHandoffResolver_AddSource_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArtifactHandoffResolverServer).AddSource(ctx, req.(*AddSourceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ArtifactHandoffResolver_UpdateSourceState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateSourceStateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArtifactHandoffResolverServer).UpdateSourceState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ArtifactHandoffResolver_UpdateSourceState_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArtifactHandoffResolverServer).UpdateSourceState(ctx, req.(*UpdateSourceStateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ArtifactHandoffResolver_ListSources_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListSourcesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArtifactHandoffResolverServer).ListSources(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ArtifactHandoffResolver_ListSources_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArtifactHandoffResolverServer).ListSources(ctx, req.(*ListSourcesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ArtifactHandoffResolver_VerifySource_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VerifySourceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArtifactHandoffResolverServer).VerifySource(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ArtifactHandoffResolver_VerifySource_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArtifactHandoffResolverServer).VerifySource(ctx, req.(*VerifySourceRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -291,6 +427,22 @@ var ArtifactHandoffResolver_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RegisterArtifact",
 			Handler:    _ArtifactHandoffResolver_RegisterArtifact_Handler,
+		},
+		{
+			MethodName: "AddSource",
+			Handler:    _ArtifactHandoffResolver_AddSource_Handler,
+		},
+		{
+			MethodName: "UpdateSourceState",
+			Handler:    _ArtifactHandoffResolver_UpdateSourceState_Handler,
+		},
+		{
+			MethodName: "ListSources",
+			Handler:    _ArtifactHandoffResolver_ListSources_Handler,
+		},
+		{
+			MethodName: "VerifySource",
+			Handler:    _ArtifactHandoffResolver_VerifySource_Handler,
 		},
 		{
 			MethodName: "ResolveHandoff",

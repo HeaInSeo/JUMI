@@ -24,11 +24,13 @@ PKGS_REGRESSION := ./cmd/... ./pkg/executor ./pkg/handoff ./pkg/metrics ./pkg/ob
 PKGS_COVER := ./cmd/... ./pkg/...
 PKGS_SECURITY := ./cmd/... ./pkg/...
 
-.PHONY: test test-regression coverage fmt vet lint lint-depguard lint-security vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-align-check runtime-smoke-remote ko-publish-remote ko-smoke-remote
+.PHONY: test test-regression coverage fmt vet lint lint-depguard lint-security vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-align-check runtime-smoke-remote ko-publish-remote ko-smoke-remote verify-sprint-3d-baseline
 
 REMOTE_SSH_TARGET ?= seoy@100.123.80.48
 REGISTRY_HOST ?= harbor.10.113.24.96.nip.io
 RUNTIME_IMAGE_LOCAL_TAG ?= jumi-runtime:dev
+AH_REPO_ROOT ?= /tmp/artifact-handoff-3c1
+NAN_REPO_ROOT ?= /tmp/node-artifact-runtime
 PREFLIGHT_PUBLISH_ENV_SCRIPT := $(CURDIR)/scripts/preflight-publish-env.sh
 PREFLIGHT_KO_REMOTE_SCRIPT := $(CURDIR)/scripts/preflight-ko-remote.sh
 PUBLISH_JUMI_SERVICE_KO_REMOTE_SCRIPT := $(CURDIR)/scripts/publish-jumi-service-ko-remote.sh
@@ -117,10 +119,10 @@ vuln-all: govulncheck
 	echo "govulncheck_all_exit=$$?" | tee "$(REPORT_DIR)/govulncheck-all.summary"
 
 handoff-proto-sync-check:
-	test -f "$(AH_PROTO_DIR)/ah_v1.pb.go"
-	test -f "$(AH_PROTO_DIR)/ah_v1_grpc.pb.go"
-	diff -u "$(AH_PROTO_DIR)/ah_v1.pb.go" "$(JUMI_AH_PROTO_DIR)/ah_v1.pb.go"
-	diff -u "$(AH_PROTO_DIR)/ah_v1_grpc.pb.go" "$(JUMI_AH_PROTO_DIR)/ah_v1_grpc.pb.go"
+	test -f "$(AH_REPO_ROOT)/api/proto/ahv1/ah_v1.pb.go"
+	test -f "$(AH_REPO_ROOT)/api/proto/ahv1/ah_v1_grpc.pb.go"
+	diff -u "$(AH_REPO_ROOT)/api/proto/ahv1/ah_v1.pb.go" "$(JUMI_AH_PROTO_DIR)/ah_v1.pb.go"
+	diff -u "$(AH_REPO_ROOT)/api/proto/ahv1/ah_v1_grpc.pb.go" "$(JUMI_AH_PROTO_DIR)/ah_v1_grpc.pb.go"
 
 smoke-tool-build:
 	@mkdir -p "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)" "$(GOMODCACHE_DIR)"
@@ -152,3 +154,11 @@ ko-publish-remote: preflight-ko-remote
 
 ko-smoke-remote: ko-publish-remote
 	REMOTE_JUMI_REPO_ROOT="/tmp/jumi-runtime-refresh" ALLOW_LOCAL_CHECKOUT_FALLBACK=true ./scripts/run-jumi-ah-dev-live-smoke-eval.sh
+
+verify-sprint-3d-baseline: runtime-align-check handoff-proto-sync-check
+	@mkdir -p "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)"
+	env GOROOT=/usr/local/go $(GOENV) go test ./pkg/backend ./pkg/executor ./pkg/handoff
+	test -d "$(AH_REPO_ROOT)"
+	cd "$(AH_REPO_ROOT)" && env TMPDIR=/tmp/ah-addsource-tmp GOCACHE=/tmp/ah-addsource-cache GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/domain ./pkg/inventory ./pkg/resolver
+	test -d "$(NAN_REPO_ROOT)"
+	cd "$(NAN_REPO_ROOT)" && env TMPDIR=/tmp/nan-node-contract-tmp GOCACHE=/tmp/nan-node-contract-cache GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/contract ./pkg/runtimehelper ./cmd/node-artifact-runtime
