@@ -235,6 +235,13 @@ func TestToSpawnerRunSpecWrapsCommandForRuntimeHelperMode(t *testing.T) {
 		Args:     []string{"-c", "echo hi > /out/report"},
 		Outputs:  []string{"report"},
 		Metadata: map[string]string{"jumi.outputManifestMode": "runtime-helper"},
+		Env: map[string]string{
+			"JUMI_INPUT_DATASET_URI":                  "http://artifact.local/dataset",
+			"JUMI_INPUT_DATASET_EXPECTED_DIGEST":      "sha256:abc",
+			"JUMI_INPUT_DATASET_EXPECTED_SIZE_BYTES":  "17",
+			"JUMI_INPUT_DATASET_MATERIALIZATION_MODE": "remote_fetch",
+			"JUMI_INPUT_DATASET_LOCAL_PATH":           "inputs/result",
+		},
 	}
 
 	got := toSpawnerRunSpec(run, node)
@@ -276,6 +283,14 @@ func TestToSpawnerRunSpecWrapsCommandForRuntimeHelperMode(t *testing.T) {
 			Name string `json:"name"`
 			Path string `json:"path"`
 		} `json:"outputs"`
+		Inputs []struct {
+			Name                string `json:"name"`
+			URI                 string `json:"uri"`
+			ExpectedDigest      string `json:"expectedDigest"`
+			ExpectedSizeBytes   int64  `json:"expectedSizeBytes"`
+			MaterializationMode string `json:"materializationMode"`
+			LocalPath           string `json:"localPath"`
+		} `json:"inputs"`
 	}
 	if err := json.Unmarshal([]byte(raw), &contract); err != nil {
 		t.Fatalf("unmarshal contract json: %v", err)
@@ -291,6 +306,12 @@ func TestToSpawnerRunSpecWrapsCommandForRuntimeHelperMode(t *testing.T) {
 	}
 	if len(contract.Outputs) != 1 || contract.Outputs[0].Name != "report" || contract.Outputs[0].Path != "report" {
 		t.Fatalf("unexpected contract outputs: %+v", contract.Outputs)
+	}
+	if len(contract.Inputs) != 1 {
+		t.Fatalf("unexpected contract inputs: %+v", contract.Inputs)
+	}
+	if got := contract.Inputs[0]; got.Name != "dataset" || got.URI != "http://artifact.local/dataset" || got.ExpectedDigest != "sha256:abc" || got.ExpectedSizeBytes != 17 || got.MaterializationMode != "remote_fetch" || got.LocalPath != "inputs/result" {
+		t.Fatalf("unexpected contract input: %+v", got)
 	}
 }
 

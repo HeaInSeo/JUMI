@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -781,6 +782,7 @@ type nodeContractFile struct {
 	NodeID        string               `json:"nodeId"`
 	AttemptID     string               `json:"attemptId,omitempty"`
 	Paths         nodeContractPaths    `json:"paths"`
+	Inputs        []nodeContractInput  `json:"inputs,omitempty"`
 	Outputs       []nodeContractOutput `json:"outputs,omitempty"`
 	Runtime       nodeContractRuntime  `json:"runtime,omitempty"`
 }
@@ -797,6 +799,25 @@ type nodeContractOutput struct {
 	Path     string `json:"path"`
 	Required bool   `json:"required,omitempty"`
 	Type     string `json:"type,omitempty"`
+}
+
+type nodeContractInput struct {
+	Name                string `json:"name"`
+	URI                 string `json:"uri,omitempty"`
+	ExpectedDigest      string `json:"expectedDigest,omitempty"`
+	ExpectedSizeBytes   int64  `json:"expectedSizeBytes,omitempty"`
+	MaterializationMode string `json:"materializationMode,omitempty"`
+	NodeLocalPath       string `json:"nodeLocalPath,omitempty"`
+	LocalPath           string `json:"localPath,omitempty"`
+}
+
+type partialNodeContractInput struct {
+	uri                 string
+	expectedDigest      string
+	expectedSizeBytes   string
+	materializationMode string
+	nodeLocalPath       string
+	localPath           string
 }
 
 type nodeContractRuntime struct {
@@ -838,11 +859,88 @@ func buildNodeContractJSON(run spec.RunRecord, node spec.Node, outputs []string)
 			})
 		}
 	}
+	contract.Inputs = buildNodeContractInputs(node.Env)
 	raw, err := json.Marshal(contract)
 	if err != nil {
 		return "", err
 	}
 	return string(raw), nil
+}
+
+func buildNodeContractInputs(env map[string]string) []nodeContractInput {
+	byBase := map[string]*partialNodeContractInput{}
+	for key, value := range env {
+		if !strings.HasPrefix(key, "JUMI_INPUT_") {
+			continue
+		}
+		switch {
+		case strings.HasSuffix(key, "_URI"):
+			base := strings.TrimSuffix(strings.TrimPrefix(key, "JUMI_INPUT_"), "_URI")
+			p := ensureNodeContractInput(byBase, base)
+			p.uri = value
+		case strings.HasSuffix(key, "_EXPECTED_DIGEST"):
+			base := strings.TrimSuffix(strings.TrimPrefix(key, "JUMI_INPUT_"), "_EXPECTED_DIGEST")
+			p := ensureNodeContractInput(byBase, base)
+			p.expectedDigest = value
+		case strings.HasSuffix(key, "_EXPECTED_SIZE_BYTES"):
+			base := strings.TrimSuffix(strings.TrimPrefix(key, "JUMI_INPUT_"), "_EXPECTED_SIZE_BYTES")
+			p := ensureNodeContractInput(byBase, base)
+			p.expectedSizeBytes = value
+		case strings.HasSuffix(key, "_MATERIALIZATION_MODE"):
+			base := strings.TrimSuffix(strings.TrimPrefix(key, "JUMI_INPUT_"), "_MATERIALIZATION_MODE")
+			p := ensureNodeContractInput(byBase, base)
+			p.materializationMode = value
+		case strings.HasSuffix(key, "_NODE_LOCAL_PATH"):
+			base := strings.TrimSuffix(strings.TrimPrefix(key, "JUMI_INPUT_"), "_NODE_LOCAL_PATH")
+			p := ensureNodeContractInput(byBase, base)
+			p.nodeLocalPath = value
+		case strings.HasSuffix(key, "_LOCAL_PATH"):
+			base := strings.TrimSuffix(strings.TrimPrefix(key, "JUMI_INPUT_"), "_LOCAL_PATH")
+			p := ensureNodeContractInput(byBase, base)
+			p.localPath = value
+		}
+	}
+	if len(byBase) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(byBase))
+	for base := range byBase {
+		names = append(names, base)
+	}
+	sort.Strings(names)
+	inputs := make([]nodeContractInput, 0, len(names))
+	for _, base := range names {
+		p := byBase[base]
+		mode := strings.TrimSpace(p.materializationMode)
+		if mode == "" || mode == "none" {
+			continue
+		}
+		input := nodeContractInput{
+			Name:                strings.ToLower(base),
+			URI:                 strings.TrimSpace(p.uri),
+			ExpectedDigest:      strings.TrimSpace(p.expectedDigest),
+			MaterializationMode: mode,
+			NodeLocalPath:       strings.TrimSpace(p.nodeLocalPath),
+			LocalPath:           strings.TrimSpace(p.localPath),
+		}
+		if sizeText := strings.TrimSpace(p.expectedSizeBytes); sizeText != "" {
+			if size, err := strconv.ParseInt(sizeText, 10, 64); err == nil && size >= 0 {
+				input.ExpectedSizeBytes = size
+			}
+		}
+		inputs = append(inputs, input)
+	}
+	if len(inputs) == 0 {
+		return nil
+	}
+	return inputs
+}
+
+func ensureNodeContractInput(byBase map[string]*partialNodeContractInput, base string) *partialNodeContractInput {
+	if byBase[base] == nil {
+		byBase[base] = &partialNodeContractInput{}
+	}
+	return byBase[base]
 }
 
 func contractFirstNonEmpty(values ...string) string {
