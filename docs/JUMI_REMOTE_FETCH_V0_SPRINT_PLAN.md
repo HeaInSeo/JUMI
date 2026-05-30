@@ -150,6 +150,7 @@ v0 기준으로 URI는 두 층으로 본다.
 | Sprint 3C-3E | guardrail closure / contract parity | Completed |
 | Sprint 3C-4A | node-contract input baseline | Completed |
 | Sprint 3D-1 | AddSource lifecycle minimal API | Completed |
+| Sprint 3D-2 | source verifier minimal API | Completed |
 
 ### 4.1 Sprint 3C-3E 완료 메모
 
@@ -210,6 +211,28 @@ env TMPDIR=/tmp/nan-node-contract-tmp GOCACHE=/tmp/nan-node-contract-cache GOROO
 - source verifier / health checker
 - post-scheduling re-resolve
 - cleanup / TTL
+
+Verification commands:
+
+```bash
+env TMPDIR=/tmp/ah-addsource-tmp GOCACHE=/tmp/ah-addsource-cache GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/domain ./pkg/inventory ./pkg/resolver
+```
+
+### 4.4 Sprint 3D-2 완료 메모
+
+범위:
+
+- `artifact-handoff`에 `VerifySource` 최소 API 추가
+- source record에 `lastVerifiedAt`, `lastError` 필드 추가
+- verifier는 기존 source guardrail을 재사용해 source를 `ready` 또는 `unreachable`로 갱신
+- HTTP/gRPC parity 유지
+
+의도적으로 하지 않은 것:
+
+- background verifier loop
+- scheduler/post-scheduling re-resolve 연동
+- cleanup / TTL
+- source freshness 정책 자동화
 
 Verification commands:
 
