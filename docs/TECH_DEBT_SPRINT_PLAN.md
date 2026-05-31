@@ -22,22 +22,22 @@
 
 ### node-artifact-runtime (nan)
 
-- [ ] **nan-P0-1** `helper.go:674` SSRF — HTTP source URL에 RFC1918 사설 IP 미차단 (`net.IP.IsPrivate()` 추가)
-- [ ] **nan-P0-2** `helper.go:705` SSRF — DNS rebinding 방어 없음 (resolve 후 IP 재검증 미적용)
-- [ ] **nan-P0-3** `helper.go:872` 보안 — CAS output symlink 검증 없음 (컨테이너 외부 경로 쓰기 가능)
-- [ ] **nan-P0-4** `helper.go:308` 버그 — `AllowDirectoryOutput` 조건 논리 반전
+- [x] **nan-P0-1** `helper.go:674` SSRF — HTTP source URL에 RFC1918 사설 IP 미차단 (`net.IP.IsPrivate()` 추가)
+- [x] **nan-P0-2** `helper.go:705` SSRF — DNS rebinding 방어 없음 (resolve 후 IP 재검증 미적용)
+- [x] **nan-P0-3** `helper.go:872` 보안 — CAS output symlink 검증 없음 (컨테이너 외부 경로 쓰기 가능)
+- [x] **nan-P0-4** `helper.go:308` 버그 — `AllowDirectoryOutput` 조건 논리 반전
 
 ### JUMI
 
-- [ ] **jumi-P0-1** `executor.go:158` 버그 — Cancel이 `BuildingBindings/ResolvingInputs/Starting` 상태에서 k8s Job 미정리 (zombie 누적)
-- [ ] **jumi-P0-2** `executor.go:196,199` 버그 — `finalizeRun` 에러 완전 무시 (run 상태 미확정)
+- [x] **jumi-P0-1** `executor.go:158` 버그 — Cancel이 `BuildingBindings/ResolvingInputs/Starting` 상태에서 k8s Job 미정리 (zombie 누적)
+- [x] **jumi-P0-2** `executor.go:196,199` 버그 — `finalizeRun` 에러 완전 무시 (run 상태 미확정)
 - [~] **jumi-P0-3** `main.go:65` 보안 — gRPC 서버 TLS/인증 없음 → **mesh-internal profile로 대체 결정 (2026-05-31). 앱 레벨 TLS 미구현. 보안 기준: NetworkPolicy + mesh mTLS + AuthorizationPolicy.**
-- [ ] **jumi-P0-4** `spawner_k8s.go:1274` 버그 — 63자 truncation 후 trailing dash → k8s Job 이름 invalid
+- [x] **jumi-P0-4** `spawner_k8s.go:1274` 버그 — 63자 truncation 후 trailing dash → k8s Job 이름 invalid
 
 ### artifact-handoff (AH)
 
-- [ ] **ah-P0-1** `main.go:73` 데이터 무결성 — `grpcServer.GracefulStop()` 무제한 대기 → SIGKILL 시 SQLite WAL 손상
-- [ ] **ah-P0-2** `service.go:897` 데이터 무결성 — `FinalizeSampleRun` 재호출 시 `RetentionUntil` 덮어씀 (GC 무기한 지연)
+- [x] **ah-P0-1** `main.go:73` 데이터 무결성 — `grpcServer.GracefulStop()` 무제한 대기 → SIGKILL 시 SQLite WAL 손상
+- [x] **ah-P0-2** `service.go:897` 데이터 무결성 — `FinalizeSampleRun` 재호출 시 `RetentionUntil` 덮어씀 (GC 무기한 지연)
 
 ---
 
@@ -45,14 +45,14 @@
 
 ### Sprint P0-A: AH 데이터 무결성
 
-**상태:** `[ ] 대기 중`  
+**상태:** `[x] 완료 (2026-05-31, commit: 4c60f9b)`  
 **대상 레포:** artifact-handoff  
 **이유:** 가장 빠르게 수정 가능하고 데이터 손실 위험이 즉각적  
 
 **항목:**
 
-- [ ] ah-P0-1: `grpcServer.GracefulStop()` timeout 추가
-- [ ] ah-P0-2: `FinalizeSampleRun` idempotency 보장
+- [x] ah-P0-1: `grpcServer.GracefulStop()` timeout 추가
+- [x] ah-P0-2: `FinalizeSampleRun` idempotency 보장
 
 **수정 내용:**
 
@@ -80,7 +80,7 @@ if lifecycle.Finalized {
 
 ### Sprint P0-B: JUMI executor 버그
 
-**상태:** `[ ] 대기 중` (P0-A 완료 후 시작)  
+**상태:** `[x] 완료 (2026-05-31, commit: c1dce95)`  
 **대상 레포:** JUMI  
 
 **항목:**
@@ -95,7 +95,7 @@ if lifecycle.Finalized {
 
 ### Sprint P0-C: nan 보안 하드닝
 
-**상태:** `[ ] 대기 중` (P0-B 완료 후 시작)  
+**상태:** `[x] 완료 (2026-05-31, commit: 18e7f59)`  
 **대상 레포:** node-artifact-runtime  
 
 **항목 (순서 준수):**
@@ -215,4 +215,6 @@ if lifecycle.Finalized {
 
 | 스프린트 | 완료일 | 커밋 |
 |---|---|---|
-| (없음 — 2026-05-31 감사 이후 아직 시작 안 함) | | |
+| Sprint P0-A: AH 데이터 무결성 | 2026-05-31 | 4c60f9b (artifact-handoff) |
+| Sprint P0-B: JUMI executor 버그 | 2026-05-31 | c1dce95 (JUMI) |
+| Sprint P0-C: nan 보안 하드닝 | 2026-05-31 | 18e7f59 (node-artifact-runtime) |

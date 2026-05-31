@@ -1,0 +1,130 @@
+# NetworkPolicy for the jumi-ah-dev namespace.
+#
+# Security profile: mesh-internal transport.
+# Transport-layer encryption and service identity are provided by the sidecar
+# proxy (Istio / Linkerd mTLS). These NetworkPolicy rules enforce which pods
+# may open connections at the IP layer; the mesh AuthorizationPolicy enforces
+# L7 identity.
+#
+# Topology:
+#   jumi       → artifact-handoff  :8080 (HTTP)  :9090 (gRPC)
+#   jumi       → Kubernetes API    :443
+#   external   → jumi              :8080 (operator HTTP API)
+#   everything → kube-dns          :53
+
+---
+# Deny all ingress and egress by default in the namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: jumi-ah-dev
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# jumi: allow egress to artifact-handoff on HTTP and gRPC ports.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jumi-to-artifact-handoff
+  namespace: jumi-ah-dev
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: jumi
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 8080
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+      to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: artifact-handoff
+
+---
+# jumi: allow egress to Kubernetes API server.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jumi-to-kube-apiserver
+  namespace: jumi-ah-dev
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: jumi
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+
+---
+# jumi: allow ingress from the operator (HTTP API port only).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: operator-to-jumi
+  namespace: jumi-ah-dev
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: jumi
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 8080
+          protocol: TCP
+
+---
+# artifact-handoff: allow ingress from jumi only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jumi-to-artifact-handoff-ingress
+  namespace: jumi-ah-dev
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: artifact-handoff
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 8080
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+      from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jumi
+
+---
+# All pods: allow egress to kube-dns (UDP and TCP).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: jumi-ah-dev
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

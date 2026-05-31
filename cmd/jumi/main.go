@@ -62,6 +62,9 @@ func runServe() {
 	service := api.NewService(reg, engine)
 
 	httpServer := newHTTPServer(reg, adapter, engine)
+	// mesh-internal: transport security (mTLS) is handled by the sidecar proxy.
+	// future-profile: add app-level TLS via grpc.Creds(credentials.NewTLS(...))
+	// when operating outside a service mesh.
 	grpcServer := grpc.NewServer()
 	api.RegisterRunService(grpcServer, service)
 
