@@ -150,9 +150,9 @@ if lifecycle.Finalized {
 ### node-artifact-runtime (nan)
 
 - [ ] **nan-P1-1** `InspectOnSuccessOnly` 미구현 — 항상 전체 inspect 실행
-- [ ] **nan-P1-2** `FailOnMissingRequiredOutput` 조건 반전 버그
-- [ ] **nan-P1-3** `http.DefaultTransport` type assertion panic 가능
-- [ ] **nan-P1-4** `commandEnv` 내부 에러 silent 무시
+- [x] **nan-P1-2** `FailOnMissingRequiredOutput` 조건 반전 버그
+- [x] **nan-P1-3** `http.DefaultTransport` type assertion panic 가능
+- [x] **nan-P1-4** `commandEnv` 내부 에러 silent 무시
 - [ ] **nan-P1-5** 전체 실행 타임아웃 없음 — 무한 실행 가능
 - [ ] **nan-P1-6** symlink TOCTOU (check→use 사이 교체 가능)
 
@@ -167,14 +167,14 @@ if lifecycle.Finalized {
 
 ### artifact-handoff (AH)
 
-- [ ] **ah-P1-1** `main.go:21` 기본 DSN=`"memory"` — env 없으면 무음 데이터 손실 (경고 로그 추가)
-- [ ] **ah-P1-2** `sqlite.go:57` SQLite 핵심 컬럼 인덱스 없음 (artifact_id, sample_run_id 등)
-- [ ] **ah-P1-3** `grpc.go` 모든 gRPC 에러가 `codes.Unknown` — 클라이언트 retry 오작동
-- [ ] **ah-P1-4** `http.go` HTTP POST body 크기 제한 누락 — OOM 가능
-- [ ] **ah-P1-5** `service.go:808` 사설 IP(`10.x`, `172.16-31.x`, `192.168.x`) 미차단 — SSRF
-- [ ] **ah-P1-6** `ids.go:12` 키 구분자 `/` 인젝션 → 키 충돌
-- [ ] **ah-P1-7** `sqlite.go:57` SQLite 마이그레이션 비트랜잭션 실행
-- [ ] **ah-P1-8** `main.go:34` HTTP `ReadTimeout`/`WriteTimeout` 없음 (Slowloris)
+- [x] **ah-P1-1** `main.go:21` 기본 DSN=`"memory"` — env 없으면 무음 데이터 손실 (경고 로그 추가)
+- [x] **ah-P1-2** `sqlite.go:57` SQLite 핵심 컬럼 인덱스 없음 (artifact_id, sample_run_id 등)
+- [x] **ah-P1-3** `grpc.go` 모든 gRPC 에러가 `codes.Unknown` — 클라이언트 retry 오작동
+- [x] **ah-P1-4** `http.go` HTTP POST body 크기 제한 누락 — OOM 가능
+- [x] **ah-P1-5** `service.go:808` 사설 IP(`10.x`, `172.16-31.x`, `192.168.x`) 미차단 — SSRF
+- [x] **ah-P1-6** `ids.go:12` 키 구분자 `/` 인젝션 → 키 충돌
+- [x] **ah-P1-7** `sqlite.go:57` SQLite 마이그레이션 비트랜잭션 실행
+- [x] **ah-P1-8** `main.go:34` HTTP `ReadTimeout`/`WriteTimeout` 없음 (Slowloris)
 
 ---
 
@@ -219,3 +219,7 @@ if lifecycle.Finalized {
 | Sprint P0-B: JUMI executor 버그 | 2026-05-31 | c1dce95 (JUMI) |
 | Sprint P0-C: nan 보안 하드닝 | 2026-05-31 | 18e7f59 (node-artifact-runtime) |
 | Sprint P0-D: JUMI gRPC 보안 프로파일 | 2026-05-31 | 5a6a749 (JUMI) |
+| Sprint P1-A: AH+nan 빠른 수정 | 2026-05-31 | — (여러 커밋, artifact-handoff+nan) |
+| Sprint P1-B: AH SQLite 인덱스+마이그레이션 트랜잭션 | 2026-05-31 | 9131b42 (artifact-handoff) |
+| Sprint P1-C: AH gRPC 에러 코드 | 2026-05-31 | f548abb (artifact-handoff) |
+| Sprint P1-D: AH 키 구분자 인젝션 방지 | 2026-05-31 | 1384c53 (artifact-handoff) |
