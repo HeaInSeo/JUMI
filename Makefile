@@ -19,17 +19,20 @@ AH_PROTO_DIR ?= ../artifact-handoff/api/proto/ahv1
 JUMI_AH_PROTO_DIR := $(CURDIR)/pkg/handoff/ahv1
 
 PKGS_ALL := ./...
-PKGS_CORE := ./cmd/... ./pkg/...
+PKGS_CORE := ./cmd/... ./internal/... ./pkg/...
 PKGS_REGRESSION := ./cmd/... ./pkg/executor ./pkg/handoff ./pkg/metrics ./pkg/observe
-PKGS_COVER := ./cmd/... ./pkg/...
+PKGS_COVER := ./cmd/... ./internal/... ./pkg/...
 PKGS_SECURITY := ./cmd/... ./pkg/...
+# Explicit coverpkg list: excludes pkg/handoff/ahv1 (generated protobuf, 297 functions all 0%)
+PKGS_COVERPKG := github.com/HeaInSeo/JUMI/cmd/jumi,github.com/HeaInSeo/JUMI/internal/util,github.com/HeaInSeo/JUMI/pkg/api,github.com/HeaInSeo/JUMI/pkg/backend,github.com/HeaInSeo/JUMI/pkg/executor,github.com/HeaInSeo/JUMI/pkg/handoff,github.com/HeaInSeo/JUMI/pkg/metrics,github.com/HeaInSeo/JUMI/pkg/observe,github.com/HeaInSeo/JUMI/pkg/provenance,github.com/HeaInSeo/JUMI/pkg/registry,github.com/HeaInSeo/JUMI/pkg/spec
+COVERAGE_THRESHOLD := 70
 
 JUMI_BIN := $(LOCALBIN)/jumi
 AH_GRPC_TARGET ?=
 AH_HTTP_URL ?=
 SAMPLE_RUN_ID ?=
 
-.PHONY: test test-regression coverage fmt vet lint lint-depguard lint-security vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-align-check runtime-smoke-remote ko-publish-remote ko-smoke-remote verify-sprint-3d-baseline verify-sprint-3d-remote lifecycle-check
+.PHONY: test test-regression coverage coverage-check fmt vet lint lint-depguard lint-security vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-align-check runtime-smoke-remote ko-publish-remote ko-smoke-remote verify-sprint-3d-baseline verify-sprint-3d-remote lifecycle-check
 
 REMOTE_SSH_TARGET ?= seoy@100.123.80.48
 REGISTRY_HOST ?= harbor.10.113.24.96.nip.io
@@ -50,8 +53,17 @@ test-regression:
 
 coverage:
 	@mkdir -p "$(REPORT_DIR)" "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)"
-	$(GOENV) go test $(PKGS_COVER) -coverprofile="$(REPORT_DIR)/cover.out" -covermode=atomic
+	$(GOENV) go test $(PKGS_COVER) -coverprofile="$(REPORT_DIR)/cover.out" -covermode=atomic -coverpkg="$(PKGS_COVERPKG)"
 	go tool cover -func="$(REPORT_DIR)/cover.out" | tee "$(REPORT_DIR)/coverage.txt"
+
+coverage-check: coverage
+	@TOTAL=$$(go tool cover -func="$(REPORT_DIR)/cover.out" | awk '/^total:/{gsub(/%/,""); print int($$3)}'); \
+	echo "[jumi] total coverage: $${TOTAL}%"; \
+	if [ "$${TOTAL}" -lt "$(COVERAGE_THRESHOLD)" ]; then \
+		echo "FAIL: coverage $${TOTAL}% is below threshold $(COVERAGE_THRESHOLD)%"; exit 1; \
+	else \
+		echo "OK: coverage $${TOTAL}% >= $(COVERAGE_THRESHOLD)%"; \
+	fi
 
 fmt:
 	go fmt $(PKGS_ALL)

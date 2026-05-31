@@ -38,8 +38,8 @@ jobs:
       - name: Run regression suite
         run: make test-regression
 
-      - name: Generate coverage report
-        run: make coverage
+      - name: Generate coverage report and enforce threshold
+        run: make coverage-check
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4

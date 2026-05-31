@@ -378,13 +378,6 @@ func TestValidateObservedManifestRejectsUnknownSchemaVersion(t *testing.T) {
 	}
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func TestBuildDirectK8sJobUsesServiceAccountAndWorkingDir(t *testing.T) {
 	job := buildDirectK8sJob(spapi.RunSpec{
 		RunID:    "run-1-produce",

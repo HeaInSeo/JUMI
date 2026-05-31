@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1549,14 +1548,6 @@ func isTransientResolveBindingError(err error) bool {
 		}
 	}
 	return false
-}
-
-func artifactOutputURI(runID, nodeID, outputName string) string {
-	return fmt.Sprintf("jumi://runs/%s/nodes/%s/outputs/%s",
-		url.PathEscape(runID),
-		url.PathEscape(nodeID),
-		url.PathEscape(outputName),
-	)
 }
 
 func (e *DagEngine) registerActiveRun(runID string, active *activeRun) {
