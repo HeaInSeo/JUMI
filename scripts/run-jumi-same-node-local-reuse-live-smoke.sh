@@ -19,12 +19,9 @@ BACKUP_REGISTRY_HOST="${BACKUP_REGISTRY_HOST:-ghcr.io}"
 BACKUP_RUNTIME_SHORTCUT_IMAGE_REPO="${BACKUP_RUNTIME_SHORTCUT_IMAGE_REPO:-ghcr.io/heainseo/jumi}"
 BACKUP_RUNTIME_SHORTCUT_IMAGE_TAG="${BACKUP_RUNTIME_SHORTCUT_IMAGE_TAG:-${RUNTIME_SHORTCUT_IMAGE_TAG}}"
 BACKUP_RUNTIME_SHORTCUT_IMAGE="${BACKUP_RUNTIME_SHORTCUT_IMAGE:-${BACKUP_RUNTIME_SHORTCUT_IMAGE_REPO}:${BACKUP_RUNTIME_SHORTCUT_IMAGE_TAG}}"
-AH_IMAGE_REPO="${AH_IMAGE_REPO:-harbor.10.113.24.96.nip.io/batch-int/artifact-handoff}"
-AH_IMAGE_TAG="${AH_IMAGE_TAG:-node-local-handoff-$(date -u +%Y%m%d%H%M%S)}"
-AH_IMAGE="${AH_IMAGE:-${AH_IMAGE_REPO}:${AH_IMAGE_TAG}}"
-BACKUP_AH_IMAGE_REPO="${BACKUP_AH_IMAGE_REPO:-ghcr.io/heainseo/artifact-handoff}"
-BACKUP_AH_IMAGE_TAG="${BACKUP_AH_IMAGE_TAG:-${AH_IMAGE_TAG}}"
-BACKUP_AH_IMAGE="${BACKUP_AH_IMAGE:-${BACKUP_AH_IMAGE_REPO}:${BACKUP_AH_IMAGE_TAG}}"
+AH_KO_DOCKER_REPO="${AH_KO_DOCKER_REPO:-harbor.10.113.24.96.nip.io/batch-int}"
+BACKUP_AH_KO_DOCKER_REPO="${BACKUP_AH_KO_DOCKER_REPO:-ghcr.io/heainseo}"
+REMOTE_KO_BIN="${REMOTE_KO_BIN:-\$HOME/.local/bin/ko}"
 EVAL_SCRIPT="${EVAL_SCRIPT:-${ROOT_DIR}/scripts/run-jumi-ah-dev-live-smoke-eval.sh}"
 PUBLISH_JUMI_SERVICE_SCRIPT="${PUBLISH_JUMI_SERVICE_SCRIPT:-${ROOT_DIR}/scripts/publish-jumi-service-ko-remote.sh}"
 FIXTURE_PATH="$(mktemp "${ROOT_DIR}/artifacts/devspace/jumi-same-node-local-reuse-fixture.XXXXXX.json")"
@@ -78,19 +75,24 @@ SYNC_BACKUP_REGISTRY="${SYNC_BACKUP_REGISTRY}" \
 BACKUP_REGISTRY_HOST="${BACKUP_REGISTRY_HOST}" \
 "${PUBLISH_JUMI_SERVICE_SCRIPT}"
 
-ssh_remote "
-  set -euo pipefail
-  cd '${REMOTE_AH_REPO_ROOT}'
-  if [ '${SYNC_BACKUP_REGISTRY}' = 'true' ]; then
-    podman build -f Containerfile -t '${AH_IMAGE}' -t '${BACKUP_AH_IMAGE}' .
-  else
-    podman build -f Containerfile -t '${AH_IMAGE}' .
-  fi
-  podman push '${AH_IMAGE}'
-  if [ '${SYNC_BACKUP_REGISTRY}' = 'true' ]; then
-    podman push '${BACKUP_AH_IMAGE}'
-  fi
-"
+AH_IMAGE="$(
+  ssh_remote "
+    set -euo pipefail
+    export PATH=\$HOME/.local/bin:/usr/local/go/bin:\$PATH
+    cd '${REMOTE_AH_REPO_ROOT}'
+    export KO_DOCKER_REPO='${AH_KO_DOCKER_REPO}'
+    ${REMOTE_KO_BIN} build -B ./cmd/artifact-handoff-resolver | tail -n 1
+  "
+)"
+if [[ "${SYNC_BACKUP_REGISTRY}" == "true" ]]; then
+  ssh_remote "
+    set -euo pipefail
+    export PATH=\$HOME/.local/bin:/usr/local/go/bin:\$PATH
+    cd '${REMOTE_AH_REPO_ROOT}'
+    export KO_DOCKER_REPO='${BACKUP_AH_KO_DOCKER_REPO}'
+    ${REMOTE_KO_BIN} build -B ./cmd/artifact-handoff-resolver >/dev/null
+  "
+fi
 
 ssh_remote "
   set -euo pipefail
