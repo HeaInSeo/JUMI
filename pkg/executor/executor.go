@@ -224,6 +224,7 @@ func (e *DagEngine) executeRun(ctx context.Context, runID string) {
 }
 
 func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *activeRun) error {
+	spec.ApplyDefaults(&run.Spec.Graph, run.Spec.Defaults)
 	d, err := dag.InitDag()
 	if err != nil {
 		return err
@@ -270,6 +271,7 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 		return nil
 	})
 	appendEvent(ctx, e.registry, spec.EventRecord{RunID: run.RunID, Type: "run.running", OccurredAt: now, Level: "info", Message: "run execution started"})
+	failFast := run.Spec.Run.FailurePolicy.Mode == "" || run.Spec.Run.FailurePolicy.Mode == "fail-fast"
 	firstErr := make(chan error, 1)
 	go func() {
 		ticker := time.NewTicker(10 * time.Millisecond)
@@ -289,14 +291,16 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 						case firstErr <- fmt.Errorf("node %s failed", node.NodeID):
 						default:
 						}
-						e.metrics.IncFastFailTrigger()
-						appendEvent(ctx, e.registry, spec.EventRecord{RunID: run.RunID, NodeID: node.NodeID, Type: "run.fast_fail.triggered", OccurredAt: time.Now().UTC(), Level: "warn", StopCause: "failed", FailureReason: firstNonEmpty(node.TerminalFailureReason, "fast_fail")})
-						active.cancel()
-						for _, handle := range e.snapshotHandles(active) {
-							// Use background ctx: active.cancel() already cancelled runCtx above.
-							_ = e.adapter.CancelNode(context.Background(), handle)
+						if failFast {
+							e.metrics.IncFastFailTrigger()
+							appendEvent(ctx, e.registry, spec.EventRecord{RunID: run.RunID, NodeID: node.NodeID, Type: "run.fast_fail.triggered", OccurredAt: time.Now().UTC(), Level: "warn", StopCause: "failed", FailureReason: firstNonEmpty(node.TerminalFailureReason, "fast_fail")})
+							active.cancel()
+							for _, handle := range e.snapshotHandles(active) {
+								// Use background ctx: active.cancel() already cancelled runCtx above.
+								_ = e.adapter.CancelNode(context.Background(), handle)
+							}
+							return
 						}
-						return
 					}
 				}
 			}
@@ -458,6 +462,8 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 	return nil
 }
 
+var errNodeRetry = errors.New("node will retry")
+
 type nodeRunner struct {
 	registry registry.Registry
 	adapter  backend.Adapter
@@ -467,6 +473,7 @@ type nodeRunner struct {
 	node     spec.Node
 	active   *activeRun
 
+	retriesRemaining        int
 	localityHints           []bindingLocalityHint
 	localityFallbackStarted bool
 	localityActualNode      string
@@ -501,12 +508,22 @@ const (
 
 const hostnameNodeSelectorKey = "kubernetes.io/hostname"
 
-func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
+func (r *nodeRunner) RunE(ctx context.Context, a interface{}) error {
 	if r.node.TimeoutPolicy.Seconds > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(r.node.TimeoutPolicy.Seconds)*time.Second)
 		defer cancel()
 	}
+	r.retriesRemaining = r.node.RetryPolicy.MaxAttempts
+	for {
+		err := r.runAttemptBody(ctx, a)
+		if err == nil || !errors.Is(err, errNodeRetry) {
+			return err
+		}
+	}
+}
+
+func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 	run, err := r.registry.GetRun(context.Background(), r.runID)
 	if err != nil {
 		return err
@@ -770,6 +787,26 @@ func (r *nodeRunner) failNode(cause error, attemptID string, terminalStopCause s
 	r.recordLocalityFallbackFailure(attemptID)
 	if r.isRunCanceled() {
 		return r.cancelNode(attemptID, "cancellation_requested")
+	}
+	if r.retriesRemaining > 0 {
+		r.retriesRemaining--
+		finishedAt := time.Now().UTC()
+		appendEvent(context.Background(), r.registry, spec.EventRecord{
+			RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID,
+			Type: "node.attempt_failed", OccurredAt: finishedAt, Level: "warn",
+			StopCause: terminalStopCause, FailureReason: failureReason,
+			Message: fmt.Sprintf("attempt failed, will retry (%d retries remaining)", r.retriesRemaining),
+		})
+		_ = r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
+			current.Status = spec.NodeStatusPending
+			current.CurrentBottleneckLocation = "retry_wait"
+			current.TerminalStopCause = ""
+			current.TerminalFailureReason = ""
+			current.FinishedAt = nil
+			current.CurrentAttemptID = ""
+			return nil
+		})
+		return errNodeRetry
 	}
 	finishedAt := time.Now().UTC()
 	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.failed", OccurredAt: finishedAt, Level: "error", StopCause: terminalStopCause, FailureReason: failureReason})

@@ -1,6 +1,9 @@
 package spec
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 func ValidateExecutableRunSpec(spec ExecutableRunSpec) error {
 	if spec.Run.RunID == "" {
@@ -88,4 +91,31 @@ func ValidateExecutableRunSpec(spec ExecutableRunSpec) error {
 		}
 	}
 	return nil
+}
+
+// ApplyDefaults fills node-level fields from Defaults when the node field is
+// the zero value. Mutates the graph nodes in-place.
+func ApplyDefaults(graph *Graph, defaults Defaults) {
+	for i := range graph.Nodes {
+		n := &graph.Nodes[i]
+		if n.ExecutionClass == "" && defaults.ExecutionClass != "" {
+			n.ExecutionClass = defaults.ExecutionClass
+		}
+		if reflect.DeepEqual(n.ResourceProfile, ResourceProfile{}) && !reflect.DeepEqual(defaults.ResourceProfile, ResourceProfile{}) {
+			n.ResourceProfile = defaults.ResourceProfile
+		}
+		if n.TimeoutPolicy.Seconds == 0 && defaults.TimeoutPolicy.Seconds != 0 {
+			n.TimeoutPolicy = defaults.TimeoutPolicy
+		}
+		if n.RetryPolicy.MaxAttempts == 0 && reflect.DeepEqual(n.RetryPolicy, RetryPolicy{}) && !reflect.DeepEqual(defaults.RetryPolicy, RetryPolicy{}) {
+			n.RetryPolicy = defaults.RetryPolicy
+		}
+		if reflect.DeepEqual(n.CleanupPolicy, CleanupPolicy{}) && !reflect.DeepEqual(defaults.CleanupPolicy, CleanupPolicy{}) {
+			n.CleanupPolicy = defaults.CleanupPolicy
+		}
+		if n.Placement == nil && defaults.Placement != nil {
+			p := *defaults.Placement
+			n.Placement = &p
+		}
+	}
 }
