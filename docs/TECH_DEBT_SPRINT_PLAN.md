@@ -149,21 +149,21 @@ if lifecycle.Finalized {
 
 ### node-artifact-runtime (nan)
 
-- [ ] **nan-P1-1** `InspectOnSuccessOnly` 미구현 — 항상 전체 inspect 실행
+- [x] **nan-P1-1** `InspectOnSuccessOnly` 미구현 — 항상 전체 inspect 실행
 - [x] **nan-P1-2** `FailOnMissingRequiredOutput` 조건 반전 버그
 - [x] **nan-P1-3** `http.DefaultTransport` type assertion panic 가능
 - [x] **nan-P1-4** `commandEnv` 내부 에러 silent 무시
-- [ ] **nan-P1-5** 전체 실행 타임아웃 없음 — 무한 실행 가능
-- [ ] **nan-P1-6** symlink TOCTOU (check→use 사이 교체 가능)
+- [x] **nan-P1-5** 전체 실행 타임아웃 없음 — 무한 실행 가능
+- [x] **nan-P1-6** symlink TOCTOU (check→use 사이 교체 가능)
 
 ### JUMI
 
-- [ ] **jumi-P1-1** `RetryPolicy.MaxAttempts` 미구현
-- [ ] **jumi-P1-2** `Defaults` 필드 미적용
-- [ ] **jumi-P1-3** `FailurePolicy.Mode` 무시 — 항상 fail-fast
-- [ ] **jumi-P1-4** 취소된 ctx를 `CancelNode`에 전달 → zombie Job 가능
-- [ ] **jumi-P1-5** `/readyz` 항상 200 반환
-- [ ] **jumi-P1-6** `WaitNode` 에러 결과 신뢰 문제
+- [x] **jumi-P1-1** `RetryPolicy.MaxAttempts` 미구현
+- [x] **jumi-P1-2** `Defaults` 필드 미적용
+- [x] **jumi-P1-3** `FailurePolicy.Mode` 무시 — 항상 fail-fast
+- [x] **jumi-P1-4** 취소된 ctx를 `CancelNode`에 전달 → zombie Job 가능
+- [x] **jumi-P1-5** `/readyz` 항상 200 반환
+- [x] **jumi-P1-6** `WaitNode` 에러 결과 신뢰 문제
 
 ### artifact-handoff (AH)
 
@@ -223,3 +223,5 @@ if lifecycle.Finalized {
 | Sprint P1-B: AH SQLite 인덱스+마이그레이션 트랜잭션 | 2026-05-31 | 9131b42 (artifact-handoff) |
 | Sprint P1-C: AH gRPC 에러 코드 | 2026-05-31 | f548abb (artifact-handoff) |
 | Sprint P1-D: AH 키 구분자 인젝션 방지 | 2026-05-31 | 1384c53 (artifact-handoff) |
+| Sprint P1-E: nan InspectOnSuccessOnly + RunTimeout + symlink TOCTOU | 2026-05-31 | 182aa21 (node-artifact-runtime) |
+| Sprint P1-F: JUMI P1 버그/기능 (retry, defaults, failure mode, readyz, ctx, WaitNode) | 2026-05-31 | cad5b8f (JUMI) |
