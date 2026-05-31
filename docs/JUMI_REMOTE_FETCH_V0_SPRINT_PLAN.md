@@ -155,6 +155,10 @@ v0 기준으로 URI는 두 층으로 본다.
 | Sprint 3D-4 | remote smoke verification baseline | Completed |
 | Sprint 3D-5 | sample run lifecycle query seam | Completed |
 
+다음 deferred work handoff 기준 문서:
+
+- `docs/JUMI_DEFERRED_WORK_HANDOFF_PLAN.md`
+
 ### 4.1 Sprint 3C-3E 완료 메모
 
 범위:
