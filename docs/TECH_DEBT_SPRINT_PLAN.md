@@ -182,32 +182,32 @@ if lifecycle.Finalized {
 
 ### node-artifact-runtime (nan)
 
-- [ ] **nan-P2-1** `ContainerName` 플래그 미바인딩
-- [ ] **nan-P2-2** `firstNonEmpty` 중복 (JUMI에도 동일 코드 3곳)
-- [ ] **nan-P2-3** termination log 쓰기 에러 무시
-- [ ] **nan-P2-4** `safeInputName` 길이 제한 없음
-- [ ] **nan-P2-5** env key suffix 파싱 충돌 가능성
-- [ ] **nan-P2-6** manifest dir symlink 검증 없음
+- [x] **nan-P2-1** `ContainerName` 플래그 미바인딩
+- [x] **nan-P2-2** `firstNonEmpty` 중복 (JUMI에도 동일 코드 3곳)
+- [x] **nan-P2-3** termination log 쓰기 에러 무시
+- [x] **nan-P2-4** `safeInputName` 길이 제한 없음
+- [x] **nan-P2-5** env key suffix 파싱 충돌 가능성
+- [x] **nan-P2-6** manifest dir symlink 검증 없음
 
 ### JUMI
 
-- [ ] **jumi-P2-1** `/statusz` O(N×M) registry 쿼리
-- [ ] **jumi-P2-2** `wrapped-shell`, `runtime-helper` 레거시 미제거
-- [ ] **jumi-P2-3** `MemoryRegistry` 재시작 시 상태 손실
-- [ ] **jumi-P2-4** 5초 shutdown이 in-flight goroutine 강제 종료
-- [ ] **jumi-P2-5** `GetRun`/`ListRunNodes` runID 검증 없음
-- [ ] **jumi-P2-6** HTTP 상태코드를 에러 문자열 파싱으로 추출
-- [ ] **jumi-P2-7** 10ms polling GC pressure
-- [ ] **jumi-P2-8** `firstNonEmpty` 3곳에 중복
+- [x] **jumi-P2-1** `/statusz` O(N×M) registry 쿼리
+- [~] **jumi-P2-2** `wrapped-shell`, `runtime-helper` 레거시 미제거 → 아직 active code path에서 사용 중. 기존 TODO 주석으로 removal 계획 문서화됨. 런타임 이미지 마이그레이션 완료 후 제거 예정.
+- [x] **jumi-P2-3** `MemoryRegistry` 재시작 시 상태 손실
+- [x] **jumi-P2-4** 5초 shutdown이 in-flight goroutine 강제 종료
+- [x] **jumi-P2-5** `GetRun`/`ListRunNodes` runID 검증 없음
+- [x] **jumi-P2-6** HTTP 상태코드를 에러 문자열 파싱으로 추출
+- [x] **jumi-P2-7** 10ms polling GC pressure
+- [x] **jumi-P2-8** `firstNonEmpty` 3곳에 중복
 
 ### artifact-handoff (AH)
 
-- [ ] **ah-P2-1** `service.go:867` `hasAnyNodeLocalSource` dead code
-- [ ] **ah-P2-2** `service.go:534` unreachable 분기 dead code
-- [ ] **ah-P2-3** `SourceID` SHA-256 중 8바이트만 사용 (64비트 → birthday collision)
-- [ ] **ah-P2-4** `isDuplicateColumn` 에러 메시지 하드코딩
-- [ ] **ah-P2-5** gRPC 서버 옵션 미설정 (MaxRecvMsgSize, keepalive 기본값 의존)
-- [ ] **ah-P2-6** k8s Deployment resource limits 없음
+- [x] **ah-P2-1** `service.go:867` `hasAnyNodeLocalSource` dead code
+- [x] **ah-P2-2** `service.go:534` unreachable 분기 dead code
+- [x] **ah-P2-3** `SourceID` SHA-256 중 8바이트만 사용 (64비트 → birthday collision)
+- [x] **ah-P2-4** `isDuplicateColumn` 에러 메시지 하드코딩
+- [x] **ah-P2-5** gRPC 서버 옵션 미설정 (MaxRecvMsgSize, keepalive 기본값 의존)
+- [x] **ah-P2-6** k8s Deployment resource limits 없음
 
 ---
 
@@ -225,3 +225,6 @@ if lifecycle.Finalized {
 | Sprint P1-D: AH 키 구분자 인젝션 방지 | 2026-05-31 | 1384c53 (artifact-handoff) |
 | Sprint P1-E: nan InspectOnSuccessOnly + RunTimeout + symlink TOCTOU | 2026-05-31 | 182aa21 (node-artifact-runtime) |
 | Sprint P1-F: JUMI P1 버그/기능 (retry, defaults, failure mode, readyz, ctx, WaitNode) | 2026-05-31 | cad5b8f (JUMI) |
+| Sprint P2-A: AH P2 (dead code, SourceID hash, gRPC options, k8s limits) | 2026-05-31 | 12b71ea (artifact-handoff) |
+| Sprint P2-B: nan P2 (flags, dedup, error reporting, limits, symlink) | 2026-05-31 | d41e3e9 (node-artifact-runtime) |
+| Sprint P2-C: JUMI P2 (validation, polling, statusz, HTTP error type, dedup) | 2026-05-31 | ba1b9f0 (JUMI) |
