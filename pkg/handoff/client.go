@@ -9,7 +9,21 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/HeaInSeo/JUMI/internal/util"
 )
+
+// HTTPError is returned by HTTPClient methods when the server responds with a
+// non-2xx status code. Callers can use errors.As to extract the status code
+// without parsing error strings.
+type HTTPError struct {
+	StatusCode int
+	Op         string
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("handoff %s failed with status %d", e.Op, e.StatusCode)
+}
 
 type ResolveBindingRequest struct {
 	RunID              string `json:"runId,omitempty"`
@@ -164,7 +178,7 @@ func (c *NoopClient) ResolveBinding(_ context.Context, req ResolveBindingRequest
 		Decision:         "noop",
 		PlacementIntent: PlacementIntent{
 			Mode:     "preferred_node",
-			NodeName: firstNonEmpty(req.TargetNodeName, req.ProducerNodeID),
+			NodeName: util.FirstNonEmpty(req.TargetNodeName, req.ProducerNodeID),
 		},
 		MaterializationPlan: MaterializationPlan{Mode: "none"},
 	}), nil
@@ -259,7 +273,7 @@ func (c *HTTPClient) ResolveBinding(ctx context.Context, req ResolveBindingReque
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode >= 300 {
-		return ResolveBindingResponse{}, fmt.Errorf("handoff resolve failed with status %d", resp.StatusCode)
+		return ResolveBindingResponse{}, &HTTPError{StatusCode: resp.StatusCode, Op: "resolve"}
 	}
 	var resolved ResolveBindingResponse
 	if err := json.NewDecoder(resp.Body).Decode(&resolved); err != nil {
@@ -312,7 +326,7 @@ func (c *HTTPClient) RegisterArtifact(ctx context.Context, req RegisterArtifactR
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("handoff register artifact failed with status %d", resp.StatusCode)
+		return &HTTPError{StatusCode: resp.StatusCode, Op: "register artifact"}
 	}
 	return nil
 }
@@ -335,7 +349,7 @@ func (c *HTTPClient) NotifyNodeTerminal(ctx context.Context, req NotifyNodeTermi
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("handoff notify node terminal failed with status %d", resp.StatusCode)
+		return &HTTPError{StatusCode: resp.StatusCode, Op: "notify node terminal"}
 	}
 	return nil
 }
@@ -358,7 +372,7 @@ func (c *HTTPClient) FinalizeSampleRun(ctx context.Context, req FinalizeSampleRu
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("handoff finalize sample run failed with status %d", resp.StatusCode)
+		return &HTTPError{StatusCode: resp.StatusCode, Op: "finalize sample run"}
 	}
 	return nil
 }
@@ -381,7 +395,7 @@ func (c *HTTPClient) EvaluateGC(ctx context.Context, req EvaluateGCRequest) erro
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("handoff evaluate gc failed with status %d", resp.StatusCode)
+		return &HTTPError{StatusCode: resp.StatusCode, Op: "evaluate gc"}
 	}
 	return nil
 }
@@ -408,17 +422,8 @@ func (c *HTTPClient) GetSampleRunLifecycle(ctx context.Context, req GetSampleRun
 	case http.StatusNotFound:
 		return SampleRunLifecycle{}, false, nil
 	default:
-		return SampleRunLifecycle{}, false, fmt.Errorf("handoff get sample run lifecycle failed with status %d", resp.StatusCode)
+		return SampleRunLifecycle{}, false, &HTTPError{StatusCode: resp.StatusCode, Op: "get sample run lifecycle"}
 	}
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func normalizeResolveBindingResponse(resolved ResolveBindingResponse) ResolveBindingResponse {

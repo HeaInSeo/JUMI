@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/HeaInSeo/JUMI/internal/util"
 	"github.com/HeaInSeo/JUMI/pkg/backend"
 	"github.com/HeaInSeo/JUMI/pkg/handoff"
 	"github.com/HeaInSeo/JUMI/pkg/metrics"
@@ -133,14 +134,14 @@ func (e *DagEngine) Cancel(ctx context.Context, runID string, reason string) err
 		default:
 			run.Status = spec.RunStatusCanceled
 			run.TerminalStopCause = "canceled"
-			run.TerminalFailureReason = firstNonEmpty(reason, "cancellation_requested")
+			run.TerminalFailureReason = util.FirstNonEmpty(reason, "cancellation_requested")
 			run.CurrentBottleneckLocation = ""
 			return nil
 		}
 	}); err != nil {
 		return err
 	}
-	appendEvent(ctx, e.registry, spec.EventRecord{RunID: runID, Type: "run.cancel.requested", OccurredAt: now, Level: "warn", StopCause: "canceled", FailureReason: firstNonEmpty(reason, "cancellation_requested")})
+	appendEvent(ctx, e.registry, spec.EventRecord{RunID: runID, Type: "run.cancel.requested", OccurredAt: now, Level: "warn", StopCause: "canceled", FailureReason: util.FirstNonEmpty(reason, "cancellation_requested")})
 	active := e.getActiveRun(runID)
 	if active != nil {
 		active.cancel()
@@ -165,7 +166,7 @@ func (e *DagEngine) Cancel(ctx context.Context, runID string, reason string) err
 				// interrupts any in-flight AH gRPC or backend prepare call.
 				current.Status = spec.NodeStatusCanceled
 				current.TerminalStopCause = "canceled"
-				current.TerminalFailureReason = firstNonEmpty(reason, "cancellation_requested")
+				current.TerminalFailureReason = util.FirstNonEmpty(reason, "cancellation_requested")
 				current.CurrentBottleneckLocation = ""
 				current.FinishedAt = &now
 				canceledImmediately = true
@@ -175,7 +176,7 @@ func (e *DagEngine) Cancel(ctx context.Context, runID string, reason string) err
 			return nil
 		})
 		if canceledImmediately {
-			appendEvent(ctx, e.registry, spec.EventRecord{RunID: runID, NodeID: nodeID, Type: "node.canceled", OccurredAt: now, Level: "warn", StopCause: "canceled", FailureReason: firstNonEmpty(reason, "cancellation_requested")})
+			appendEvent(ctx, e.registry, spec.EventRecord{RunID: runID, NodeID: nodeID, Type: "node.canceled", OccurredAt: now, Level: "warn", StopCause: "canceled", FailureReason: util.FirstNonEmpty(reason, "cancellation_requested")})
 		}
 	}
 	return nil
@@ -274,7 +275,7 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 	failFast := run.Spec.Run.FailurePolicy.Mode == "" || run.Spec.Run.FailurePolicy.Mode == "fail-fast"
 	firstErr := make(chan error, 1)
 	go func() {
-		ticker := time.NewTicker(10 * time.Millisecond)
+		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
@@ -293,7 +294,7 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 						}
 						if failFast {
 							e.metrics.IncFastFailTrigger()
-							appendEvent(ctx, e.registry, spec.EventRecord{RunID: run.RunID, NodeID: node.NodeID, Type: "run.fast_fail.triggered", OccurredAt: time.Now().UTC(), Level: "warn", StopCause: "failed", FailureReason: firstNonEmpty(node.TerminalFailureReason, "fast_fail")})
+							appendEvent(ctx, e.registry, spec.EventRecord{RunID: run.RunID, NodeID: node.NodeID, Type: "run.fast_fail.triggered", OccurredAt: time.Now().UTC(), Level: "warn", StopCause: "failed", FailureReason: util.FirstNonEmpty(node.TerminalFailureReason, "fast_fail")})
 							active.cancel()
 							for _, handle := range e.snapshotHandles(active) {
 								// Use background ctx: active.cancel() already cancelled runCtx above.
@@ -371,7 +372,7 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 			if runStatus != spec.RunStatusFailed {
 				runStatus = spec.RunStatusCanceled
 				terminalStopCause = "canceled"
-				terminalFailureReason = firstNonEmpty(node.TerminalFailureReason, terminalFailureReason)
+				terminalFailureReason = util.FirstNonEmpty(node.TerminalFailureReason, terminalFailureReason)
 			}
 		case spec.NodeStatusSkipped:
 			counters.SkippedNodes++
@@ -382,7 +383,7 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 	if run.Status == spec.RunStatusCanceled {
 		runStatus = spec.RunStatusCanceled
 		terminalStopCause = "canceled"
-		terminalFailureReason = firstNonEmpty(run.TerminalFailureReason, terminalFailureReason, reason, "cancellation_requested")
+		terminalFailureReason = util.FirstNonEmpty(run.TerminalFailureReason, terminalFailureReason, reason, "cancellation_requested")
 	}
 	if !succeeded && runStatus == spec.RunStatusSucceeded {
 		runStatus = spec.RunStatusFailed
@@ -403,7 +404,7 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 		return err
 	}
 	if err := e.handoff.FinalizeSampleRun(ctx, handoff.FinalizeSampleRunRequest{
-		SampleRunID: firstNonEmpty(run.Spec.Run.SampleRunID, runID),
+		SampleRunID: util.FirstNonEmpty(run.Spec.Run.SampleRunID, runID),
 	}); err != nil {
 		appendEvent(ctx, e.registry, spec.EventRecord{
 			RunID:         runID,
@@ -431,7 +432,7 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 		e.metrics.IncSampleRunsFinalized()
 	}
 	if err := e.handoff.EvaluateGC(ctx, handoff.EvaluateGCRequest{
-		SampleRunID: firstNonEmpty(run.Spec.Run.SampleRunID, runID),
+		SampleRunID: util.FirstNonEmpty(run.Spec.Run.SampleRunID, runID),
 	}); err != nil {
 		appendEvent(ctx, e.registry, spec.EventRecord{
 			RunID:         runID,
@@ -577,7 +578,7 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 			r.metrics.IncInputResolveRequests()
 			req := handoff.ResolveBindingRequest{
 				RunID:              r.runID,
-				SampleRunID:        firstNonEmpty(run.Spec.Run.SampleRunID, r.runID),
+				SampleRunID:        util.FirstNonEmpty(run.Spec.Run.SampleRunID, r.runID),
 				ChildNodeID:        r.node.NodeID,
 				BindingName:        binding.BindingName,
 				ChildInputName:     binding.ChildInputName,
@@ -698,13 +699,13 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 			r.observeLocality(kueueInfo, attemptID)
 			if !kueueInfo.Admitted {
 				bottleneck = "kueue_pending"
-				appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.kueue.pending", OccurredAt: time.Now().UTC(), Level: "info", Message: firstNonEmpty(kueueInfo.PendingReason, "waiting for Kueue admission")})
+				appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.kueue.pending", OccurredAt: time.Now().UTC(), Level: "info", Message: util.FirstNonEmpty(kueueInfo.PendingReason, "waiting for Kueue admission")})
 			} else {
-				appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.kueue.admitted", OccurredAt: time.Now().UTC(), Level: "info", Message: firstNonEmpty(kueueInfo.WorkloadName, "Kueue admitted workload")})
+				appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.kueue.admitted", OccurredAt: time.Now().UTC(), Level: "info", Message: util.FirstNonEmpty(kueueInfo.WorkloadName, "Kueue admitted workload")})
 				if !kueueInfo.Scheduled && kueueInfo.UnschedulableReason != "" {
 					bottleneck = "scheduler_pending"
 					appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.scheduler.pending", OccurredAt: time.Now().UTC(), Level: "warn", Message: kueueInfo.UnschedulableReason})
-					appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.kueue.pod_observed", OccurredAt: time.Now().UTC(), Level: "info", Message: firstNonEmpty(kueueInfo.PodName, "pod observed")})
+					appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.kueue.pod_observed", OccurredAt: time.Now().UTC(), Level: "info", Message: util.FirstNonEmpty(kueueInfo.PodName, "pod observed")})
 				}
 			}
 		}
@@ -766,12 +767,12 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 		Status:                spec.AttemptStatusCompleted,
 		StartedAt:             &startedAt,
 		FinishedAt:            &finishedAt,
-		TerminalStopCause:     firstNonEmpty(result.TerminalStopCause, "finished"),
+		TerminalStopCause:     util.FirstNonEmpty(result.TerminalStopCause, "finished"),
 		TerminalFailureReason: result.TerminalFailureReason,
 	})
 	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusSucceeded
-		current.TerminalStopCause = firstNonEmpty(result.TerminalStopCause, "finished")
+		current.TerminalStopCause = util.FirstNonEmpty(result.TerminalStopCause, "finished")
 		current.TerminalFailureReason = result.TerminalFailureReason
 		current.CurrentBottleneckLocation = ""
 		current.FinishedAt = &finishedAt
@@ -779,7 +780,7 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 	}); err != nil {
 		return err
 	}
-	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.succeeded", OccurredAt: finishedAt, Level: "info", StopCause: firstNonEmpty(result.TerminalStopCause, "finished")})
+	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.succeeded", OccurredAt: finishedAt, Level: "info", StopCause: util.FirstNonEmpty(result.TerminalStopCause, "finished")})
 	return nil
 }
 
@@ -890,7 +891,7 @@ func (r *nodeRunner) recordLocalityHint(binding spec.ArtifactBinding, resolved h
 		Type:       "node.locality.preferred",
 		OccurredAt: time.Now().UTC(),
 		Level:      "info",
-		Message:    fmt.Sprintf("binding=%s preferredNode=%s mode=%s", firstNonEmpty(binding.ChildInputName, binding.BindingName), hint.PreferredNodeName, firstNonEmpty(hint.PlacementMode, "unspecified")),
+		Message:    fmt.Sprintf("binding=%s preferredNode=%s mode=%s", util.FirstNonEmpty(binding.ChildInputName, binding.BindingName), hint.PreferredNodeName, util.FirstNonEmpty(hint.PlacementMode, "unspecified")),
 	})
 }
 
@@ -899,7 +900,7 @@ func (r *nodeRunner) observeLocality(info *backend.OptionalKueueInfo, attemptID 
 		return
 	}
 	for _, hint := range r.localityHints {
-		bindingName := firstNonEmpty(hint.ChildInputName, hint.BindingName)
+		bindingName := util.FirstNonEmpty(hint.ChildInputName, hint.BindingName)
 		if info.PodNodeName == hint.PreferredNodeName {
 			r.metrics.IncLocalityMatched()
 			appendEvent(context.Background(), r.registry, spec.EventRecord{
@@ -951,7 +952,7 @@ func (r *nodeRunner) recordLocalityFallbackSuccess(attemptID string) {
 		Type:       "node.locality.fallback_succeeded",
 		OccurredAt: time.Now().UTC(),
 		Level:      "info",
-		Message:    firstNonEmpty(r.localityActualNode, "fallback preserved node success"),
+		Message:    util.FirstNonEmpty(r.localityActualNode, "fallback preserved node success"),
 	})
 	r.localityFallbackStarted = false
 }
@@ -968,7 +969,7 @@ func (r *nodeRunner) recordLocalityFallbackFailure(attemptID string) {
 		Type:       "node.locality.fallback_failed",
 		OccurredAt: time.Now().UTC(),
 		Level:      "error",
-		Message:    firstNonEmpty(r.localityActualNode, "fallback path failed"),
+		Message:    util.FirstNonEmpty(r.localityActualNode, "fallback path failed"),
 	})
 	r.localityFallbackStarted = false
 }
@@ -983,7 +984,7 @@ func (r *nodeRunner) effectiveCancellationReason(reason string) string {
 			return run.TerminalFailureReason
 		}
 	}
-	return firstNonEmpty(reason, "cancellation_requested")
+	return util.FirstNonEmpty(reason, "cancellation_requested")
 }
 
 func (r *nodeRunner) isRunCanceled() bool {
@@ -1008,7 +1009,7 @@ func (r *nodeRunner) unregisterHandle() {
 
 func (r *nodeRunner) notifyNodeTerminal(ctx context.Context, terminalState string, attemptID string) error {
 	return r.handoff.NotifyNodeTerminal(ctx, handoff.NotifyNodeTerminalRequest{
-		SampleRunID:   firstNonEmpty(r.sampleRunID(ctx), r.runID),
+		SampleRunID:   util.FirstNonEmpty(r.sampleRunID(ctx), r.runID),
 		NodeID:        r.node.NodeID,
 		AttemptID:     attemptID,
 		TerminalState: terminalState,
@@ -1023,7 +1024,7 @@ func (r *nodeRunner) registerNodeOutputs(ctx context.Context, handle backend.Han
 	if err != nil {
 		return err
 	}
-	sampleRunID := firstNonEmpty(r.sampleRunID(ctx), r.runID)
+	sampleRunID := util.FirstNonEmpty(r.sampleRunID(ctx), r.runID)
 	for _, outputName := range node.Outputs {
 		if outputName == "" {
 			continue
@@ -1131,7 +1132,7 @@ func injectResolvedBindingEnv(node *spec.Node, binding spec.ArtifactBinding, res
 	if node.Env == nil {
 		node.Env = make(map[string]string)
 	}
-	keyBase := sanitizeEnvSegment(firstNonEmpty(binding.ChildInputName, binding.BindingName, binding.ProducerOutputName))
+	keyBase := sanitizeEnvSegment(util.FirstNonEmpty(binding.ChildInputName, binding.BindingName, binding.ProducerOutputName))
 	node.Env["JUMI_INPUT_"+keyBase+"_STATUS"] = resolved.ResolutionStatus
 	node.Env["JUMI_INPUT_"+keyBase+"_DECISION"] = resolved.Decision
 	node.Env["JUMI_INPUT_"+keyBase+"_URI"] = resolved.MaterializationPlan.URI
@@ -1249,7 +1250,7 @@ func recordPlacementHintApplication(ctx context.Context, reg registry.Registry, 
 		appliedRequired = strings.TrimSpace(placement.NodeSelector[hostnameNodeSelectorKey])
 	}
 	for _, hint := range hints {
-		bindingName := firstNonEmpty(hint.ChildInputName, hint.BindingName)
+		bindingName := util.FirstNonEmpty(hint.ChildInputName, hint.BindingName)
 		switch hint.PlacementMode {
 		case "required_node":
 			if appliedRequired == hint.PreferredNodeName && appliedRequired != "" {
@@ -1392,7 +1393,7 @@ func sanitizeEnvSegment(value string) string {
 func validateResolvedBindingEnvKeys(bindings []spec.ArtifactBinding) error {
 	seen := make(map[string]string, len(bindings))
 	for _, binding := range bindings {
-		original := firstNonEmpty(binding.ChildInputName, binding.BindingName, binding.ProducerOutputName)
+		original := util.FirstNonEmpty(binding.ChildInputName, binding.BindingName, binding.ProducerOutputName)
 		key := sanitizeEnvSegment(original)
 		if existing, ok := seen[key]; ok {
 			return fmt.Errorf("input env key collision: %q and %q both sanitize to %q", existing, original, key)
@@ -1538,8 +1539,9 @@ func isTransientResolveBindingError(err error) bool {
 	case codes.InvalidArgument, codes.NotFound, codes.FailedPrecondition, codes.PermissionDenied, codes.Unauthenticated, codes.Unimplemented:
 		return false
 	}
-	if httpStatus, ok := handoffHTTPStatus(err); ok {
-		switch httpStatus {
+	var httpErr *handoff.HTTPError
+	if errors.As(err, &httpErr) {
+		switch httpErr.StatusCode {
 		case 408, 425, 429, 500, 502, 503, 504:
 			return true
 		default:
@@ -1547,28 +1549,6 @@ func isTransientResolveBindingError(err error) bool {
 		}
 	}
 	return false
-}
-
-func handoffHTTPStatus(err error) (int, bool) {
-	msg := err.Error()
-	const marker = "handoff resolve failed with status "
-	idx := strings.Index(msg, marker)
-	if idx < 0 {
-		return 0, false
-	}
-	codeText := msg[idx+len(marker):]
-	end := strings.IndexFunc(codeText, func(r rune) bool { return r < '0' || r > '9' })
-	if end >= 0 {
-		codeText = codeText[:end]
-	}
-	if codeText == "" {
-		return 0, false
-	}
-	code, convErr := strconv.Atoi(codeText)
-	if convErr != nil {
-		return 0, false
-	}
-	return code, true
 }
 
 func artifactOutputURI(runID, nodeID, outputName string) string {
@@ -1663,13 +1643,4 @@ func eventLevelForRunStatus(runStatus spec.RunStatus) string {
 
 func timePtr(v time.Time) *time.Time {
 	return &v
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }

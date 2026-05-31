@@ -3,6 +3,7 @@ package observe
 import (
 	"context"
 
+	"github.com/HeaInSeo/JUMI/internal/util"
 	"github.com/HeaInSeo/JUMI/pkg/registry"
 	"github.com/HeaInSeo/JUMI/pkg/spec"
 )
@@ -39,9 +40,14 @@ func SnapshotFromRegistry(ctx context.Context, reg registry.Registry, backend Ba
 		ReleaseMaxConcurrent:  backend.ReleaseMaxConcurrent,
 	}
 	for _, run := range runs {
-		switch run.Status {
-		case spec.RunStatusAdmitted, spec.RunStatusRunning:
+		active := run.Status == spec.RunStatusAdmitted || run.Status == spec.RunStatusRunning
+		if active {
 			snapshot.RunningRuns++
+		}
+		// Only query nodes and events for active runs to avoid O(N×M) queries
+		// across all historical runs as the registry grows.
+		if !active {
+			continue
 		}
 		nodes, err := reg.ListNodes(ctx, run.RunID)
 		if err != nil {
@@ -58,18 +64,9 @@ func SnapshotFromRegistry(ctx context.Context, reg registry.Registry, backend Ba
 		}
 		for _, event := range events {
 			if event.Level == "error" {
-				snapshot.RecentErrors = append(snapshot.RecentErrors, event.Type+":"+firstNonEmpty(event.FailureReason, event.Message))
+				snapshot.RecentErrors = append(snapshot.RecentErrors, event.Type+":"+util.FirstNonEmpty(event.FailureReason, event.Message))
 			}
 		}
 	}
 	return snapshot, nil
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }

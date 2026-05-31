@@ -108,6 +108,9 @@ func (s *Service) SubmitRun(ctx context.Context, req SubmitRunRequest) (SubmitRu
 }
 
 func (s *Service) GetRun(ctx context.Context, req GetRunRequest) (GetRunResponse, error) {
+	if req.RunID == "" {
+		return GetRunResponse{}, errors.New("runId is required")
+	}
 	record, err := s.registry.GetRun(ctx, req.RunID)
 	if err != nil {
 		return GetRunResponse{}, err
@@ -116,6 +119,9 @@ func (s *Service) GetRun(ctx context.Context, req GetRunRequest) (GetRunResponse
 }
 
 func (s *Service) ListRunNodes(ctx context.Context, req ListRunNodesRequest) (ListRunNodesResponse, error) {
+	if req.RunID == "" {
+		return ListRunNodesResponse{}, errors.New("runId is required")
+	}
 	nodes, err := s.registry.ListNodes(ctx, req.RunID)
 	if err != nil {
 		return ListRunNodesResponse{}, err

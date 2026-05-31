@@ -41,6 +41,7 @@ func main() {
 
 func runServe() {
 	reg := registry.NewMemoryRegistry()
+	log.Printf("jumi using in-memory registry: all run state will be lost on restart")
 	adapter, err := backend.NewSpawnerK8sAdapterFromKubeconfig(
 		envOrDefault("JUMI_NAMESPACE", "default"),
 		os.Getenv("JUMI_KUBECONFIG"),
@@ -100,6 +101,9 @@ func runServe() {
 		log.Fatal(err)
 	}
 
+	// The 5-second window drains new HTTP/gRPC requests but does not wait for
+	// in-flight DAG runs: active run goroutines are interrupted when the process
+	// exits. Use a persistent registry to avoid lost run state on restart.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(ctx)

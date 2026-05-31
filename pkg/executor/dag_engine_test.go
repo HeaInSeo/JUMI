@@ -958,7 +958,7 @@ func TestDagEngineRetriesResolveBindingForHTTP503(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
 	adapter := &fakeAdapter{failOn: map[string]bool{}}
 	handoffClient := &fakeHandoffClient{
-		resolveErrs: []error{fmt.Errorf("handoff resolve failed with status 503"), nil},
+		resolveErrs: []error{&handoff.HTTPError{StatusCode: 503, Op: "resolve"}, nil},
 		response: handoff.ResolveBindingResponse{
 			ResolutionStatus: "RESOLVED",
 			Decision:         "remote_fetch",
