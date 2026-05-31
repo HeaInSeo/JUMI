@@ -141,6 +141,12 @@ func newHTTPServer(reg registry.Registry, adapter backend.Adapter, engine *execu
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if statusProvider, ok := adapter.(backend.StatusProvider); ok {
+			if !statusProvider.AdapterStatus().Ready {
+				http.Error(w, "backend not ready", http.StatusServiceUnavailable)
+				return
+			}
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready"))
 	})

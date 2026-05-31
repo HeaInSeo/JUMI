@@ -293,7 +293,8 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 						appendEvent(ctx, e.registry, spec.EventRecord{RunID: run.RunID, NodeID: node.NodeID, Type: "run.fast_fail.triggered", OccurredAt: time.Now().UTC(), Level: "warn", StopCause: "failed", FailureReason: firstNonEmpty(node.TerminalFailureReason, "fast_fail")})
 						active.cancel()
 						for _, handle := range e.snapshotHandles(active) {
-							_ = e.adapter.CancelNode(ctx, handle)
+							// Use background ctx: active.cancel() already cancelled runCtx above.
+							_ = e.adapter.CancelNode(context.Background(), handle)
 						}
 						return
 					}
@@ -702,12 +703,14 @@ func (r *nodeRunner) RunE(ctx context.Context, _ interface{}) error {
 	result, err := r.adapter.WaitNode(ctx, handle)
 	if err != nil {
 		r.recordLocalityFallbackFailure(attemptID)
-		if r.isRunCanceled() || result.TerminalStopCause == "canceled" {
-			return r.cancelNode(attemptID, firstNonEmpty(result.TerminalFailureReason, "cancellation_requested"))
+		// Do not trust result fields when WaitNode returns an error — the result
+		// may be a zero-value struct. Use context state as the authoritative signal.
+		if r.isRunCanceled() || ctx.Err() != nil {
+			return r.cancelNode(attemptID, "cancellation_requested")
 		}
 		finishedAt := time.Now().UTC()
-		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &startedAt, FinishedAt: &finishedAt, TerminalStopCause: firstNonEmpty(result.TerminalStopCause, "failed"), TerminalFailureReason: firstNonEmpty(result.TerminalFailureReason, "backend_wait_error")})
-		return r.failNode(err, attemptID, firstNonEmpty(result.TerminalStopCause, "failed"), firstNonEmpty(result.TerminalFailureReason, "backend_wait_error"))
+		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &startedAt, FinishedAt: &finishedAt, TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"})
+		return r.failNode(err, attemptID, "failed", "backend_wait_error")
 	}
 	finishedAt := time.Now().UTC()
 	r.recordLocalityFallbackSuccess(attemptID)
