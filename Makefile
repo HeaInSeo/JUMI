@@ -24,7 +24,12 @@ PKGS_REGRESSION := ./cmd/... ./pkg/executor ./pkg/handoff ./pkg/metrics ./pkg/ob
 PKGS_COVER := ./cmd/... ./pkg/...
 PKGS_SECURITY := ./cmd/... ./pkg/...
 
-.PHONY: test test-regression coverage fmt vet lint lint-depguard lint-security vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-align-check runtime-smoke-remote ko-publish-remote ko-smoke-remote verify-sprint-3d-baseline verify-sprint-3d-remote
+JUMI_LIFECYCLE_BIN := $(LOCALBIN)/jumi-lifecycle
+AH_GRPC_TARGET ?=
+AH_HTTP_URL ?=
+SAMPLE_RUN_ID ?=
+
+.PHONY: test test-regression coverage fmt vet lint lint-depguard lint-security vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-align-check runtime-smoke-remote ko-publish-remote ko-smoke-remote verify-sprint-3d-baseline verify-sprint-3d-remote lifecycle-check-build lifecycle-check
 
 REMOTE_SSH_TARGET ?= seoy@100.123.80.48
 REGISTRY_HOST ?= harbor.10.113.24.96.nip.io
@@ -166,3 +171,17 @@ verify-sprint-3d-baseline: runtime-align-check handoff-proto-sync-check
 verify-sprint-3d-remote:
 	env SYNC_BACKUP_REGISTRY=true K8SGPT_MODE=required ./scripts/run-jumi-same-node-local-reuse-live-smoke.sh
 	env SYNC_BACKUP_REGISTRY=true K8SGPT_MODE=required ENABLE_HTTP_AH=1 ./scripts/run-jumi-remote-fetch-simple-http-live-smoke.sh
+
+lifecycle-check-build:
+	@mkdir -p "$(LOCALBIN)" "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)"
+	$(GOENV) go build -o "$(JUMI_LIFECYCLE_BIN)" ./cmd/jumi-lifecycle
+
+lifecycle-check: lifecycle-check-build
+	@if [ -z "$(SAMPLE_RUN_ID)" ]; then echo "usage: make lifecycle-check SAMPLE_RUN_ID=<id> AH_GRPC_TARGET=<host:port>"; echo "       make lifecycle-check SAMPLE_RUN_ID=<id> AH_HTTP_URL=<url>"; exit 1; fi
+	@if [ -n "$(AH_GRPC_TARGET)" ]; then \
+		"$(JUMI_LIFECYCLE_BIN)" --ah-grpc="$(AH_GRPC_TARGET)" --sample-run-id="$(SAMPLE_RUN_ID)"; \
+	elif [ -n "$(AH_HTTP_URL)" ]; then \
+		"$(JUMI_LIFECYCLE_BIN)" --ah-http="$(AH_HTTP_URL)" --sample-run-id="$(SAMPLE_RUN_ID)"; \
+	else \
+		echo "error: AH_GRPC_TARGET or AH_HTTP_URL required"; exit 1; \
+	fi
