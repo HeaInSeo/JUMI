@@ -128,6 +128,10 @@ func (f *fakeHandoffClient) EvaluateGC(_ context.Context, req handoff.EvaluateGC
 	return f.evaluateErr
 }
 
+func (f *fakeHandoffClient) GetSampleRunLifecycle(_ context.Context, req handoff.GetSampleRunLifecycleRequest) (handoff.SampleRunLifecycle, bool, error) {
+	return handoff.SampleRunLifecycle{SampleRunID: req.SampleRunID}, false, nil
+}
+
 func (f *fakeAdapter) PrepareNode(_ context.Context, _ spec.RunRecord, node spec.Node) (backend.PreparedNode, error) {
 	f.mu.Lock()
 	if f.prepared == nil {

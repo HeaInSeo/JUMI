@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTAINERFILE_PATH="${CONTAINERFILE_PATH:-${ROOT_DIR}/Containerfile}"
-RUNTIME_REPO_ROOT="${RUNTIME_REPO_ROOT:-/tmp/node-artifact-runtime}"
+RUNTIME_REPO_ROOT="${RUNTIME_REPO_ROOT:-/opt/go/src/github.com/HeaInSeo/node-artifact-runtime}"
 OUTPUT_PATH="${OUTPUT_PATH:-${ROOT_DIR}/artifacts/devspace/runtime/runtime-alignment.json}"
 
 need_cmd() {
