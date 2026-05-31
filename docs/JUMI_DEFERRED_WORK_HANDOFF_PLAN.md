@@ -5,6 +5,8 @@
 상태: Active Handoff Plan  
 목적: 남은 deferred item을 가장 작은 스프린트 단위로 분해해서 다음 agent가 중간에 흐트러지지 않고 이어서 진행할 수 있도록 한다.
 
+개발 정책 문서: `/opt/go/src/github.com/HeaInSeo/DEVELOPMENT_POLICY.md`
+
 ---
 
 ## 0. 세션 시작 전 점검 체크리스트
