@@ -120,7 +120,7 @@ if lifecycle.Finalized {
 
 ### Sprint P0-D: JUMI gRPC 보안 프로파일 문서화
 
-**상태:** `[ ] 대기 중`  
+**상태:** `[x] 완료 (2026-05-31, commit: 5a6a749)`  
 **대상 레포:** JUMI  
 
 **결정 사항 (2026-05-31 확정):**
@@ -218,3 +218,4 @@ if lifecycle.Finalized {
 | Sprint P0-A: AH 데이터 무결성 | 2026-05-31 | 4c60f9b (artifact-handoff) |
 | Sprint P0-B: JUMI executor 버그 | 2026-05-31 | c1dce95 (JUMI) |
 | Sprint P0-C: nan 보안 하드닝 | 2026-05-31 | 18e7f59 (node-artifact-runtime) |
+| Sprint P0-D: JUMI gRPC 보안 프로파일 | 2026-05-31 | 5a6a749 (JUMI) |
