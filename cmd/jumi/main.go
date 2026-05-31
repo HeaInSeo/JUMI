@@ -24,6 +24,22 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "serve":
+			// fall through to serve
+		case "lifecycle-check":
+			runLifecycleCheck(os.Args[2:])
+			return
+		default:
+			fmt.Fprintf(os.Stderr, "unknown subcommand: %s\nusage: jumi [serve|lifecycle-check]\n", os.Args[1])
+			os.Exit(2)
+		}
+	}
+	runServe()
+}
+
+func runServe() {
 	reg := registry.NewMemoryRegistry()
 	adapter, err := backend.NewSpawnerK8sAdapterFromKubeconfig(
 		envOrDefault("JUMI_NAMESPACE", "default"),

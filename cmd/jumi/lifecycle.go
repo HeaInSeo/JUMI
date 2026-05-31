@@ -11,32 +11,31 @@ import (
 	"github.com/HeaInSeo/JUMI/pkg/handoff"
 )
 
-func main() {
-	var (
-		ahGRPC      = flag.String("ah-grpc", "", "AH gRPC endpoint (host:port); mutually exclusive with --ah-http")
-		ahHTTP      = flag.String("ah-http", "", "AH HTTP base URL; mutually exclusive with --ah-grpc")
-		sampleRunID = flag.String("sample-run-id", "", "sample run ID to query (required)")
-		timeout     = flag.Duration("timeout", 10*time.Second, "request timeout")
-	)
-	flag.Parse()
+func runLifecycleCheck(args []string) {
+	fs := flag.NewFlagSet("lifecycle-check", flag.ExitOnError)
+	ahGRPC := fs.String("ah-grpc", "", "AH gRPC endpoint (host:port); mutually exclusive with --ah-http")
+	ahHTTP := fs.String("ah-http", "", "AH HTTP base URL; mutually exclusive with --ah-grpc")
+	sampleRunID := fs.String("sample-run-id", "", "sample run ID to query (required)")
+	timeout := fs.Duration("timeout", 10*time.Second, "request timeout")
+	_ = fs.Parse(args)
 
 	if *sampleRunID == "" {
 		fmt.Fprintln(os.Stderr, "error: --sample-run-id is required")
-		flag.Usage()
+		fs.Usage()
 		os.Exit(2)
 	}
 	switch {
 	case *ahGRPC == "" && *ahHTTP == "":
 		fmt.Fprintln(os.Stderr, "error: one of --ah-grpc or --ah-http is required")
-		flag.Usage()
+		fs.Usage()
 		os.Exit(2)
 	case *ahGRPC != "" && *ahHTTP != "":
 		fmt.Fprintln(os.Stderr, "error: --ah-grpc and --ah-http are mutually exclusive")
-		flag.Usage()
+		fs.Usage()
 		os.Exit(2)
 	}
 
-	client, closer, err := buildClient(*ahGRPC, *ahHTTP, *timeout)
+	client, closer, err := buildLifecycleClient(*ahGRPC, *ahHTTP, *timeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(2)
@@ -68,7 +67,7 @@ func main() {
 	}
 }
 
-func buildClient(grpcTarget, httpURL string, timeout time.Duration) (handoff.Client, func() error, error) {
+func buildLifecycleClient(grpcTarget, httpURL string, timeout time.Duration) (handoff.Client, func() error, error) {
 	if grpcTarget != "" {
 		c, err := handoff.NewGRPCClient(grpcTarget)
 		if err != nil {
