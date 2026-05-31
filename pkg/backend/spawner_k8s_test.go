@@ -477,6 +477,19 @@ func TestReadArtifactsManifestFromTerminationMessage(t *testing.T) {
 	}
 }
 
+func TestDirectSanitizeNameNoDanglingDash(t *testing.T) {
+	// Build an id whose sanitized form ends in '-' at exactly 63 chars.
+	// e.g. "aaa...a_" → lowercased chars + one non-alphanum at position 63.
+	id := strings.Repeat("a", 62) + "_b" // after sanitize: 63 'a's + '-' + 'b' = 65 chars
+	got := directSanitizeName(id)
+	if len(got) > 63 {
+		t.Fatalf("name too long: %d chars", len(got))
+	}
+	if strings.HasSuffix(got, "-") {
+		t.Fatalf("name ends with dash: %q", got)
+	}
+}
+
 func optionalStringField(v any, fieldName string) (string, bool) {
 	rv := reflect.ValueOf(v)
 	field := rv.FieldByName(fieldName)

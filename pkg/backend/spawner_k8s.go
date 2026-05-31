@@ -1272,7 +1272,7 @@ func directSanitizeName(id string) string {
 	}
 	name := strings.Trim(b.String(), "-")
 	if len(name) > 63 {
-		name = name[:63]
+		name = strings.TrimRight(name[:63], "-")
 	}
 	return name
 }

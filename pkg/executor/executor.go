@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -158,7 +159,10 @@ func (e *DagEngine) Cancel(ctx context.Context, runID string, reason string) err
 			switch current.Status {
 			case spec.NodeStatusSucceeded, spec.NodeStatusFailed, spec.NodeStatusCanceled, spec.NodeStatusSkipped:
 				return nil
-			case spec.NodeStatusPending, spec.NodeStatusReady, spec.NodeStatusReleasing:
+			case spec.NodeStatusPending, spec.NodeStatusReady, spec.NodeStatusReleasing,
+				spec.NodeStatusBuildingBindings, spec.NodeStatusResolvingInputs, spec.NodeStatusStarting:
+				// No k8s Job exists yet for these states; context cancellation above
+				// interrupts any in-flight AH gRPC or backend prepare call.
 				current.Status = spec.NodeStatusCanceled
 				current.TerminalStopCause = "canceled"
 				current.TerminalFailureReason = firstNonEmpty(reason, "cancellation_requested")
@@ -193,10 +197,30 @@ func (e *DagEngine) executeRun(ctx context.Context, runID string) {
 		e.unregisterActiveRun(runID)
 	}()
 	if err := e.runGraph(runCtx, run, active); err != nil {
-		_ = e.finalizeRun(ctx, runID, false, err.Error())
+		if ferr := e.finalizeRun(ctx, runID, false, err.Error()); ferr != nil {
+			log.Printf("executor: finalizeRun failed for run %s: %v (graph error: %v)", runID, ferr, err)
+			_ = e.registry.UpdateRun(ctx, runID, func(current *spec.RunRecord) error {
+				if current.Status == spec.RunStatusRunning {
+					current.Status = spec.RunStatusFailed
+					current.TerminalStopCause = "failed"
+					current.TerminalFailureReason = "finalize_error"
+				}
+				return nil
+			})
+		}
 		return
 	}
-	_ = e.finalizeRun(ctx, runID, true, "")
+	if ferr := e.finalizeRun(ctx, runID, true, ""); ferr != nil {
+		log.Printf("executor: finalizeRun failed for run %s: %v", runID, ferr)
+		_ = e.registry.UpdateRun(ctx, runID, func(current *spec.RunRecord) error {
+			if current.Status == spec.RunStatusRunning {
+				current.Status = spec.RunStatusFailed
+				current.TerminalStopCause = "failed"
+				current.TerminalFailureReason = "finalize_error"
+			}
+			return nil
+		})
+	}
 }
 
 func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *activeRun) error {
