@@ -69,7 +69,7 @@ func TestGRPCClientRoundTrip(t *testing.T) {
 		Locations: []ArtifactLocation{{
 			NodeLocal: &NodeLocalLocation{NodeName: "node-a", Path: "/jumi-node-artifacts/cas/sha256/abc"},
 		}},
-		SizeBytes:         2048,
+		SizeBytes: 2048,
 	}); err != nil {
 		t.Fatalf("RegisterArtifact() error = %v", err)
 	}
@@ -87,6 +87,24 @@ func TestGRPCClientRoundTrip(t *testing.T) {
 	}
 	if len(stub.lastRegister.GetArtifact().GetLocations()) != 1 {
 		t.Fatalf("locations len = %d, want 1", len(stub.lastRegister.GetArtifact().GetLocations()))
+	}
+	lifecycle, ok, err := client.GetSampleRunLifecycle(context.Background(), GetSampleRunLifecycleRequest{
+		SampleRunID: "sample-1",
+	})
+	if err != nil {
+		t.Fatalf("GetSampleRunLifecycle() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("GetSampleRunLifecycle() ok = false, want true")
+	}
+	if lifecycle.SampleRunID != "sample-1" {
+		t.Fatalf("sampleRunId = %q, want sample-1", lifecycle.SampleRunID)
+	}
+	if !lifecycle.Finalized {
+		t.Fatal("finalized = false, want true")
+	}
+	if lifecycle.RetentionPolicySource != "service_default" {
+		t.Fatalf("retentionPolicySource = %q, want service_default", lifecycle.RetentionPolicySource)
 	}
 }
 
@@ -133,4 +151,21 @@ func (stubResolverServer) FinalizeSampleRun(context.Context, *ahv1.FinalizeSampl
 
 func (stubResolverServer) EvaluateGC(context.Context, *ahv1.EvaluateGCRequest) (*ahv1.EvaluateGCResponse, error) {
 	return &ahv1.EvaluateGCResponse{Accepted: true}, nil
+}
+
+func (stubResolverServer) GetSampleRunLifecycle(context.Context, *ahv1.GetSampleRunLifecycleRequest) (*ahv1.GetSampleRunLifecycleResponse, error) {
+	return &ahv1.GetSampleRunLifecycleResponse{
+		SampleRunId:           "sample-1",
+		Finalized:             true,
+		FinalizedAt:           "2026-05-31T01:02:03Z",
+		RetentionPolicySource: "service_default",
+		RetentionDuration:     "15m0s",
+		RetentionUntil:        "2026-05-31T01:17:03Z",
+		GcEligible:            false,
+		GcBlockedReason:       "retention_active",
+		TerminalNodeCount:     2,
+		SucceededNodeCount:    2,
+		RetainedArtifactCount: 1,
+		RetainedArtifactBytes: 42,
+	}, nil
 }

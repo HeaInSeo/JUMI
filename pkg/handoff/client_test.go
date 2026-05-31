@@ -141,6 +141,74 @@ func TestHTTPClientResolveBinding(t *testing.T) {
 	}
 }
 
+func TestHTTPClientGetSampleRunLifecycle(t *testing.T) {
+	client := NewHTTPClientWithClient("http://artifact-handoff.test", &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != "/v1/sampleRuns:lifecycle" {
+				t.Fatalf("unexpected path: %s", r.URL.Path)
+			}
+			if got := r.URL.Query().Get("sampleRunId"); got != "sample-1" {
+				t.Fatalf("sampleRunId query = %q, want sample-1", got)
+			}
+			return jsonResponse(http.StatusOK, `{
+				"sampleRunId":"sample-1",
+				"finalized":true,
+				"finalizedAt":"2026-05-31T01:02:03Z",
+				"retentionPolicySource":"service_default",
+				"retentionDuration":"15m0s",
+				"retentionUntil":"2026-05-31T01:17:03Z",
+				"gcEligible":false,
+				"gcBlockedReason":"retention_active",
+				"terminalNodeCount":2,
+				"succeededNodeCount":2,
+				"retainedArtifactCount":1,
+				"retainedArtifactBytes":42
+			}`), nil
+		}),
+	})
+	lifecycle, ok, err := client.GetSampleRunLifecycle(context.Background(), GetSampleRunLifecycleRequest{
+		SampleRunID: "sample-1",
+	})
+	if err != nil {
+		t.Fatalf("GetSampleRunLifecycle() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("GetSampleRunLifecycle() ok = false, want true")
+	}
+	if lifecycle.SampleRunID != "sample-1" {
+		t.Fatalf("sampleRunId = %q, want sample-1", lifecycle.SampleRunID)
+	}
+	if !lifecycle.Finalized {
+		t.Fatal("finalized = false, want true")
+	}
+	if lifecycle.RetentionPolicySource != "service_default" {
+		t.Fatalf("retentionPolicySource = %q, want service_default", lifecycle.RetentionPolicySource)
+	}
+	if lifecycle.RetainedArtifactBytes != 42 {
+		t.Fatalf("retainedArtifactBytes = %d, want 42", lifecycle.RetainedArtifactBytes)
+	}
+}
+
+func TestHTTPClientGetSampleRunLifecycleReturnsNotFound(t *testing.T) {
+	client := NewHTTPClientWithClient("http://artifact-handoff.test", &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != "/v1/sampleRuns:lifecycle" {
+				t.Fatalf("unexpected path: %s", r.URL.Path)
+			}
+			return jsonResponse(http.StatusNotFound, `{"error":"not found"}`), nil
+		}),
+	})
+	_, ok, err := client.GetSampleRunLifecycle(context.Background(), GetSampleRunLifecycleRequest{
+		SampleRunID: "missing",
+	})
+	if err != nil {
+		t.Fatalf("GetSampleRunLifecycle() error = %v", err)
+	}
+	if ok {
+		t.Fatal("GetSampleRunLifecycle() ok = true, want false")
+	}
+}
+
 func TestHTTPClientResolveBindingDecodesLegacyResponseShape(t *testing.T) {
 	client := NewHTTPClientWithClient("http://artifact-handoff.test", &http.Client{
 		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {

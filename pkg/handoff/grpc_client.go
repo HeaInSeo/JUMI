@@ -249,3 +249,29 @@ func (c *GRPCClient) EvaluateGC(ctx context.Context, req EvaluateGCRequest) erro
 	}
 	return nil
 }
+
+func (c *GRPCClient) GetSampleRunLifecycle(ctx context.Context, req GetSampleRunLifecycleRequest) (SampleRunLifecycle, bool, error) {
+	resp, err := c.client.GetSampleRunLifecycle(ctx, &ahv1.GetSampleRunLifecycleRequest{
+		SampleRunId: req.SampleRunID,
+	})
+	if err != nil {
+		return SampleRunLifecycle{}, false, err
+	}
+	return SampleRunLifecycle{
+		SampleRunID:           resp.GetSampleRunId(),
+		Finalized:             resp.GetFinalized(),
+		FinalizedAt:           resp.GetFinalizedAt(),
+		RetentionPolicySource: resp.GetRetentionPolicySource(),
+		RetentionDuration:     resp.GetRetentionDuration(),
+		RetentionUntil:        resp.GetRetentionUntil(),
+		GCEligible:            resp.GetGcEligible(),
+		GCEligibleAt:          resp.GetGcEligibleAt(),
+		GCBlockedReason:       resp.GetGcBlockedReason(),
+		TerminalNodeCount:     resp.GetTerminalNodeCount(),
+		SucceededNodeCount:    resp.GetSucceededNodeCount(),
+		FailedNodeCount:       resp.GetFailedNodeCount(),
+		CanceledNodeCount:     resp.GetCanceledNodeCount(),
+		RetainedArtifactCount: resp.GetRetainedArtifactCount(),
+		RetainedArtifactBytes: resp.GetRetainedArtifactBytes(),
+	}, true, nil
+}

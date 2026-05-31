@@ -153,6 +153,7 @@ v0 기준으로 URI는 두 층으로 본다.
 | Sprint 3D-2 | source verifier minimal API | Completed |
 | Sprint 3D-3 | verification baseline target | Completed |
 | Sprint 3D-4 | remote smoke verification baseline | Completed |
+| Sprint 3D-5 | sample run lifecycle query seam | Completed |
 
 ### 4.1 Sprint 3C-3E 완료 메모
 
@@ -286,6 +287,27 @@ Verification commands:
 make verify-sprint-3d-remote
 env SYNC_BACKUP_REGISTRY=true K8SGPT_MODE=required ./scripts/run-jumi-same-node-local-reuse-live-smoke.sh
 env SYNC_BACKUP_REGISTRY=true K8SGPT_MODE=required ENABLE_HTTP_AH=1 ./scripts/run-jumi-remote-fetch-simple-http-live-smoke.sh
+```
+
+### 4.7 Sprint 3D-5 완료 메모
+
+범위:
+
+- JUMI handoff HTTP/gRPC client에 `GetSampleRunLifecycle` seam 추가
+- `sampleRunId`, `finalized`, `retentionPolicySource`, `retainedArtifact*` 등 cleanup/TTL 전 단계에서 필요한 lifecycle 필드 parity 확보
+- HTTP `404`는 lifecycle not found로 정상 해석
+
+의도적으로 하지 않은 것:
+
+- cleanup / TTL controller
+- artifact deletion 실행
+- post-scheduling re-resolve
+- source lifecycle orchestration 확장
+
+Verification commands:
+
+```bash
+env TMPDIR=/tmp/jumi-lifecycle-tmp GOCACHE=/tmp/jumi-lifecycle-cache GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/handoff
 ```
 
 ---

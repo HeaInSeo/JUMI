@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -106,6 +107,28 @@ type EvaluateGCRequest struct {
 	SampleRunID string `json:"sampleRunId"`
 }
 
+type GetSampleRunLifecycleRequest struct {
+	SampleRunID string `json:"sampleRunId"`
+}
+
+type SampleRunLifecycle struct {
+	SampleRunID           string `json:"sampleRunId,omitempty"`
+	Finalized             bool   `json:"finalized,omitempty"`
+	FinalizedAt           string `json:"finalizedAt,omitempty"`
+	RetentionPolicySource string `json:"retentionPolicySource,omitempty"`
+	RetentionDuration     string `json:"retentionDuration,omitempty"`
+	RetentionUntil        string `json:"retentionUntil,omitempty"`
+	GCEligible            bool   `json:"gcEligible,omitempty"`
+	GCEligibleAt          string `json:"gcEligibleAt,omitempty"`
+	GCBlockedReason       string `json:"gcBlockedReason,omitempty"`
+	TerminalNodeCount     int32  `json:"terminalNodeCount,omitempty"`
+	SucceededNodeCount    int32  `json:"succeededNodeCount,omitempty"`
+	FailedNodeCount       int32  `json:"failedNodeCount,omitempty"`
+	CanceledNodeCount     int32  `json:"canceledNodeCount,omitempty"`
+	RetainedArtifactCount int32  `json:"retainedArtifactCount,omitempty"`
+	RetainedArtifactBytes int64  `json:"retainedArtifactBytes,omitempty"`
+}
+
 type RegisterArtifactRequest struct {
 	SampleRunID       string             `json:"sampleRunId"`
 	ProducerNodeID    string             `json:"producerNodeId"`
@@ -126,6 +149,7 @@ type Client interface {
 	NotifyNodeTerminal(ctx context.Context, req NotifyNodeTerminalRequest) error
 	FinalizeSampleRun(ctx context.Context, req FinalizeSampleRunRequest) error
 	EvaluateGC(ctx context.Context, req EvaluateGCRequest) error
+	GetSampleRunLifecycle(ctx context.Context, req GetSampleRunLifecycleRequest) (SampleRunLifecycle, bool, error)
 }
 
 type NoopClient struct{}
@@ -160,6 +184,10 @@ func (c *NoopClient) FinalizeSampleRun(_ context.Context, _ FinalizeSampleRunReq
 
 func (c *NoopClient) EvaluateGC(_ context.Context, _ EvaluateGCRequest) error {
 	return nil
+}
+
+func (c *NoopClient) GetSampleRunLifecycle(_ context.Context, req GetSampleRunLifecycleRequest) (SampleRunLifecycle, bool, error) {
+	return SampleRunLifecycle{SampleRunID: req.SampleRunID}, false, nil
 }
 
 type HTTPClient struct {
@@ -356,6 +384,32 @@ func (c *HTTPClient) EvaluateGC(ctx context.Context, req EvaluateGCRequest) erro
 		return fmt.Errorf("handoff evaluate gc failed with status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func (c *HTTPClient) GetSampleRunLifecycle(ctx context.Context, req GetSampleRunLifecycleRequest) (SampleRunLifecycle, bool, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/sampleRuns:lifecycle?sampleRunId="+url.QueryEscape(req.SampleRunID), nil)
+	if err != nil {
+		return SampleRunLifecycle{}, false, err
+	}
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return SampleRunLifecycle{}, false, err
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var lifecycle SampleRunLifecycle
+		if err := json.NewDecoder(resp.Body).Decode(&lifecycle); err != nil {
+			return SampleRunLifecycle{}, false, err
+		}
+		return lifecycle, true, nil
+	case http.StatusNotFound:
+		return SampleRunLifecycle{}, false, nil
+	default:
+		return SampleRunLifecycle{}, false, fmt.Errorf("handoff get sample run lifecycle failed with status %d", resp.StatusCode)
+	}
 }
 
 func firstNonEmpty(values ...string) string {
