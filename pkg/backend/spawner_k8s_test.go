@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"github.com/HeaInSeo/JUMI/pkg/spec"
 	spapi "github.com/HeaInSeo/spawner/pkg/api"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestToSpawnerRunSpecMapsRuntimeContractFields(t *testing.T) {
@@ -401,6 +404,46 @@ func TestBuildDirectK8sJobUsesServiceAccountAndWorkingDir(t *testing.T) {
 	}
 	if got := job.Spec.Template.Spec.Containers[0].WorkingDir; got != "/workspace" {
 		t.Fatalf("workingDir = %q, want /workspace", got)
+	}
+}
+
+func TestDirectK8sBackendStartCreatesJob(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	backend := newDirectK8sBackend("jumi-ah-dev", clientset, nil)
+
+	handle, err := backend.Start(context.Background(), preparedSpawnerNode{
+		runSpec: spapi.RunSpec{
+			RunID:    "run-direct-start",
+			ImageRef: "busybox:1.36",
+			Command:  []string{"sh", "-c", "echo hi"},
+			Labels: map[string]string{
+				"kueue.x-k8s.io/queue-name": "standard",
+			},
+			Cleanup: spapi.CleanupPolicy{TTLSecondsAfterFinished: 600},
+		},
+		workingDir:         "/workspace",
+		serviceAccountName: "jumi",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	h, ok := handle.(directK8sHandle)
+	if !ok {
+		t.Fatalf("handle type = %T, want directK8sHandle", handle)
+	}
+	if h.jobName != "run-direct-start" || h.ns != "jumi-ah-dev" || h.queueName != "standard" {
+		t.Fatalf("handle = %+v, want job/ns/queue populated", h)
+	}
+	job, err := clientset.BatchV1().Jobs("jumi-ah-dev").Get(context.Background(), "run-direct-start", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get created job: %v", err)
+	}
+	podSpec := job.Spec.Template.Spec
+	if podSpec.ServiceAccountName != "jumi" {
+		t.Fatalf("serviceAccountName = %q, want jumi", podSpec.ServiceAccountName)
+	}
+	if podSpec.Containers[0].WorkingDir != "/workspace" {
+		t.Fatalf("workingDir = %q, want /workspace", podSpec.Containers[0].WorkingDir)
 	}
 }
 

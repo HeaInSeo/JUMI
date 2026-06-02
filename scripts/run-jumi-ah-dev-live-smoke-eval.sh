@@ -107,6 +107,82 @@ collect_service_json() {
   "
 }
 
+collect_k8s_churn_snapshot() {
+  ssh_remote "
+    export KUBECONFIG='${REMOTE_KUBECONFIG}'
+    python3 - <<'PY'
+import json
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+namespace = '${VM_NAMESPACE}'
+run_id = '${RUN_ID}'
+
+def kubectl_json(kind):
+    raw = subprocess.check_output(['kubectl', '-n', namespace, 'get', kind, '-o', 'json'], text=True)
+    return json.loads(raw)
+
+def labels(obj):
+    return obj.get('metadata', {}).get('labels', {}) or {}
+
+try:
+    jobs = kubectl_json('jobs')
+    pods = kubectl_json('pods')
+except Exception as exc:
+    print(json.dumps({'error': str(exc), 'namespace': namespace, 'runId': run_id}), file=sys.stdout)
+    raise
+
+out = {
+    'observedAt': datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z'),
+    'namespace': namespace,
+    'runId': run_id,
+    'jobsTotal': 0,
+    'jobsForRun': 0,
+    'jobsActive': 0,
+    'jobsSucceeded': 0,
+    'jobsFailed': 0,
+    'podsTotal': 0,
+    'podsForRun': 0,
+    'podsPending': 0,
+    'podsRunning': 0,
+    'podsSucceeded': 0,
+    'podsFailed': 0,
+    'podsUnknown': 0,
+    'podExecFallback': 0,
+}
+
+for job in jobs.get('items', []):
+    out['jobsTotal'] += 1
+    if labels(job).get('jumi/run-id') == run_id or labels(job).get('pipeline-lite/run-id') == run_id:
+        out['jobsForRun'] += 1
+    status = job.get('status', {}) or {}
+    out['jobsActive'] += int(status.get('active') or 0)
+    out['jobsSucceeded'] += int(status.get('succeeded') or 0)
+    out['jobsFailed'] += int(status.get('failed') or 0)
+
+for pod in pods.get('items', []):
+    out['podsTotal'] += 1
+    pod_labels = labels(pod)
+    if pod_labels.get('jumi/run-id') == run_id or pod_labels.get('pipeline-lite/run-id') == run_id:
+        out['podsForRun'] += 1
+    phase = (pod.get('status', {}) or {}).get('phase', 'Unknown')
+    if phase == 'Pending':
+        out['podsPending'] += 1
+    elif phase == 'Running':
+        out['podsRunning'] += 1
+    elif phase == 'Succeeded':
+        out['podsSucceeded'] += 1
+    elif phase == 'Failed':
+        out['podsFailed'] += 1
+    else:
+        out['podsUnknown'] += 1
+
+print(json.dumps(out, sort_keys=True))
+PY
+  "
+}
+
 need_cmd ssh
 need_cmd scp
 need_cmd python3
@@ -144,9 +220,11 @@ end_jumi="$(mktemp)"
 end_ah="$(mktemp)"
 lifecycle_json="$(mktemp)"
 artifacts_json="$(mktemp)"
+k8s_churn_start_json="$(mktemp)"
+k8s_churn_end_json="$(mktemp)"
 k8sgpt_raw=""
 cleanup() {
-  rm -f "${start_jumi}" "${start_ah}" "${end_jumi}" "${end_ah}" "${lifecycle_json}" "${artifacts_json}"
+  rm -f "${start_jumi}" "${start_ah}" "${end_jumi}" "${end_ah}" "${lifecycle_json}" "${artifacts_json}" "${k8s_churn_start_json}" "${k8s_churn_end_json}"
   if [[ -n "${k8sgpt_raw}" ]]; then
     rm -f "${k8sgpt_raw}"
   fi
@@ -171,6 +249,7 @@ ssh_remote "bash -lc \"rm -rf '${REMOTE_JUMI_REPO_ROOT}/tools/jumi-smoke' && mkd
 
 collect_metric_values "jumi" "jumi" "metrics-jumi-start-${RUN_STAMP,,}" >"${start_jumi}"
 collect_metric_values "${ARTIFACT_HANDOFF_SERVICE}" "ah" "metrics-ah-start-${RUN_STAMP,,}" >"${start_ah}"
+collect_k8s_churn_snapshot >"${k8s_churn_start_json}"
 
 if ssh_remote "
   export KUBECONFIG='${REMOTE_KUBECONFIG}'
@@ -196,6 +275,7 @@ fi
 
 collect_metric_values "jumi" "jumi" "metrics-jumi-end-${RUN_STAMP,,}" >"${end_jumi}"
 collect_metric_values "${ARTIFACT_HANDOFF_SERVICE}" "ah" "metrics-ah-end-${RUN_STAMP,,}" >"${end_ah}"
+collect_k8s_churn_snapshot >"${k8s_churn_end_json}"
 collect_service_json "${ARTIFACT_HANDOFF_SERVICE}" "/v1/sampleRuns:lifecycle?sampleRunId=${SAMPLE_RUN_ID}" "lifecycle-ah-end-${RUN_STAMP,,}" >"${lifecycle_json}"
 collect_service_json "${ARTIFACT_HANDOFF_SERVICE}" "/v1/artifacts:list?sampleRunId=${SAMPLE_RUN_ID}" "artifacts-ah-end-${RUN_STAMP,,}" >"${artifacts_json}"
 
@@ -216,6 +296,8 @@ end_jumi_path = Path("${end_jumi}")
 end_ah_path = Path("${end_ah}")
 lifecycle_path = Path("${lifecycle_json}")
 artifacts_path = Path("${artifacts_json}")
+k8s_churn_start_path = Path("${k8s_churn_start_json}")
+k8s_churn_end_path = Path("${k8s_churn_end_json}")
 jumi_keys = [
     "jumi_jobs_created_total",
     "jumi_artifacts_registered_total",
@@ -268,6 +350,8 @@ def load_last_json_payload(path):
 
 lifecycle = load_last_json_payload(lifecycle_path)
 artifact_payload = load_last_json_payload(artifacts_path)
+k8s_churn_start = load_last_json_payload(k8s_churn_start_path)
+k8s_churn_end = load_last_json_payload(k8s_churn_end_path)
 
 fixture = {
     "runId": run_id,
@@ -291,6 +375,11 @@ fixture = {
     "endMetrics": end_metrics,
     "ahLifecycle": lifecycle,
     "ahArtifacts": artifact_payload.get("artifacts", []),
+    "k8sChurn": {
+        "namespace": "${VM_NAMESPACE}",
+        "start": k8s_churn_start,
+        "end": k8s_churn_end,
+    },
 }
 fixture_path.write_text(json.dumps(fixture, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY

@@ -24,6 +24,32 @@ type fixture struct {
 	EndMetrics   map[string]float64 `json:"endMetrics"`
 	AHLifecycle  *ahLifecycle       `json:"ahLifecycle,omitempty"`
 	AHArtifacts  []ahArtifact       `json:"ahArtifacts,omitempty"`
+	K8sChurn     *k8sChurn          `json:"k8sChurn,omitempty"`
+}
+
+type k8sChurn struct {
+	Namespace string         `json:"namespace,omitempty"`
+	Start     k8sChurnSample `json:"start,omitempty"`
+	End       k8sChurnSample `json:"end,omitempty"`
+}
+
+type k8sChurnSample struct {
+	ObservedAt      string `json:"observedAt,omitempty"`
+	Namespace       string `json:"namespace,omitempty"`
+	RunID           string `json:"runId,omitempty"`
+	JobsTotal       int    `json:"jobsTotal"`
+	JobsForRun      int    `json:"jobsForRun"`
+	JobsActive      int    `json:"jobsActive"`
+	JobsSucceeded   int    `json:"jobsSucceeded"`
+	JobsFailed      int    `json:"jobsFailed"`
+	PodsTotal       int    `json:"podsTotal"`
+	PodsForRun      int    `json:"podsForRun"`
+	PodsPending     int    `json:"podsPending"`
+	PodsRunning     int    `json:"podsRunning"`
+	PodsSucceeded   int    `json:"podsSucceeded"`
+	PodsFailed      int    `json:"podsFailed"`
+	PodsUnknown     int    `json:"podsUnknown"`
+	PodExecFallback int    `json:"podExecFallback"`
 }
 
 type ahLifecycle struct {
@@ -118,6 +144,7 @@ func main() {
 		normalizeReplayReliability(sum)
 	}
 	appendLifecycleDerivedResults(sum, fix)
+	appendK8sChurnDerivedResults(sum, fix)
 	if err := writer.Write(*outPath, *sum); err != nil {
 		fmt.Fprintf(os.Stderr, "rewrite normalized summary: %v\n", err)
 		os.Exit(1)
@@ -126,6 +153,84 @@ func main() {
 	fmt.Printf("generated summary: %s\n", *outPath)
 	fmt.Printf("results=%d warnings=%d collection=%s evaluation=%s\n",
 		len(sum.Results), len(sum.Warnings), sum.Reliability.CollectionStatus, sum.Reliability.EvaluationStatus)
+}
+
+func appendK8sChurnDerivedResults(sum *summary.Summary, fix fixture) {
+	if sum == nil || fix.K8sChurn == nil {
+		return
+	}
+	churn := fix.K8sChurn
+	jobDelta := float64(churn.End.JobsTotal - churn.Start.JobsTotal)
+	addResult(sum, summary.SLIResult{
+		ID:          "k8s_namespace_jobs_total_delta_churn",
+		Title:       "K8s Namespace Jobs Total Delta Churn",
+		Unit:        "count",
+		Kind:        "derived_delta",
+		Description: "Tracks namespace Job object count delta across the smoke measurement window. This is observation only, not production-scale GC assurance.",
+		Value:       &jobDelta,
+		Status:      summary.StatusPass,
+		InputsUsed:  []string{"k8sChurn.start.jobsTotal", "k8sChurn.end.jobsTotal"},
+	})
+
+	podDelta := float64(churn.End.PodsTotal - churn.Start.PodsTotal)
+	addResult(sum, summary.SLIResult{
+		ID:          "k8s_namespace_pods_total_delta_churn",
+		Title:       "K8s Namespace Pods Total Delta Churn",
+		Unit:        "count",
+		Kind:        "derived_delta",
+		Description: "Tracks namespace Pod object count delta across the smoke measurement window.",
+		Value:       &podDelta,
+		Status:      summary.StatusPass,
+		InputsUsed:  []string{"k8sChurn.start.podsTotal", "k8sChurn.end.podsTotal"},
+	})
+
+	runJobs := float64(churn.End.JobsForRun)
+	addResult(sum, summary.SLIResult{
+		ID:          "k8s_jobs_for_run_churn",
+		Title:       "K8s Jobs For Run Churn",
+		Unit:        "count",
+		Kind:        "derived_gauge",
+		Description: "Tracks Jobs labeled for the smoke run at the end of the window.",
+		Value:       &runJobs,
+		Status:      statusAtLeast(runJobs, 1),
+		InputsUsed:  []string{"k8sChurn.end.jobsForRun"},
+	})
+
+	runPods := float64(churn.End.PodsForRun)
+	addResult(sum, summary.SLIResult{
+		ID:          "k8s_pods_for_run_churn",
+		Title:       "K8s Pods For Run Churn",
+		Unit:        "count",
+		Kind:        "derived_gauge",
+		Description: "Tracks Pods labeled for the smoke run at the end of the window.",
+		Value:       &runPods,
+		Status:      statusAtLeast(runPods, 1),
+		InputsUsed:  []string{"k8sChurn.end.podsForRun"},
+	})
+
+	failedJobs := float64(churn.End.JobsFailed)
+	addResult(sum, summary.SLIResult{
+		ID:          "k8s_failed_jobs_end_churn",
+		Title:       "K8s Failed Jobs End Churn",
+		Unit:        "count",
+		Kind:        "derived_gauge",
+		Description: "Tracks failed Jobs still visible in the namespace at the end of the window. Non-zero is a churn signal to inspect.",
+		Value:       &failedJobs,
+		Status:      statusZero(failedJobs),
+		InputsUsed:  []string{"k8sChurn.end.jobsFailed"},
+	})
+
+	activeJobs := float64(churn.End.JobsActive)
+	addResult(sum, summary.SLIResult{
+		ID:          "k8s_active_jobs_end_churn",
+		Title:       "K8s Active Jobs End Churn",
+		Unit:        "count",
+		Kind:        "derived_gauge",
+		Description: "Tracks active Jobs still visible in the namespace at the end of the smoke window.",
+		Value:       &activeJobs,
+		Status:      statusZero(activeJobs),
+		InputsUsed:  []string{"k8sChurn.end.jobsActive"},
+	})
 }
 
 func loadFixture(path string) (fixture, error) {
@@ -257,6 +362,20 @@ func statusForPositiveOrZero(value float64, expectPositive bool) summary.Status 
 		}
 		return summary.StatusFail
 	}
+	if value == 0 {
+		return summary.StatusPass
+	}
+	return summary.StatusFail
+}
+
+func statusAtLeast(value float64, min float64) summary.Status {
+	if value >= min {
+		return summary.StatusPass
+	}
+	return summary.StatusFail
+}
+
+func statusZero(value float64) summary.Status {
 	if value == 0 {
 		return summary.StatusPass
 	}

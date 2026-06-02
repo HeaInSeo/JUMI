@@ -224,8 +224,10 @@ Sprint 3C v0에서는 candidate로 사용하지 않는다.
 기본 정책:
 
 - URI `userinfo`는 무조건 거부한다.
-- query string은 3C-3E 기준으로 기본 거부한다.
-- signed URL 지원은 future work로 미루며, 이번 스프린트에서는 예외 플래그를 두지 않는다.
+- query string은 AH persistent metadata와 nan runtime input URI에서 기본 거부한다.
+- signed URL은 AH `Artifact` / `ArtifactSource` / `SourceRecord`에 저장하지 않는다.
+- signed URL은 nan input contract/env에 직접 전달하지 않는다.
+- future signed URL 지원은 `credentialRef` 또는 materialization broker가 실행 직전에 short-lived URL을 발급하는 runtime-only flow로만 허용한다.
 
 거부 예:
 
@@ -233,9 +235,12 @@ Sprint 3C v0에서는 candidate로 사용하지 않는다.
 - `https://example.com/file?token=secret`
 - `https://example.com/file?X-Amz-Signature=...`
 
-후속 메모:
+Sprint 3F 결정:
 
-- signed URL을 지원하려면 저장 정책, redaction 정책, runtime-only short-lived 사용 정책을 별도로 정의해야 한다.
+- AH는 signed URL query를 포함한 모든 query-bearing HTTP URI 등록을 거부한다.
+- nan은 signed URL query를 포함한 모든 query-bearing `remote_fetch` URI 실행을 거부한다.
+- direct signed URL pass-through는 지원하지 않는다.
+- runtime-only 지원은 후속 별도 스프린트에서 `credentialRef` / broker API / redaction policy를 같이 설계한다.
 
 ### 9.2 허용 scheme
 
@@ -399,17 +404,29 @@ planner는 safe default `localPath`만 생성하고, JUMI/nan은 defense-in-dept
 
 - `local_reuse`는 `copy default`를 유지한다.
 
+Sprint 3G 결정:
+
+- default materialization strategy는 계속 `copy`다.
+- `reflink`는 이후 명시적 옵션으로만 도입한다.
+- `hardlink`는 CAS 원본 mutation 위험 때문에 명시적 opt-in일 때만 허용한다.
+- 어떤 zero-copy 계열 최적화도 digest/size 검증을 생략할 수 없다.
+- zero-copy 시도 실패 시 반드시 copy fallback이 가능해야 한다.
+- symlink 기반 materialization은 계속 금지한다.
+
 이유:
 
 - CAS 원본 보호
 - consumer input 격리
 - `/work/inputs` 수정이 CAS 원본을 오염시키지 않음
+- filesystem / runtime별 link semantic 차이 회피
+- 디버깅 가능한 예측성 유지
 
 금지:
 
 - hardlink-first 기본 적용
 - symlink-first 기본 적용
 - digest 검증 생략
+- zero-copy only mode를 기본값으로 설정
 
 후속 후보:
 

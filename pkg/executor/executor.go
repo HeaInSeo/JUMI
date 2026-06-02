@@ -475,8 +475,16 @@ type nodeRunner struct {
 
 	retriesRemaining        int
 	localityHints           []bindingLocalityHint
+	postSchedulingResolves  []postSchedulingResolve
 	localityFallbackStarted bool
 	localityActualNode      string
+}
+
+type postSchedulingResolve struct {
+	Binding         spec.ArtifactBinding
+	Request         handoff.ResolveBindingRequest
+	InitialDecision string
+	InitialMode     string
 }
 
 type bindingLocalityHint struct {
@@ -531,6 +539,7 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 	now := time.Now().UTC()
 	attemptID := ""
 	executionNode := cloneNode(r.node)
+	r.postSchedulingResolves = nil
 	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.AttemptCount++
 		attemptID = fmt.Sprintf("%s-%s-attempt-%d", r.runID, r.node.NodeID, current.AttemptCount)
@@ -621,6 +630,7 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 			if requiresMaterialization(resolved) {
 				r.metrics.IncInputMaterializations()
 			}
+			r.recordPostSchedulingResolve(binding, req, resolved)
 			r.recordLocalityHint(binding, resolved, attemptID)
 			injectResolvedBindingEnv(&executionNode, binding, resolved)
 		}
@@ -696,6 +706,9 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 				return nil
 			})
 			r.observeLocality(kueueInfo, attemptID)
+			if kueueInfo.Scheduled && kueueInfo.PodNodeName != "" {
+				r.resolvePostSchedulingBindings(ctx, attemptID, kueueInfo.PodNodeName)
+			}
 			if !kueueInfo.Admitted {
 				bottleneck = "kueue_pending"
 				appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.kueue.pending", OccurredAt: time.Now().UTC(), Level: "info", Message: util.FirstNonEmpty(kueueInfo.PendingReason, "waiting for Kueue admission")})
@@ -892,6 +905,60 @@ func (r *nodeRunner) recordLocalityHint(binding spec.ArtifactBinding, resolved h
 		Level:      "info",
 		Message:    fmt.Sprintf("binding=%s preferredNode=%s mode=%s", util.FirstNonEmpty(binding.ChildInputName, binding.BindingName), hint.PreferredNodeName, util.FirstNonEmpty(hint.PlacementMode, "unspecified")),
 	})
+}
+
+func (r *nodeRunner) recordPostSchedulingResolve(binding spec.ArtifactBinding, req handoff.ResolveBindingRequest, resolved handoff.ResolveBindingResponse) {
+	r.postSchedulingResolves = append(r.postSchedulingResolves, postSchedulingResolve{
+		Binding:         binding,
+		Request:         req,
+		InitialDecision: resolved.Decision,
+		InitialMode:     resolved.MaterializationPlan.Mode,
+	})
+}
+
+func (r *nodeRunner) resolvePostSchedulingBindings(ctx context.Context, attemptID string, targetNodeName string) {
+	targetNodeName = strings.TrimSpace(targetNodeName)
+	if targetNodeName == "" || len(r.postSchedulingResolves) == 0 {
+		return
+	}
+	for _, item := range r.postSchedulingResolves {
+		bindingName := util.FirstNonEmpty(item.Binding.ChildInputName, item.Binding.BindingName)
+		req := item.Request
+		req.TargetNodeName = targetNodeName
+		r.metrics.IncInputResolveRequests()
+		resolved, err := r.resolveBindingWithRetry(ctx, req, attemptID, item.Binding.BindingName)
+		if err != nil {
+			appendEvent(context.Background(), r.registry, spec.EventRecord{
+				RunID:         r.runID,
+				NodeID:        r.node.NodeID,
+				AttemptID:     attemptID,
+				Type:          "node.input_post_scheduling_resolve_failed",
+				OccurredAt:    time.Now().UTC(),
+				Level:         "warn",
+				FailureReason: "post_scheduling_resolve_error",
+				Message:       fmt.Sprintf("binding=%s targetNode=%s error=%s", bindingName, targetNodeName, err.Error()),
+			})
+			continue
+		}
+		appendEvent(context.Background(), r.registry, spec.EventRecord{
+			RunID:      r.runID,
+			NodeID:     r.node.NodeID,
+			AttemptID:  attemptID,
+			Type:       "node.input_post_scheduling_resolved",
+			OccurredAt: time.Now().UTC(),
+			Level:      "info",
+			Message: fmt.Sprintf(
+				"binding=%s targetNode=%s decision=%s status=%s materialization=%s initialDecision=%s initialMaterialization=%s",
+				bindingName,
+				targetNodeName,
+				resolved.Decision,
+				resolved.ResolutionStatus,
+				resolved.MaterializationPlan.Mode,
+				item.InitialDecision,
+				item.InitialMode,
+			),
+		})
+	}
 }
 
 func (r *nodeRunner) observeLocality(info *backend.OptionalKueueInfo, attemptID string) {

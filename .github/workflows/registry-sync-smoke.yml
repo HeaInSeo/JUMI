@@ -1,0 +1,101 @@
+name: Registry Sync Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      smoke:
+        description: Remote gate to run
+        required: true
+        default: preflight-only
+        type: choice
+        options:
+          - preflight-only
+          - local-reuse
+          - remote-fetch
+          - full
+      sync_backup_registry:
+        description: Also verify/sync backup registry such as GHCR
+        required: true
+        default: true
+        type: boolean
+      remote_ssh_target:
+        description: SSH target that can reach the cluster and registries
+        required: true
+        default: seoy@100.123.80.48
+        type: string
+      registry_host:
+        description: Primary registry host
+        required: true
+        default: harbor.10.113.24.96.nip.io
+        type: string
+      backup_registry_host:
+        description: Backup registry host
+        required: true
+        default: ghcr.io
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: registry-sync-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  registry-sync-smoke:
+    name: Manual Harbor GHCR smoke gate
+    runs-on: ubuntu-latest
+    env:
+      REMOTE_SSH_PRIVATE_KEY: ${{ secrets.REMOTE_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Checkout JUMI
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Configure SSH key
+        if: ${{ env.REMOTE_SSH_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "${REMOTE_SSH_PRIVATE_KEY}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Run selected remote gate
+        env:
+          REMOTE_SSH_TARGET: ${{ inputs.remote_ssh_target }}
+          REGISTRY_HOST: ${{ inputs.registry_host }}
+          BACKUP_REGISTRY_HOST: ${{ inputs.backup_registry_host }}
+          SYNC_BACKUP_REGISTRY: ${{ inputs.sync_backup_registry }}
+          K8SGPT_MODE: required
+        run: |
+          set -euo pipefail
+          case "${{ inputs.smoke }}" in
+            preflight-only)
+              make preflight-ko-remote
+              ;;
+            local-reuse)
+              ./scripts/run-jumi-same-node-local-reuse-live-smoke.sh
+              ;;
+            remote-fetch)
+              ENABLE_HTTP_AH=1 ./scripts/run-jumi-remote-fetch-simple-http-live-smoke.sh
+              ;;
+            full)
+              make verify-sprint-3d-remote
+              ;;
+            *)
+              echo "unknown smoke: ${{ inputs.smoke }}" >&2
+              exit 2
+              ;;
+          esac
+
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: registry-sync-smoke-artifacts
+          path: artifacts/
+          if-no-files-found: ignore

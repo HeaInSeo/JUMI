@@ -1413,6 +1413,92 @@ func TestDagEngineRecordsLocalityMissAndFallbackSuccess(t *testing.T) {
 	}
 }
 
+func TestDagEnginePostSchedulingResolveUsesActualPodNode(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &fakeAdapter{
+		failOn: map[string]bool{},
+		observe: &backend.OptionalKueueInfo{
+			Observed:    true,
+			Admitted:    true,
+			PodName:     "pod-consume",
+			PodNodeName: "node-b",
+			Scheduled:   true,
+		},
+	}
+	handoffClient := &fakeHandoffClient{
+		responses: []handoff.ResolveBindingResponse{
+			{
+				ResolutionStatus: "RESOLVED",
+				Decision:         "remote_fetch",
+				PlacementIntent: handoff.PlacementIntent{
+					Mode:     "preferred_node",
+					NodeName: "node-a",
+				},
+				MaterializationPlan: handoff.MaterializationPlan{
+					Mode: "remote_fetch",
+					URI:  "http://artifact.local/output",
+				},
+			},
+			{
+				ResolutionStatus: "RESOLVED",
+				Decision:         "local_reuse",
+				PlacementIntent: handoff.PlacementIntent{
+					Mode:     "none",
+					NodeName: "node-b",
+				},
+				MaterializationPlan: handoff.MaterializationPlan{
+					Mode: "local_reuse",
+					SourceLocation: &handoff.ArtifactLocation{
+						NodeLocal: &handoff.NodeLocalLocation{NodeName: "node-b", Path: "/var/lib/jumi-artifacts/cas/sha256/output"},
+					},
+				},
+			},
+		},
+	}
+	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+	specInput := spec.ExecutableRunSpec{
+		Run: spec.RunMetadata{RunID: "run-post-scheduling-resolve", SampleRunID: "sample-post-scheduling-resolve", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{
+			Nodes: []spec.Node{
+				{NodeID: "produce", Image: "busybox:1.36"},
+				{NodeID: "consume", Image: "busybox:1.36", ArtifactBindings: []spec.ArtifactBinding{{
+					BindingName:        "dataset",
+					ChildInputName:     "dataset",
+					ProducerNodeID:     "produce",
+					ProducerOutputName: "report",
+					ConsumePolicy:      "RemoteOK",
+					Required:           true,
+				}}},
+			},
+			Edges: [][]string{{"produce", "consume"}},
+		},
+	}
+	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "produce", Status: spec.NodeStatusPending}, {RunID: record.RunID, NodeID: "consume", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit() error = %v", err)
+	}
+	waitForRunStatus(t, reg, record.RunID, spec.RunStatusSucceeded)
+
+	handoffClient.mu.Lock()
+	requests := append([]handoff.ResolveBindingRequest(nil), handoffClient.requests...)
+	handoffClient.mu.Unlock()
+	if len(requests) != 2 {
+		t.Fatalf("resolve binding calls = %d, want 2", len(requests))
+	}
+	if requests[0].TargetNodeName != "" {
+		t.Fatalf("pre-scheduling targetNodeName = %q, want empty", requests[0].TargetNodeName)
+	}
+	if requests[1].TargetNodeName != "node-b" {
+		t.Fatalf("post-scheduling targetNodeName = %q, want node-b", requests[1].TargetNodeName)
+	}
+
+	assertEventTypePresent(t, reg, record.RunID, "node.input_post_scheduling_resolved")
+}
+
 func TestDagEngineCancelRunningNode(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
 	adapter := &fakeAdapter{

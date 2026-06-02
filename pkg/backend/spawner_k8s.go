@@ -63,10 +63,14 @@ type SpawnerK8sAdapter struct {
 	clientset  kubernetes.Interface
 	restConfig *rest.Config
 	metrics    *metrics.Metrics
+	direct     *directK8sBackend
 }
 
 func (a *SpawnerK8sAdapter) SetMetrics(m *metrics.Metrics) {
 	a.metrics = m
+	if a.direct != nil {
+		a.direct.metrics = m
+	}
 }
 
 type spawnerHandle struct {
@@ -118,6 +122,7 @@ func NewSpawnerK8sAdapterFromKubeconfig(namespace, kubeconfigPath string, maxCon
 		ns:         namespace,
 		clientset:  cs,
 		restConfig: cfg,
+		direct:     newDirectK8sBackend(namespace, cs, nil),
 	}, nil
 }
 
@@ -158,7 +163,10 @@ func (a *SpawnerK8sAdapter) StartNode(ctx context.Context, prepared PreparedNode
 		a.metrics.IncK8sNodeStart()
 	}
 	if wrapped, ok := prepared.(preparedSpawnerNode); ok && shouldUseDirectK8sStart(wrapped) {
-		handle, err := a.startDirectK8sNode(ctx, wrapped)
+		if a.direct == nil {
+			a.direct = newDirectK8sBackend(a.ns, a.clientset, a.metrics)
+		}
+		handle, err := a.direct.Start(ctx, wrapped)
 		if err != nil {
 			if a.metrics != nil {
 				a.metrics.IncK8sNodeStartErrors()
@@ -256,7 +264,10 @@ func (a *SpawnerK8sAdapter) fillPodObservation(ctx context.Context, jobName stri
 
 func (a *SpawnerK8sAdapter) WaitNode(ctx context.Context, handle Handle) (ExecutionResult, error) {
 	if h, ok := handle.(directK8sHandle); ok {
-		return a.waitDirectK8sNode(ctx, h)
+		if a.direct == nil {
+			a.direct = newDirectK8sBackend(a.ns, a.clientset, a.metrics)
+		}
+		return a.direct.Wait(ctx, h)
 	}
 	h, ok := handle.(spawnerHandle)
 	if !ok {
@@ -308,10 +319,10 @@ func (a *SpawnerK8sAdapter) CancelNode(ctx context.Context, handle Handle) error
 		a.metrics.IncK8sNodeCancel()
 	}
 	if h, ok := handle.(directK8sHandle); ok {
-		propagation := metav1.DeletePropagationBackground
-		return a.clientset.BatchV1().Jobs(h.ns).Delete(ctx, h.jobName, metav1.DeleteOptions{
-			PropagationPolicy: &propagation,
-		})
+		if a.direct == nil {
+			a.direct = newDirectK8sBackend(a.ns, a.clientset, a.metrics)
+		}
+		return a.direct.Cancel(ctx, h)
 	}
 	h, ok := handle.(spawnerHandle)
 	if !ok {
@@ -1048,12 +1059,22 @@ func shouldUseDirectK8sStart(prepared preparedSpawnerNode) bool {
 	return prepared.serviceAccountName != "" || prepared.workingDir != "" || hasDirectHostPathMount(prepared.runSpec.Mounts)
 }
 
-func (a *SpawnerK8sAdapter) startDirectK8sNode(ctx context.Context, prepared preparedSpawnerNode) (Handle, error) {
-	if a.clientset == nil {
+type directK8sBackend struct {
+	namespace string
+	clientset kubernetes.Interface
+	metrics   *metrics.Metrics
+}
+
+func newDirectK8sBackend(namespace string, clientset kubernetes.Interface, metrics *metrics.Metrics) *directK8sBackend {
+	return &directK8sBackend{namespace: namespace, clientset: clientset, metrics: metrics}
+}
+
+func (b *directK8sBackend) Start(ctx context.Context, prepared preparedSpawnerNode) (Handle, error) {
+	if b == nil || b.clientset == nil {
 		return nil, fmt.Errorf("direct k8s start requires clientset")
 	}
-	job := buildDirectK8sJob(prepared.runSpec, a.ns, prepared.workingDir, prepared.serviceAccountName)
-	created, err := a.clientset.BatchV1().Jobs(a.ns).Create(ctx, job, metav1.CreateOptions{})
+	job := buildDirectK8sJob(prepared.runSpec, b.namespace, prepared.workingDir, prepared.serviceAccountName)
+	created, err := b.clientset.BatchV1().Jobs(b.namespace).Create(ctx, job, metav1.CreateOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("create direct job %s: %w", job.Name, err)
 	}
@@ -1284,7 +1305,10 @@ func extractQueueName(labels map[string]string) string {
 	return labels["kueue.x-k8s.io/queue-name"]
 }
 
-func (a *SpawnerK8sAdapter) waitDirectK8sNode(ctx context.Context, h directK8sHandle) (ExecutionResult, error) {
+func (b *directK8sBackend) Wait(ctx context.Context, h directK8sHandle) (ExecutionResult, error) {
+	if b == nil || b.clientset == nil {
+		return ExecutionResult{TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"}, fmt.Errorf("direct k8s wait requires clientset")
+	}
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -1293,19 +1317,19 @@ func (a *SpawnerK8sAdapter) waitDirectK8sNode(ctx context.Context, h directK8sHa
 		case <-ctx.Done():
 			return ExecutionResult{TerminalStopCause: "canceled", TerminalFailureReason: "cancellation_requested"}, ctx.Err()
 		case <-ticker.C:
-			job, err := a.clientset.BatchV1().Jobs(h.ns).Get(ctx, h.jobName, metav1.GetOptions{})
+			job, err := b.clientset.BatchV1().Jobs(h.ns).Get(ctx, h.jobName, metav1.GetOptions{})
 			if err != nil {
 				return ExecutionResult{TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"}, fmt.Errorf("get direct job %s: %w", h.jobName, err)
 			}
 			if directJobSucceeded(job) {
-				if a.metrics != nil {
-					a.metrics.IncK8sNodeSucceeded()
+				if b.metrics != nil {
+					b.metrics.IncK8sNodeSucceeded()
 				}
 				return ExecutionResult{Succeeded: true, TerminalStopCause: "finished"}, nil
 			}
 			if directJobFailed(job) {
-				if a.metrics != nil {
-					a.metrics.IncK8sNodeFailed()
+				if b.metrics != nil {
+					b.metrics.IncK8sNodeFailed()
 				}
 				msg := directJobFailureMessage(job)
 				result := ExecutionResult{TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"}
@@ -1316,6 +1340,16 @@ func (a *SpawnerK8sAdapter) waitDirectK8sNode(ctx context.Context, h directK8sHa
 			}
 		}
 	}
+}
+
+func (b *directK8sBackend) Cancel(ctx context.Context, h directK8sHandle) error {
+	if b == nil || b.clientset == nil {
+		return fmt.Errorf("direct k8s cancel requires clientset")
+	}
+	propagation := metav1.DeletePropagationBackground
+	return b.clientset.BatchV1().Jobs(h.ns).Delete(ctx, h.jobName, metav1.DeleteOptions{
+		PropagationPolicy: &propagation,
+	})
 }
 
 func directJobSucceeded(job *batchv1.Job) bool {

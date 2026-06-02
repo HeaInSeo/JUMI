@@ -1,0 +1,57 @@
+name: Sprint Baseline
+
+on:
+  push:
+    paths-ignore:
+      - "**/*.md"
+      - "LICENSE*"
+      - ".github/**/*.md"
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "LICENSE*"
+      - ".github/**/*.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sprint-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-sprint-baseline:
+    name: JUMI AH nan contract baseline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout JUMI
+        uses: actions/checkout@v4
+        with:
+          path: JUMI
+
+      - name: Checkout artifact-handoff
+        uses: actions/checkout@v4
+        with:
+          repository: HeaInSeo/artifact-handoff
+          path: artifact-handoff
+          token: ${{ secrets.CROSS_REPO_READ_TOKEN || github.token }}
+
+      - name: Checkout node-artifact-runtime
+        uses: actions/checkout@v4
+        with:
+          repository: HeaInSeo/node-artifact-runtime
+          path: node-artifact-runtime
+          token: ${{ secrets.CROSS_REPO_READ_TOKEN || github.token }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: JUMI/go.mod
+
+      - name: Run cross-repo sprint baseline
+        working-directory: JUMI
+        env:
+          AH_REPO_ROOT: ${{ github.workspace }}/artifact-handoff
+          NAN_REPO_ROOT: ${{ github.workspace }}/node-artifact-runtime
+        run: make verify-sprint-3d-baseline
