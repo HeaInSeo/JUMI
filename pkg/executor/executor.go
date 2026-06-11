@@ -532,6 +532,9 @@ func (r *nodeRunner) RunE(ctx context.Context, a interface{}) error {
 }
 
 func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
+	if h, attemptID, ok := r.tryRestoreHandle(ctx); ok {
+		return r.runFromHandle(ctx, h, attemptID)
+	}
 	run, err := r.registry.GetRun(context.Background(), r.runID)
 	if err != nil {
 		return err
@@ -682,6 +685,7 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 	r.metrics.SetCleanupBacklogObjects(0)
 	r.registerHandle(handle)
 	defer r.unregisterHandle()
+	r.persistHandle(handle)
 	startedAt := time.Now().UTC()
 	if releaseDelay >= 200*time.Millisecond {
 		appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.release.waited", OccurredAt: startedAt, Level: "info", Message: fmt.Sprintf("bounded release delayed start by %s", releaseDelay.Truncate(10*time.Millisecond))})
@@ -730,6 +734,97 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 		return err
 	}
 	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.running", OccurredAt: startedAt, Level: "info", Message: "backend start completed and node is running"})
+	return r.waitAndFinalize(ctx, handle, attemptID, startedAt, executionNode)
+}
+
+func (r *nodeRunner) failNode(cause error, attemptID string, terminalStopCause string, failureReason string) error {
+	r.recordLocalityFallbackFailure(attemptID)
+	if r.isRunCanceled() {
+		return r.cancelNode(attemptID, "cancellation_requested")
+	}
+	if r.retriesRemaining > 0 {
+		r.retriesRemaining--
+		finishedAt := time.Now().UTC()
+		appendEvent(context.Background(), r.registry, spec.EventRecord{
+			RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID,
+			Type: "node.attempt_failed", OccurredAt: finishedAt, Level: "warn",
+			StopCause: terminalStopCause, FailureReason: failureReason,
+			Message: fmt.Sprintf("attempt failed, will retry (%d retries remaining)", r.retriesRemaining),
+		})
+		_ = r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
+			current.Status = spec.NodeStatusPending
+			current.CurrentBottleneckLocation = "retry_wait"
+			current.TerminalStopCause = ""
+			current.TerminalFailureReason = ""
+			current.FinishedAt = nil
+			current.CurrentAttemptID = ""
+			current.CurrentAttemptHandleJSON = ""
+			return nil
+		})
+		return errNodeRetry
+	}
+	finishedAt := time.Now().UTC()
+	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.failed", OccurredAt: finishedAt, Level: "error", StopCause: terminalStopCause, FailureReason: failureReason})
+	_ = r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
+		current.Status = spec.NodeStatusFailed
+		current.TerminalStopCause = terminalStopCause
+		current.TerminalFailureReason = failureReason
+		current.CurrentBottleneckLocation = ""
+		current.FinishedAt = &finishedAt
+		current.CurrentAttemptHandleJSON = ""
+		return nil
+	})
+	if err := r.notifyNodeTerminal(context.Background(), "Failed", attemptID); err != nil {
+		appendEvent(context.Background(), r.registry, spec.EventRecord{
+			RunID:         r.runID,
+			NodeID:        r.node.NodeID,
+			AttemptID:     attemptID,
+			Type:          "node.handoff.notify_failed",
+			OccurredAt:    time.Now().UTC(),
+			Level:         "error",
+			StopCause:     "failed",
+			FailureReason: "notify_node_terminal_error",
+			Message:       err.Error(),
+		})
+	}
+	return cause
+}
+
+func (r *nodeRunner) cancelNode(attemptID string, reason string) error {
+	finishedAt := time.Now().UTC()
+	terminalReason := r.effectiveCancellationReason(reason)
+	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, FinishedAt: &finishedAt, TerminalStopCause: "canceled", TerminalFailureReason: terminalReason})
+	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.canceled", OccurredAt: finishedAt, Level: "warn", StopCause: "canceled", FailureReason: terminalReason})
+	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
+		current.Status = spec.NodeStatusCanceled
+		current.TerminalStopCause = "canceled"
+		current.TerminalFailureReason = terminalReason
+		current.CurrentBottleneckLocation = ""
+		current.FinishedAt = &finishedAt
+		current.CurrentAttemptHandleJSON = ""
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := r.notifyNodeTerminal(context.Background(), "Canceled", attemptID); err != nil {
+		appendEvent(context.Background(), r.registry, spec.EventRecord{
+			RunID:         r.runID,
+			NodeID:        r.node.NodeID,
+			AttemptID:     attemptID,
+			Type:          "node.handoff.notify_failed",
+			OccurredAt:    time.Now().UTC(),
+			Level:         "error",
+			StopCause:     "canceled",
+			FailureReason: "notify_node_terminal_error",
+			Message:       err.Error(),
+		})
+	}
+	return nil
+}
+
+// waitAndFinalize runs WaitNode and handles all terminal outcomes.
+// Used by both the normal start path and the restart-recovery path.
+func (r *nodeRunner) waitAndFinalize(ctx context.Context, handle backend.Handle, attemptID string, startedAt time.Time, execNode spec.Node) error {
 	result, err := r.adapter.WaitNode(ctx, handle)
 	if err != nil {
 		r.recordLocalityFallbackFailure(attemptID)
@@ -744,7 +839,7 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 	}
 	finishedAt := time.Now().UTC()
 	r.recordLocalityFallbackSuccess(attemptID)
-	if err := r.registerNodeOutputs(context.Background(), handle, attemptID, executionNode); err != nil {
+	if err := r.registerNodeOutputs(context.Background(), handle, attemptID, execNode); err != nil {
 		r.recordLocalityFallbackFailure(attemptID)
 		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
 			RunID:                 r.runID,
@@ -788,6 +883,7 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 		current.TerminalFailureReason = result.TerminalFailureReason
 		current.CurrentBottleneckLocation = ""
 		current.FinishedAt = &finishedAt
+		current.CurrentAttemptHandleJSON = ""
 		return nil
 	}); err != nil {
 		return err
@@ -796,86 +892,64 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 	return nil
 }
 
-func (r *nodeRunner) failNode(cause error, attemptID string, terminalStopCause string, failureReason string) error {
-	r.recordLocalityFallbackFailure(attemptID)
-	if r.isRunCanceled() {
-		return r.cancelNode(attemptID, "cancellation_requested")
-	}
-	if r.retriesRemaining > 0 {
-		r.retriesRemaining--
-		finishedAt := time.Now().UTC()
-		appendEvent(context.Background(), r.registry, spec.EventRecord{
-			RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID,
-			Type: "node.attempt_failed", OccurredAt: finishedAt, Level: "warn",
-			StopCause: terminalStopCause, FailureReason: failureReason,
-			Message: fmt.Sprintf("attempt failed, will retry (%d retries remaining)", r.retriesRemaining),
-		})
-		_ = r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
-			current.Status = spec.NodeStatusPending
-			current.CurrentBottleneckLocation = "retry_wait"
-			current.TerminalStopCause = ""
-			current.TerminalFailureReason = ""
-			current.FinishedAt = nil
-			current.CurrentAttemptID = ""
-			return nil
-		})
-		return errNodeRetry
-	}
-	finishedAt := time.Now().UTC()
-	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.failed", OccurredAt: finishedAt, Level: "error", StopCause: terminalStopCause, FailureReason: failureReason})
-	_ = r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
-		current.Status = spec.NodeStatusFailed
-		current.TerminalStopCause = terminalStopCause
-		current.TerminalFailureReason = failureReason
-		current.CurrentBottleneckLocation = ""
-		current.FinishedAt = &finishedAt
-		return nil
+// runFromHandle reattaches to an in-flight backend job after an executor restart.
+// Called when tryRestoreHandle finds a persisted handle for a Running/Starting node.
+func (r *nodeRunner) runFromHandle(ctx context.Context, handle backend.Handle, attemptID string) error {
+	r.registerHandle(handle)
+	defer r.unregisterHandle()
+	startedAt := time.Now().UTC()
+	appendEvent(context.Background(), r.registry, spec.EventRecord{
+		RunID:      r.runID,
+		NodeID:     r.node.NodeID,
+		AttemptID:  attemptID,
+		Type:       "node.recovery.reattached",
+		OccurredAt: startedAt,
+		Level:      "info",
+		Message:    "reattached to in-flight backend job after executor restart",
 	})
-	if err := r.notifyNodeTerminal(context.Background(), "Failed", attemptID); err != nil {
-		appendEvent(context.Background(), r.registry, spec.EventRecord{
-			RunID:         r.runID,
-			NodeID:        r.node.NodeID,
-			AttemptID:     attemptID,
-			Type:          "node.handoff.notify_failed",
-			OccurredAt:    time.Now().UTC(),
-			Level:         "error",
-			StopCause:     "failed",
-			FailureReason: "notify_node_terminal_error",
-			Message:       err.Error(),
-		})
-	}
-	return cause
+	return r.waitAndFinalize(ctx, handle, attemptID, startedAt, r.node)
 }
 
-func (r *nodeRunner) cancelNode(attemptID string, reason string) error {
-	finishedAt := time.Now().UTC()
-	terminalReason := r.effectiveCancellationReason(reason)
-	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, FinishedAt: &finishedAt, TerminalStopCause: "canceled", TerminalFailureReason: terminalReason})
-	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.canceled", OccurredAt: finishedAt, Level: "warn", StopCause: "canceled", FailureReason: terminalReason})
-	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
-		current.Status = spec.NodeStatusCanceled
-		current.TerminalStopCause = "canceled"
-		current.TerminalFailureReason = terminalReason
-		current.CurrentBottleneckLocation = ""
-		current.FinishedAt = &finishedAt
+// tryRestoreHandle checks whether this node has a persisted AttemptHandle from a previous
+// executor instance. Returns the handle and existing attemptID when the node is in
+// Running or Starting state and the adapter implements HandlePersister.
+func (r *nodeRunner) tryRestoreHandle(ctx context.Context) (backend.Handle, string, bool) {
+	p, ok := r.adapter.(backend.HandlePersister)
+	if !ok {
+		return nil, "", false
+	}
+	node, err := r.registry.GetNode(ctx, r.runID, r.node.NodeID)
+	if err != nil || node.CurrentAttemptHandleJSON == "" {
+		return nil, "", false
+	}
+	switch node.Status {
+	case spec.NodeStatusRunning, spec.NodeStatusStarting:
+	default:
+		return nil, "", false
+	}
+	h, err := p.UnmarshalHandle([]byte(node.CurrentAttemptHandleJSON))
+	if err != nil || h == nil {
+		return nil, "", false
+	}
+	return h, node.CurrentAttemptID, true
+}
+
+// persistHandle serializes handle and stores it in NodeRecord for restart recovery.
+// No-op if the adapter does not implement HandlePersister or the handle type is not
+// serializable.
+func (r *nodeRunner) persistHandle(handle backend.Handle) {
+	p, ok := r.adapter.(backend.HandlePersister)
+	if !ok {
+		return
+	}
+	data, err := p.MarshalHandle(handle)
+	if err != nil || data == nil {
+		return
+	}
+	_ = r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
+		current.CurrentAttemptHandleJSON = string(data)
 		return nil
-	}); err != nil {
-		return err
-	}
-	if err := r.notifyNodeTerminal(context.Background(), "Canceled", attemptID); err != nil {
-		appendEvent(context.Background(), r.registry, spec.EventRecord{
-			RunID:         r.runID,
-			NodeID:        r.node.NodeID,
-			AttemptID:     attemptID,
-			Type:          "node.handoff.notify_failed",
-			OccurredAt:    time.Now().UTC(),
-			Level:         "error",
-			StopCause:     "canceled",
-			FailureReason: "notify_node_terminal_error",
-			Message:       err.Error(),
-		})
-	}
-	return nil
+	})
 }
 
 func (r *nodeRunner) shouldObserveScheduling() bool {

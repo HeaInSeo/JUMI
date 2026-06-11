@@ -10,6 +10,7 @@ type Registry interface {
 	CreateRun(ctx context.Context, record spec.RunRecord, nodes []spec.NodeRecord) error
 	GetRun(ctx context.Context, runID string) (spec.RunRecord, error)
 	ListRuns(ctx context.Context) ([]spec.RunRecord, error)
+	GetNode(ctx context.Context, runID, nodeID string) (spec.NodeRecord, error)
 	ListNodes(ctx context.Context, runID string) ([]spec.NodeRecord, error)
 	ListAttempts(ctx context.Context, runID, nodeID string) ([]spec.AttemptRecord, error)
 	ListEvents(ctx context.Context, runID string, limit int) ([]spec.EventRecord, error)

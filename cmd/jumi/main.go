@@ -20,7 +20,11 @@ import (
 	"github.com/HeaInSeo/JUMI/pkg/handoff"
 	"github.com/HeaInSeo/JUMI/pkg/observe"
 	"github.com/HeaInSeo/JUMI/pkg/registry"
+	"github.com/HeaInSeo/JUMI/pkg/spawner"
+	spimp "github.com/HeaInSeo/spawner/cmd/imp"
+	spruntime "github.com/HeaInSeo/spawner/pkg/runtime"
 	"google.golang.org/grpc"
+	"k8s.io/client-go/kubernetes"
 )
 
 func main() {
@@ -42,14 +46,39 @@ func main() {
 func runServe() {
 	reg := registry.NewMemoryRegistry()
 	log.Printf("jumi using in-memory registry: all run state will be lost on restart")
-	adapter, err := backend.NewSpawnerK8sAdapterFromKubeconfig(
-		envOrDefault("JUMI_NAMESPACE", "default"),
-		os.Getenv("JUMI_KUBECONFIG"),
-		envIntOrDefault("JUMI_MAX_CONCURRENT_RELEASE", 4),
-	)
-	if err != nil {
-		log.Fatal(err)
+
+	namespace := envOrDefault("JUMI_NAMESPACE", "default")
+	kubeconfigPath := os.Getenv("JUMI_KUBECONFIG")
+	namingSalt := os.Getenv("JUMI_NAMING_SALT")
+	if namingSalt == "" {
+		log.Fatal("JUMI_NAMING_SALT is required: set a stable secret for deterministic job naming")
 	}
+	maxConcurrent := envIntOrDefault("JUMI_MAX_CONCURRENT_RELEASE", 10)
+
+	restCfg, err := backend.BuildK8sRestConfig(kubeconfigPath)
+	if err != nil {
+		log.Fatalf("k8s config: %v", err)
+	}
+	cs, err := kubernetes.NewForConfig(restCfg)
+	if err != nil {
+		log.Fatalf("k8s clientset: %v", err)
+	}
+	jobClient := spawner.NewK8sJobClient(cs)
+	rt, err := spruntime.NewRuntime(jobClient, spruntime.RuntimeConfig{
+		NamingSalt:     namingSalt,
+		Namespace:      namespace,
+		MaxConcurrency: maxConcurrent,
+	})
+	if err != nil {
+		log.Fatalf("spawner runtime: %v", err)
+	}
+	observer, err := spimp.NewK8sObserverFromKubeconfig(namespace, kubeconfigPath)
+	if err != nil {
+		log.Printf("k8s observer unavailable (Kueue observation disabled): %v", err)
+		observer = nil
+	}
+	adapter := backend.NewSpawnerK8sAdapterWithRuntime(rt, namespace, cs, restCfg, observer)
+
 	handoffClient, err := newHandoffClientFromEnv()
 	if err != nil {
 		log.Fatal(err)

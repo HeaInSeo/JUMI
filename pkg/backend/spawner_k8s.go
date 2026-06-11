@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,11 +16,8 @@ import (
 	"github.com/HeaInSeo/JUMI/pkg/provenance"
 	"github.com/HeaInSeo/JUMI/pkg/spec"
 	spimp "github.com/HeaInSeo/spawner/cmd/imp"
-	spapi "github.com/HeaInSeo/spawner/pkg/api"
-	spdriver "github.com/HeaInSeo/spawner/pkg/driver"
-	batchv1 "k8s.io/api/batch/v1"
+	spruntime "github.com/HeaInSeo/spawner/pkg/runtime"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -56,85 +52,56 @@ const (
 )
 
 type SpawnerK8sAdapter struct {
-	driver     spdriver.Driver
 	observer   *spimp.K8sObserver
-	bounded    *spimp.BoundedDriver
 	ns         string
 	clientset  kubernetes.Interface
 	restConfig *rest.Config
 	metrics    *metrics.Metrics
-	direct     *directK8sBackend
+
+	// rt, when non-nil, enables the spawner Runtime path introduced in S5.
+	// Methods branch to the Runtime path when rt != nil.
+	rt spruntime.Runtime
+}
+
+// preparedRuntimeNode is the PreparedNode returned by PrepareNode when using the Runtime path.
+type preparedRuntimeNode struct {
+	req       spruntime.AttemptRequest
+	queueName string // extracted from Kueue hints; used by ObserveNode
+}
+
+// runtimeHandle is the Handle returned by StartNode when using the Runtime path.
+type runtimeHandle struct {
+	handle    spruntime.AttemptHandle
+	queueName string
+}
+
+// NewSpawnerK8sAdapterWithRuntime creates an adapter that routes job execution
+// through a spawner Runtime. The caller constructs the Runtime with a K8sJobClient
+// (see pkg/spawner.NewK8sJobClient) before calling this constructor.
+//
+// observer may be nil; Kueue observation is disabled when nil.
+func NewSpawnerK8sAdapterWithRuntime(
+	rt spruntime.Runtime,
+	namespace string,
+	clientset kubernetes.Interface,
+	restConfig *rest.Config,
+	observer *spimp.K8sObserver,
+) *SpawnerK8sAdapter {
+	return &SpawnerK8sAdapter{
+		rt:         rt,
+		ns:         namespace,
+		clientset:  clientset,
+		restConfig: restConfig,
+		observer:   observer,
+	}
 }
 
 func (a *SpawnerK8sAdapter) SetMetrics(m *metrics.Metrics) {
 	a.metrics = m
-	if a.direct != nil {
-		a.direct.metrics = m
-	}
-}
-
-type spawnerHandle struct {
-	inner     spdriver.Handle
-	jobName   string
-	queueName string
-}
-
-type preparedSpawnerNode struct {
-	inner              spdriver.Prepared
-	runSpec            spapi.RunSpec
-	workingDir         string
-	serviceAccountName string
-}
-
-type directK8sHandle struct {
-	jobName   string
-	ns        string
-	queueName string
-}
-
-func NewSpawnerK8sAdapterFromKubeconfig(namespace, kubeconfigPath string, maxConcurrentRelease int) (*SpawnerK8sAdapter, error) {
-	cfg, err := buildK8sConfig(kubeconfigPath)
-	if err != nil {
-		return nil, fmt.Errorf("k8s config: %w", err)
-	}
-	inner, err := spimp.NewK8sFromKubeconfig(namespace, kubeconfigPath)
-	if err != nil {
-		return nil, err
-	}
-	observer, err := spimp.NewK8sObserverFromKubeconfig(namespace, kubeconfigPath)
-	if err != nil {
-		return nil, err
-	}
-	var drv spdriver.Driver = inner
-	var bounded *spimp.BoundedDriver
-	if maxConcurrentRelease > 0 {
-		bounded = spimp.NewBoundedDriver(inner, maxConcurrentRelease)
-		drv = bounded
-	}
-	cs, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("k8s clientset: %w", err)
-	}
-	return &SpawnerK8sAdapter{
-		driver:     drv,
-		observer:   observer,
-		bounded:    bounded,
-		ns:         namespace,
-		clientset:  cs,
-		restConfig: cfg,
-		direct:     newDirectK8sBackend(namespace, cs, nil),
-	}, nil
 }
 
 func (a *SpawnerK8sAdapter) AdapterStatus() AdapterStatus {
-	status := AdapterStatus{Ready: a.driver != nil}
-	if a.bounded != nil {
-		stats := a.bounded.Stats()
-		status.ReleaseBounded = true
-		status.ReleaseInflight = int(stats.Inflight)
-		status.ReleaseSlotsAvailable = stats.Available
-		status.ReleaseMaxConcurrent = stats.MaxConcurrent
-	}
+	status := AdapterStatus{Ready: a.rt != nil}
 	return status
 }
 
@@ -142,19 +109,9 @@ func (a *SpawnerK8sAdapter) PrepareNode(ctx context.Context, run spec.RunRecord,
 	if a.metrics != nil {
 		a.metrics.IncK8sNodePrepare()
 	}
-	runSpec := toSpawnerRunSpec(run, node)
-	prepared, err := a.driver.Prepare(ctx, runSpec)
-	if err != nil {
-		if a.metrics != nil {
-			a.metrics.IncK8sNodePrepareErrors()
-		}
-		return nil, err
-	}
-	return preparedSpawnerNode{
-		inner:              prepared,
-		runSpec:            runSpec,
-		workingDir:         node.WorkingDir,
-		serviceAccountName: node.ServiceAccountName,
+	return preparedRuntimeNode{
+		req:       toAttemptRequest(run, node),
+		queueName: kueueQueueName(node),
 	}, nil
 }
 
@@ -162,57 +119,36 @@ func (a *SpawnerK8sAdapter) StartNode(ctx context.Context, prepared PreparedNode
 	if a.metrics != nil {
 		a.metrics.IncK8sNodeStart()
 	}
-	if wrapped, ok := prepared.(preparedSpawnerNode); ok && shouldUseDirectK8sStart(wrapped) {
-		if a.direct == nil {
-			a.direct = newDirectK8sBackend(a.ns, a.clientset, a.metrics)
-		}
-		handle, err := a.direct.Start(ctx, wrapped)
-		if err != nil {
-			if a.metrics != nil {
-				a.metrics.IncK8sNodeStartErrors()
-			}
-			return nil, err
-		}
-		return handle, nil
-	}
-	if wrapped, ok := prepared.(preparedSpawnerNode); ok {
-		prepared = wrapped.inner
-	}
-	spPrepared, ok := prepared.(spdriver.Prepared)
+	n, ok := prepared.(preparedRuntimeNode)
 	if !ok {
 		if a.metrics != nil {
 			a.metrics.IncK8sNodeStartErrors()
 		}
 		return nil, fmt.Errorf("unexpected prepared type %T", prepared)
 	}
-	handle, err := a.driver.Start(ctx, spPrepared)
+	handle, err := a.rt.SubmitAttempt(ctx, n.req)
 	if err != nil {
 		if a.metrics != nil {
 			a.metrics.IncK8sNodeStartErrors()
 		}
 		return nil, err
 	}
-	jobName, _ := extractHandleJobName(handle)
-	queueName := extractPreparedQueueName(prepared)
-	return spawnerHandle{inner: handle, jobName: jobName, queueName: queueName}, nil
+	return runtimeHandle{handle: handle, queueName: n.queueName}, nil
 }
 
 func (a *SpawnerK8sAdapter) ObserveNode(ctx context.Context, handle Handle) (*OptionalKueueInfo, error) {
-	var h spawnerHandle
-	switch typed := handle.(type) {
-	case spawnerHandle:
-		h = typed
-	case directK8sHandle:
-		h = spawnerHandle{jobName: typed.jobName, queueName: typed.queueName}
-	default:
+	rh, ok := handle.(runtimeHandle)
+	if !ok {
 		return nil, nil
 	}
-	if h.jobName == "" || a.observer == nil {
+	jobName := rh.handle.BackendRef.Name
+	if jobName == "" || a.observer == nil {
 		return nil, nil
 	}
-	info := &OptionalKueueInfo{Observed: false, QueueName: h.queueName}
-	if h.queueName == "" {
-		if err := a.fillPodObservation(ctx, h.jobName, info); err != nil {
+	queueName := rh.queueName
+	info := &OptionalKueueInfo{Observed: false, QueueName: queueName}
+	if queueName == "" {
+		if err := a.fillPodObservation(ctx, jobName, info); err != nil {
 			return nil, nil
 		}
 		info.Observed = true
@@ -220,14 +156,14 @@ func (a *SpawnerK8sAdapter) ObserveNode(ctx context.Context, handle Handle) (*Op
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		obs, err := a.observer.ObserveWorkload(ctx, h.jobName)
+		obs, err := a.observer.ObserveWorkload(ctx, jobName)
 		if err == nil {
 			info.Observed = true
 			info.WorkloadName = obs.WorkloadName
 			info.PendingReason = obs.PendingReason
 			info.Admitted = obs.Admitted
 			if obs.Admitted {
-				_ = a.fillPodObservation(ctx, h.jobName, info)
+				_ = a.fillPodObservation(ctx, jobName, info)
 			}
 			return info, nil
 		}
@@ -263,72 +199,67 @@ func (a *SpawnerK8sAdapter) fillPodObservation(ctx context.Context, jobName stri
 }
 
 func (a *SpawnerK8sAdapter) WaitNode(ctx context.Context, handle Handle) (ExecutionResult, error) {
-	if h, ok := handle.(directK8sHandle); ok {
-		if a.direct == nil {
-			a.direct = newDirectK8sBackend(a.ns, a.clientset, a.metrics)
-		}
-		return a.direct.Wait(ctx, h)
-	}
-	h, ok := handle.(spawnerHandle)
+	h, ok := handle.(runtimeHandle)
 	if !ok {
 		return ExecutionResult{TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"}, fmt.Errorf("unexpected handle type %T", handle)
 	}
-	event, err := a.driver.Wait(ctx, h.inner)
+	return a.waitRuntimeHandle(ctx, h)
+}
+
+// waitRuntimeHandle blocks until the Runtime emits a terminal event for h.handle.
+func (a *SpawnerK8sAdapter) waitRuntimeHandle(ctx context.Context, h runtimeHandle) (ExecutionResult, error) {
+	ch, err := a.rt.WatchAttempt(ctx, h.handle)
 	if err != nil {
-		if ctx.Err() != nil {
-			return ExecutionResult{TerminalStopCause: "canceled", TerminalFailureReason: "cancellation_requested"}, ctx.Err()
-		}
 		return ExecutionResult{TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"}, err
 	}
-
-	result := ExecutionResult{}
-	switch event.State {
-	case spapi.StateSucceeded:
-		result.Succeeded = true
-		result.TerminalStopCause = "finished"
+	var last spruntime.AttemptEvent
+waitLoop:
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				break waitLoop
+			}
+			last = ev
+		case <-ctx.Done():
+			return ExecutionResult{TerminalStopCause: "canceled", TerminalFailureReason: "cancellation_requested"}, ctx.Err()
+		}
+	}
+	switch last.State {
+	case spruntime.AttemptStateSucceeded:
 		if a.metrics != nil {
 			a.metrics.IncK8sNodeSucceeded()
 		}
-	case spapi.StateCancelled:
-		result.TerminalStopCause = "canceled"
-		result.TerminalFailureReason = "cancellation_propagated"
+		return ExecutionResult{Succeeded: true, TerminalStopCause: "finished"}, nil
+	case spruntime.AttemptStateCancelled:
 		if a.metrics != nil {
 			a.metrics.IncK8sNodeCanceled()
 		}
-		return result, fmt.Errorf("node canceled")
-	case spapi.StateFailed:
-		result.TerminalStopCause = "failed"
-		result.TerminalFailureReason = "backend_wait_error"
+		return ExecutionResult{TerminalStopCause: "canceled", TerminalFailureReason: "cancellation_propagated"}, fmt.Errorf("node canceled")
+	default:
 		if a.metrics != nil {
 			a.metrics.IncK8sNodeFailed()
 		}
-		if strings.TrimSpace(event.Message) != "" {
-			return result, fmt.Errorf("node failed: %s", event.Message)
+		msg := strings.TrimSpace(last.Message)
+		if msg == "" {
+			msg = "node failed"
 		}
-		return result, fmt.Errorf("node failed")
-	default:
-		result.TerminalStopCause = "failed"
-		result.TerminalFailureReason = "backend_wait_error"
-		return result, fmt.Errorf("unexpected backend terminal state: %s", event.State)
+		return ExecutionResult{
+			TerminalStopCause:     "failed",
+			TerminalFailureReason: runtimeReasonToFailure(last.Reason),
+		}, fmt.Errorf("node failed: %s", msg)
 	}
-	return result, nil
 }
 
 func (a *SpawnerK8sAdapter) CancelNode(ctx context.Context, handle Handle) error {
 	if a.metrics != nil {
 		a.metrics.IncK8sNodeCancel()
 	}
-	if h, ok := handle.(directK8sHandle); ok {
-		if a.direct == nil {
-			a.direct = newDirectK8sBackend(a.ns, a.clientset, a.metrics)
-		}
-		return a.direct.Cancel(ctx, h)
-	}
-	h, ok := handle.(spawnerHandle)
+	h, ok := handle.(runtimeHandle)
 	if !ok {
 		return fmt.Errorf("unexpected handle type %T", handle)
 	}
-	return a.driver.Cancel(ctx, h.inner)
+	return a.rt.CancelAttempt(ctx, h.handle)
 }
 
 func (a *SpawnerK8sAdapter) CollectOutputMetadata(ctx context.Context, handle Handle, node spec.Node) (map[string]OutputMetadata, error) {
@@ -430,14 +361,11 @@ func validateObservedManifest(manifest provenance.ArtifactManifest, node spec.No
 }
 
 func (a *SpawnerK8sAdapter) outputMetadataJobRef(handle Handle) (string, string, bool) {
-	switch h := handle.(type) {
-	case spawnerHandle:
-		return a.ns, h.jobName, h.jobName != ""
-	case directK8sHandle:
-		return h.ns, h.jobName, h.jobName != ""
-	default:
+	h, ok := handle.(runtimeHandle)
+	if !ok {
 		return "", "", false
 	}
+	return h.handle.BackendRef.Namespace, h.handle.BackendRef.Name, h.handle.BackendRef.Name != ""
 }
 
 func (a *SpawnerK8sAdapter) findJobPod(ctx context.Context, namespace string, jobName string) (*corev1.Pod, error) {
@@ -593,7 +521,10 @@ func (a *SpawnerK8sAdapter) readArtifactsManifest(ctx context.Context, namespace
 	return stdout.Bytes(), nil
 }
 
-func buildK8sConfig(kubeconfigPath string) (*rest.Config, error) {
+// BuildK8sRestConfig constructs a *rest.Config from an optional kubeconfig path.
+// If kubeconfigPath is empty, it falls back to in-cluster config, then the default
+// kubeconfig loading rules.
+func BuildK8sRestConfig(kubeconfigPath string) (*rest.Config, error) {
 	if kubeconfigPath != "" {
 		return clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	}
@@ -606,57 +537,6 @@ func buildK8sConfig(kubeconfigPath string) (*rest.Config, error) {
 		&clientcmd.ConfigOverrides{},
 	)
 	return clientConfig.ClientConfig()
-}
-
-func toSpawnerRunSpec(run spec.RunRecord, node spec.Node) spapi.RunSpec {
-	labels := map[string]string{
-		"jumi/run-id":  run.RunID,
-		"jumi/node-id": node.NodeID,
-	}
-	if node.Kueue != nil && node.Kueue.QueueName != "" {
-		labels["kueue.x-k8s.io/queue-name"] = node.Kueue.QueueName
-		for k, v := range node.Kueue.Labels {
-			labels[k] = v
-		}
-	}
-	annotations := map[string]string{}
-	for k, v := range node.Metadata {
-		annotations[k] = v
-	}
-	if traceID := run.Spec.Run.TraceID; traceID != "" {
-		annotations["jumi.trace-id"] = traceID
-	}
-	mounts := make([]spapi.Mount, 0, len(node.Mounts))
-	for _, m := range node.Mounts {
-		mounts = append(mounts, spapi.Mount{
-			Source:   m.Source,
-			Target:   m.Target,
-			ReadOnly: strings.EqualFold(m.Mode, "ro") || strings.EqualFold(m.Mode, "readonly"),
-		})
-	}
-	command := append(append([]string{}, node.Command...), node.Args...)
-	env := cloneEnv(node.Env)
-	injectOutputContractEnv(env, run, node)
-	command = wrapCommandForManifestExport(command, node)
-	runSpec := spapi.RunSpec{
-		SpecVersion: 1,
-		RunID:       fmt.Sprintf("%s-%s", run.RunID, node.NodeID),
-		ImageRef:    node.Image,
-		Command:     command,
-		Env:         env,
-		Labels:      labels,
-		Annotations: annotations,
-		Mounts:      mounts,
-		Resources: spapi.Resources{
-			CPU:    node.ResourceProfile.CPU,
-			Memory: node.ResourceProfile.Memory,
-		},
-		CorrelationID: run.Spec.Run.TraceID,
-		Cleanup:       spapi.CleanupPolicy{TTLSecondsAfterFinished: cleanupTTL(node)},
-		Placement:     buildPlacement(node),
-	}
-	applyOptionalSpawnerFields(&runSpec, node)
-	return runSpec
 }
 
 var contractInputEnvSuffixes = []string{
@@ -1001,413 +881,155 @@ func manifestExportMode(node spec.Node) string {
 	}
 }
 
-func applyOptionalSpawnerFields(target *spapi.RunSpec, node spec.Node) {
-	if target == nil {
-		return
-	}
-	setOptionalStringField(target, "WorkingDir", node.WorkingDir)
-	setOptionalStringField(target, "ServiceAccountName", node.ServiceAccountName)
+// ── HandlePersister ───────────────────────────────────────────────────────────
+
+// persistedRuntimeHandle is the JSON-serializable form of runtimeHandle.
+// Both fields survive a round-trip through spec.NodeRecord.CurrentAttemptHandleJSON.
+type persistedRuntimeHandle struct {
+	AttemptHandle spruntime.AttemptHandle `json:"attempt_handle"`
+	QueueName     string                  `json:"queue_name,omitempty"`
 }
 
-func cleanupTTL(node spec.Node) int32 {
-	if node.CleanupPolicy.TTLSecondsAfterFinished > 0 {
-		return node.CleanupPolicy.TTLSecondsAfterFinished
+// MarshalHandle serializes a runtimeHandle for persistence.
+// Returns (nil, nil) for handle types that do not support persistence.
+func (a *SpawnerK8sAdapter) MarshalHandle(h Handle) ([]byte, error) {
+	rh, ok := h.(runtimeHandle)
+	if !ok {
+		return nil, nil
 	}
-	return 600
-}
-
-func buildPlacement(node spec.Node) *spapi.Placement {
-	if node.Placement == nil {
-		return nil
-	}
-	out := &spapi.Placement{}
-	if len(node.Placement.NodeSelector) > 0 {
-		out.NodeSelector = make(map[string]string, len(node.Placement.NodeSelector))
-		for k, v := range node.Placement.NodeSelector {
-			out.NodeSelector[k] = v
-		}
-	}
-	out.RequiredNodeName = node.Placement.RequiredNodeName
-	if len(node.Placement.PreferredNodes) > 0 {
-		out.PreferredNodes = make([]spapi.WeightedNodePreference, 0, len(node.Placement.PreferredNodes))
-		for _, pref := range node.Placement.PreferredNodes {
-			out.PreferredNodes = append(out.PreferredNodes, spapi.WeightedNodePreference{
-				NodeName: pref.NodeName,
-				Weight:   pref.Weight,
-			})
-		}
-	}
-	if len(out.NodeSelector) == 0 && out.RequiredNodeName == "" && len(out.PreferredNodes) == 0 {
-		return nil
-	}
-	return out
-}
-
-func setOptionalStringField(target *spapi.RunSpec, fieldName string, value string) {
-	if target == nil || value == "" {
-		return
-	}
-	v := reflect.ValueOf(target).Elem()
-	field := v.FieldByName(fieldName)
-	if !field.IsValid() || !field.CanSet() || field.Kind() != reflect.String {
-		return
-	}
-	field.SetString(value)
-}
-
-func shouldUseDirectK8sStart(prepared preparedSpawnerNode) bool {
-	return prepared.serviceAccountName != "" || prepared.workingDir != "" || hasDirectHostPathMount(prepared.runSpec.Mounts)
-}
-
-type directK8sBackend struct {
-	namespace string
-	clientset kubernetes.Interface
-	metrics   *metrics.Metrics
-}
-
-func newDirectK8sBackend(namespace string, clientset kubernetes.Interface, metrics *metrics.Metrics) *directK8sBackend {
-	return &directK8sBackend{namespace: namespace, clientset: clientset, metrics: metrics}
-}
-
-func (b *directK8sBackend) Start(ctx context.Context, prepared preparedSpawnerNode) (Handle, error) {
-	if b == nil || b.clientset == nil {
-		return nil, fmt.Errorf("direct k8s start requires clientset")
-	}
-	job := buildDirectK8sJob(prepared.runSpec, b.namespace, prepared.workingDir, prepared.serviceAccountName)
-	created, err := b.clientset.BatchV1().Jobs(b.namespace).Create(ctx, job, metav1.CreateOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("create direct job %s: %w", job.Name, err)
-	}
-	return directK8sHandle{
-		jobName:   created.Name,
-		ns:        created.Namespace,
-		queueName: extractQueueName(created.Labels),
-	}, nil
-}
-
-func buildDirectK8sJob(runSpec spapi.RunSpec, ns, workingDir, serviceAccountName string) *batchv1.Job {
-	container := corev1.Container{
-		Name:            "main",
-		Image:           runSpec.ImageRef,
-		Command:         runSpec.Command,
-		WorkingDir:      workingDir,
-		Env:             buildDirectEnvVars(runSpec.Env, runSpec.EnvFieldRefs),
-		Resources:       buildDirectResources(runSpec.Resources),
-		ImagePullPolicy: corev1.PullIfNotPresent,
-	}
-
-	volumes, volumeMounts := buildDirectVolumes(runSpec.Mounts)
-	container.VolumeMounts = volumeMounts
-
-	labels := make(map[string]string, len(runSpec.Labels)+1)
-	labels["pipeline-lite/run-id"] = runSpec.RunID
-	for k, v := range runSpec.Labels {
-		labels[k] = v
-	}
-
-	annotations := make(map[string]string, len(runSpec.Annotations)+1)
-	for k, v := range runSpec.Annotations {
-		annotations[k] = v
-	}
-	if runSpec.CorrelationID != "" {
-		annotations["spawner.correlation-id"] = runSpec.CorrelationID
-	}
-
-	_, useKueue := labels["kueue.x-k8s.io/queue-name"]
-	suspend := useKueue
-	backoffLimit := int32(0)
-	var ttlSecondsAfterFinished *int32
-	if runSpec.Cleanup.TTLSecondsAfterFinished > 0 {
-		ttl := runSpec.Cleanup.TTLSecondsAfterFinished
-		ttlSecondsAfterFinished = &ttl
-	}
-
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        directSanitizeName(runSpec.RunID),
-			Namespace:   ns,
-			Labels:      labels,
-			Annotations: annotations,
-		},
-		Spec: batchv1.JobSpec{
-			Suspend:                 &suspend,
-			BackoffLimit:            &backoffLimit,
-			TTLSecondsAfterFinished: ttlSecondsAfterFinished,
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels:      labels,
-					Annotations: annotations,
-				},
-				Spec: corev1.PodSpec{
-					ServiceAccountName: serviceAccountName,
-					RestartPolicy:      corev1.RestartPolicyNever,
-					Containers:         []corev1.Container{container},
-					Volumes:            volumes,
-					NodeSelector:       buildDirectNodeSelector(runSpec.Placement),
-					Affinity:           buildDirectAffinity(runSpec.Placement),
-				},
-			},
-		},
-	}
-}
-
-func buildDirectEnvVars(env map[string]string, fieldRefs map[string]string) []corev1.EnvVar {
-	vars := make([]corev1.EnvVar, 0, len(env)+len(fieldRefs))
-	for k, v := range env {
-		vars = append(vars, corev1.EnvVar{Name: k, Value: v})
-	}
-	for k, path := range fieldRefs {
-		vars = append(vars, corev1.EnvVar{
-			Name: k,
-			ValueFrom: &corev1.EnvVarSource{
-				FieldRef: &corev1.ObjectFieldSelector{FieldPath: path},
-			},
-		})
-	}
-	return vars
-}
-
-func buildDirectResources(r spapi.Resources) corev1.ResourceRequirements {
-	req := corev1.ResourceList{}
-	lim := corev1.ResourceList{}
-	if r.CPU != "" {
-		q := resource.MustParse(r.CPU)
-		req[corev1.ResourceCPU] = q
-		lim[corev1.ResourceCPU] = q
-	}
-	if r.Memory != "" {
-		q := resource.MustParse(r.Memory)
-		req[corev1.ResourceMemory] = q
-		lim[corev1.ResourceMemory] = q
-	}
-	return corev1.ResourceRequirements{Requests: req, Limits: lim}
-}
-
-func buildDirectVolumes(mounts []spapi.Mount) ([]corev1.Volume, []corev1.VolumeMount) {
-	volumes := make([]corev1.Volume, 0, len(mounts))
-	volumeMounts := make([]corev1.VolumeMount, 0, len(mounts))
-	for i, m := range mounts {
-		volName := fmt.Sprintf("vol-%d", i)
-		volume := corev1.Volume{Name: volName}
-		if hostPath, ok := directHostPathSource(m.Source); ok {
-			hostPathType := corev1.HostPathDirectoryOrCreate
-			volume.VolumeSource = corev1.VolumeSource{
-				HostPath: &corev1.HostPathVolumeSource{
-					Path: hostPath,
-					Type: &hostPathType,
-				},
-			}
-		} else {
-			volume.VolumeSource = corev1.VolumeSource{
-				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: m.Source,
-					ReadOnly:  m.ReadOnly,
-				},
-			}
-		}
-		volumes = append(volumes, volume)
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      volName,
-			MountPath: m.Target,
-			ReadOnly:  m.ReadOnly,
-		})
-	}
-	return volumes, volumeMounts
-}
-
-func hasDirectHostPathMount(mounts []spapi.Mount) bool {
-	for _, m := range mounts {
-		if _, ok := directHostPathSource(m.Source); ok {
-			return true
-		}
-	}
-	return false
-}
-
-func directHostPathSource(source string) (string, bool) {
-	const prefix = "hostpath:"
-	if !strings.HasPrefix(source, prefix) {
-		return "", false
-	}
-	path := strings.TrimSpace(strings.TrimPrefix(source, prefix))
-	if path == "" {
-		return "", false
-	}
-	return path, true
-}
-
-func buildDirectNodeSelector(p *spapi.Placement) map[string]string {
-	if p == nil {
-		return nil
-	}
-	size := len(p.NodeSelector)
-	if p.RequiredNodeName != "" {
-		size++
-	}
-	if size == 0 {
-		return nil
-	}
-	out := make(map[string]string, size)
-	for k, v := range p.NodeSelector {
-		out[k] = v
-	}
-	if p.RequiredNodeName != "" {
-		out["kubernetes.io/hostname"] = p.RequiredNodeName
-	}
-	return out
-}
-
-func buildDirectAffinity(p *spapi.Placement) *corev1.Affinity {
-	if p == nil || len(p.PreferredNodes) == 0 {
-		return nil
-	}
-	terms := make([]corev1.PreferredSchedulingTerm, 0, len(p.PreferredNodes))
-	for _, pref := range p.PreferredNodes {
-		terms = append(terms, corev1.PreferredSchedulingTerm{
-			Weight: pref.Weight,
-			Preference: corev1.NodeSelectorTerm{
-				MatchExpressions: []corev1.NodeSelectorRequirement{{
-					Key:      "kubernetes.io/hostname",
-					Operator: corev1.NodeSelectorOpIn,
-					Values:   []string{pref.NodeName},
-				}},
-			},
-		})
-	}
-	return &corev1.Affinity{
-		NodeAffinity: &corev1.NodeAffinity{
-			PreferredDuringSchedulingIgnoredDuringExecution: terms,
-		},
-	}
-}
-
-func directSanitizeName(id string) string {
-	s := strings.ToLower(id)
-	var b strings.Builder
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			b.WriteRune(r)
-		} else {
-			b.WriteRune('-')
-		}
-	}
-	name := strings.Trim(b.String(), "-")
-	if len(name) > 63 {
-		name = strings.TrimRight(name[:63], "-")
-	}
-	return name
-}
-
-func extractQueueName(labels map[string]string) string {
-	if labels == nil {
-		return ""
-	}
-	return labels["kueue.x-k8s.io/queue-name"]
-}
-
-func (b *directK8sBackend) Wait(ctx context.Context, h directK8sHandle) (ExecutionResult, error) {
-	if b == nil || b.clientset == nil {
-		return ExecutionResult{TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"}, fmt.Errorf("direct k8s wait requires clientset")
-	}
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ExecutionResult{TerminalStopCause: "canceled", TerminalFailureReason: "cancellation_requested"}, ctx.Err()
-		case <-ticker.C:
-			job, err := b.clientset.BatchV1().Jobs(h.ns).Get(ctx, h.jobName, metav1.GetOptions{})
-			if err != nil {
-				return ExecutionResult{TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"}, fmt.Errorf("get direct job %s: %w", h.jobName, err)
-			}
-			if directJobSucceeded(job) {
-				if b.metrics != nil {
-					b.metrics.IncK8sNodeSucceeded()
-				}
-				return ExecutionResult{Succeeded: true, TerminalStopCause: "finished"}, nil
-			}
-			if directJobFailed(job) {
-				if b.metrics != nil {
-					b.metrics.IncK8sNodeFailed()
-				}
-				msg := directJobFailureMessage(job)
-				result := ExecutionResult{TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"}
-				if strings.TrimSpace(msg) != "" {
-					return result, fmt.Errorf("node failed: %s", msg)
-				}
-				return result, fmt.Errorf("node failed")
-			}
-		}
-	}
-}
-
-func (b *directK8sBackend) Cancel(ctx context.Context, h directK8sHandle) error {
-	if b == nil || b.clientset == nil {
-		return fmt.Errorf("direct k8s cancel requires clientset")
-	}
-	propagation := metav1.DeletePropagationBackground
-	return b.clientset.BatchV1().Jobs(h.ns).Delete(ctx, h.jobName, metav1.DeleteOptions{
-		PropagationPolicy: &propagation,
+	return json.Marshal(persistedRuntimeHandle{
+		AttemptHandle: rh.handle,
+		QueueName:     rh.queueName,
 	})
 }
 
-func directJobSucceeded(job *batchv1.Job) bool {
-	for _, c := range job.Status.Conditions {
-		if c.Type == batchv1.JobComplete && c.Status == corev1.ConditionTrue {
-			return true
-		}
+// UnmarshalHandle deserializes a runtimeHandle persisted by MarshalHandle.
+func (a *SpawnerK8sAdapter) UnmarshalHandle(data []byte) (Handle, error) {
+	var p persistedRuntimeHandle
+	if err := json.Unmarshal(data, &p); err != nil {
+		return nil, err
 	}
-	return false
+	return runtimeHandle{handle: p.AttemptHandle, queueName: p.QueueName}, nil
 }
 
-func directJobFailed(job *batchv1.Job) bool {
-	for _, c := range job.Status.Conditions {
-		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
-			return true
+// ── Runtime path helpers ──────────────────────────────────────────────────────
+
+// toAttemptRequest converts a JUMI spec.RunRecord + spec.Node into a spawner
+// AttemptRequest. The node.Env must already contain JUMI_ATTEMPT_ID, JUMI_RUN_ID,
+// and JUMI_NODE_ID (injected by the executor's injectRuntimeContextEnv before
+// PrepareNode is called).
+func toAttemptRequest(run spec.RunRecord, node spec.Node) spruntime.AttemptRequest {
+	attemptID := node.Env["JUMI_ATTEMPT_ID"]
+
+	env := cloneEnv(node.Env)
+	injectOutputContractEnv(env, run, node)
+
+	command := append(append([]string{}, node.Command...), node.Args...)
+	command = wrapCommandForManifestExport(command, node)
+
+	userLabels := make(map[string]string)
+	userLabels["jumi/run-id"] = run.RunID
+	userLabels["jumi/node-id"] = node.NodeID
+	if node.Kueue != nil {
+		if node.Kueue.QueueName != "" {
+			userLabels["kueue.x-k8s.io/queue-name"] = node.Kueue.QueueName
+		}
+		for k, v := range node.Kueue.Labels {
+			userLabels[k] = v
 		}
 	}
-	return false
+
+	userAnnotations := make(map[string]string)
+	for k, v := range node.Metadata {
+		userAnnotations[k] = v
+	}
+	if run.Spec.Run.TraceID != "" {
+		userAnnotations["jumi.trace-id"] = run.Spec.Run.TraceID
+	}
+
+	var placement *spruntime.Placement
+	if node.Placement != nil {
+		p := &spruntime.Placement{
+			NodeSelector:     node.Placement.NodeSelector,
+			RequiredNodeName: node.Placement.RequiredNodeName,
+		}
+		for _, pn := range node.Placement.PreferredNodes {
+			p.PreferredNodes = append(p.PreferredNodes, spruntime.PreferredNode{
+				NodeName: pn.NodeName,
+				Weight:   pn.Weight,
+			})
+		}
+		placement = p
+	}
+
+	mounts := make([]spruntime.Mount, 0, len(node.Mounts))
+	for _, m := range node.Mounts {
+		mounts = append(mounts, toRuntimeMount(m))
+	}
+
+	var timeout time.Duration
+	if node.TimeoutPolicy.Seconds > 0 {
+		timeout = time.Duration(node.TimeoutPolicy.Seconds) * time.Second
+	}
+
+	return spruntime.AttemptRequest{
+		AttemptID:          attemptID,
+		RunID:              run.RunID,
+		CorrelationID:      run.Spec.Run.TraceID,
+		ImageRef:           node.Image,
+		Command:            command,
+		WorkingDir:         node.WorkingDir,
+		Env:                env,
+		Resources:          spruntime.Resources{CPU: node.ResourceProfile.CPU, Memory: node.ResourceProfile.Memory},
+		ServiceAccountName: node.ServiceAccountName,
+		Mounts:             mounts,
+		Placement:          placement,
+		UserLabels:         userLabels,
+		UserAnnotations:    userAnnotations,
+		Cleanup:            spruntime.CleanupPolicy{TTLSecondsAfterFinished: node.CleanupPolicy.TTLSecondsAfterFinished},
+		AttemptTimeout:     timeout,
+	}
 }
 
-func directJobFailureMessage(job *batchv1.Job) string {
-	for _, c := range job.Status.Conditions {
-		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
-			if strings.TrimSpace(c.Message) != "" {
-				return c.Message
-			}
-			return c.Reason
-		}
+// toRuntimeMount converts a spec.Mount to a spruntime.Mount.
+// The existing "hostpath:" source prefix convention is mapped to MountKindHostPath.
+func toRuntimeMount(m spec.Mount) spruntime.Mount {
+	source := m.Source
+	kind := spruntime.MountKindPVC
+	if strings.HasPrefix(source, "hostpath:") {
+		kind = spruntime.MountKindHostPath
+		source = strings.TrimPrefix(source, "hostpath:")
+	}
+	return spruntime.Mount{
+		Kind:     kind,
+		Source:   source,
+		Target:   m.Target,
+		ReadOnly: strings.EqualFold(m.Mode, "ro") || strings.EqualFold(m.Mode, "readonly"),
+	}
+}
+
+// kueueQueueName extracts the Kueue queue name from a node spec, or "" if absent.
+func kueueQueueName(node spec.Node) string {
+	if node.Kueue != nil {
+		return node.Kueue.QueueName
 	}
 	return ""
 }
 
-func extractHandleJobName(handle spdriver.Handle) (string, bool) {
-	v := reflect.ValueOf(handle)
-	if v.Kind() == reflect.Struct {
-		f := v.FieldByName("name")
-		if f.IsValid() && f.Kind() == reflect.String {
-			return f.String(), true
-		}
+// runtimeReasonToFailure maps spawner Reason constants to JUMI terminal failure reasons.
+func runtimeReasonToFailure(reason string) string {
+	switch reason {
+	case spruntime.ReasonOOMKilled:
+		return "oom_killed"
+	case spruntime.ReasonNodeLost:
+		return "node_lost"
+	case spruntime.ReasonBackoffExceeded:
+		return "backoff_exceeded"
+	case spruntime.ReasonDeadlineExceeded:
+		return "deadline_exceeded"
+	case spruntime.ReasonImagePullFailed:
+		return "image_pull_failed"
+	default:
+		return "backend_wait_error"
 	}
-	return "", false
-}
-
-func extractPreparedQueueName(prepared PreparedNode) string {
-	v := reflect.ValueOf(prepared)
-	if v.Kind() == reflect.Struct {
-		jobField := v.FieldByName("job")
-		if jobField.IsValid() && !jobField.IsNil() {
-			labelsField := jobField.Elem().FieldByName("ObjectMeta").FieldByName("Labels")
-			if labelsField.IsValid() && labelsField.Kind() == reflect.Map {
-				iter := labelsField.MapRange()
-				for iter.Next() {
-					if iter.Key().String() == "kueue.x-k8s.io/queue-name" {
-						return iter.Value().String()
-					}
-				}
-			}
-		}
-	}
-	return ""
 }

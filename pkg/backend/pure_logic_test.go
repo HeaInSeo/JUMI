@@ -7,97 +7,9 @@ import (
 
 	"github.com/HeaInSeo/JUMI/pkg/provenance"
 	"github.com/HeaInSeo/JUMI/pkg/spec"
-	spapi "github.com/HeaInSeo/spawner/pkg/api"
-	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
-
-// --- directSanitizeName ---
-
-func TestDirectSanitizeName(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{
-			name:  "simple lowercase",
-			input: "run-1-node-a",
-			want:  "run-1-node-a",
-		},
-		{
-			name:  "uppercase converted to lowercase",
-			input: "Run-1-Node-A",
-			want:  "run-1-node-a",
-		},
-		{
-			name:  "underscores become dashes",
-			input: "run_1_node",
-			want:  "run-1-node",
-		},
-		{
-			name:  "leading and trailing dashes stripped",
-			input: "_run-abc_",
-			want:  "run-abc",
-		},
-		{
-			name:  "special chars become dashes",
-			input: "run/1/node",
-			want:  "run-1-node",
-		},
-		{
-			name:  "truncated to 63 chars",
-			input: strings.Repeat("a", 70),
-			want:  strings.Repeat("a", 63),
-		},
-		{
-			name: "no trailing dash after truncation at 63",
-			// 62 'a's + '_' → after sanitize: 62 'a's + '-' = 63 chars, trimmed to 62 (no trailing dash issue)
-			input: strings.Repeat("a", 62) + "_",
-			want:  strings.Repeat("a", 62),
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := directSanitizeName(tc.input)
-			if got != tc.want {
-				t.Fatalf("directSanitizeName(%q) = %q, want %q", tc.input, got, tc.want)
-			}
-			if len(got) > 63 {
-				t.Fatalf("result too long: %d chars", len(got))
-			}
-			if strings.HasSuffix(got, "-") {
-				t.Fatalf("result has trailing dash: %q", got)
-			}
-		})
-	}
-}
-
-// --- cleanupTTL ---
-
-func TestCleanupTTL(t *testing.T) {
-	if got := cleanupTTL(spec.Node{}); got != 600 {
-		t.Fatalf("cleanupTTL(zero) = %d, want 600", got)
-	}
-	if got := cleanupTTL(spec.Node{CleanupPolicy: spec.CleanupPolicy{TTLSecondsAfterFinished: 1800}}); got != 1800 {
-		t.Fatalf("cleanupTTL(1800) = %d, want 1800", got)
-	}
-}
-
-// --- extractQueueName ---
-
-func TestExtractQueueName(t *testing.T) {
-	if got := extractQueueName(nil); got != "" {
-		t.Fatalf("extractQueueName(nil) = %q, want empty", got)
-	}
-	if got := extractQueueName(map[string]string{"other": "v"}); got != "" {
-		t.Fatalf("extractQueueName(no queue label) = %q, want empty", got)
-	}
-	if got := extractQueueName(map[string]string{"kueue.x-k8s.io/queue-name": "standard"}); got != "standard" {
-		t.Fatalf("extractQueueName() = %q, want standard", got)
-	}
-}
 
 // --- manifestPathForNode ---
 
@@ -263,71 +175,6 @@ func TestPodSucceededLater(t *testing.T) {
 	}
 	if podSucceededLater(podEarly, podLate) {
 		t.Fatal("podSucceededLater(early, late) = true, want false")
-	}
-}
-
-// --- directHostPathSource ---
-
-func TestDirectHostPathSource(t *testing.T) {
-	path, ok := directHostPathSource("hostpath:/var/lib/data")
-	if !ok {
-		t.Fatal("expected hostpath source to be recognized")
-	}
-	if path != "/var/lib/data" {
-		t.Fatalf("path = %q, want /var/lib/data", path)
-	}
-
-	_, ok2 := directHostPathSource("pvcname")
-	if ok2 {
-		t.Fatal("expected pvcname not to be recognized as hostpath")
-	}
-
-	_, ok3 := directHostPathSource("hostpath:")
-	if ok3 {
-		t.Fatal("expected empty hostpath suffix not to be recognized")
-	}
-}
-
-// --- buildDirectNodeSelector with empty placement ---
-
-func TestBuildDirectNodeSelector_NilPlacement(t *testing.T) {
-	if got := buildDirectNodeSelector(nil); got != nil {
-		t.Fatalf("buildDirectNodeSelector(nil) = %v, want nil", got)
-	}
-}
-
-func TestBuildDirectNodeSelector_EmptyPlacement(t *testing.T) {
-	if got := buildDirectNodeSelector(&spapi.Placement{}); got != nil {
-		t.Fatalf("buildDirectNodeSelector(empty) = %v, want nil", got)
-	}
-}
-
-// --- buildDirectAffinity with nil / empty placement ---
-
-func TestBuildDirectAffinity_Nil(t *testing.T) {
-	if got := buildDirectAffinity(nil); got != nil {
-		t.Fatalf("buildDirectAffinity(nil) = %v, want nil", got)
-	}
-}
-
-func TestBuildDirectAffinity_EmptyPreferred(t *testing.T) {
-	if got := buildDirectAffinity(&spapi.Placement{}); got != nil {
-		t.Fatalf("buildDirectAffinity(no preferred) = %v, want nil", got)
-	}
-}
-
-// --- buildPlacement edge cases ---
-
-func TestBuildPlacement_Nil(t *testing.T) {
-	if got := buildPlacement(spec.Node{}); got != nil {
-		t.Fatalf("buildPlacement(nil hints) = %v, want nil", got)
-	}
-}
-
-func TestBuildPlacement_EmptyHints(t *testing.T) {
-	node := spec.Node{Placement: &spec.PlacementHints{}}
-	if got := buildPlacement(node); got != nil {
-		t.Fatalf("buildPlacement(empty hints) = %v, want nil (all empty)", got)
 	}
 }
 
@@ -600,59 +447,49 @@ func TestValidateObservedManifest_NoEnv(t *testing.T) {
 	}
 }
 
-// --- directJobSucceeded / directJobFailed / directJobFailureMessage ---
+// --- wrapCommandForManifestExport ---
 
-func makeBatchJob(succeeded bool, failed bool, reason string) *batchv1.Job {
-	return makeBatchJobWithMessage(succeeded, failed, reason, "")
-}
-
-func makeBatchJobWithMessage(succeeded bool, failed bool, reason, message string) *batchv1.Job {
-	job := &batchv1.Job{}
-	if succeeded {
-		job.Status.Conditions = append(job.Status.Conditions, batchv1.JobCondition{
-			Type:   batchv1.JobComplete,
-			Status: corev1.ConditionTrue,
-			Reason: reason,
-		})
-	}
-	if failed {
-		job.Status.Conditions = append(job.Status.Conditions, batchv1.JobCondition{
-			Type:    batchv1.JobFailed,
-			Status:  corev1.ConditionTrue,
-			Reason:  reason,
-			Message: message,
-		})
-	}
-	return job
-}
-
-func TestDirectJobSucceeded(t *testing.T) {
-	if !directJobSucceeded(makeBatchJob(true, false, "")) {
-		t.Fatal("directJobSucceeded(complete) = false, want true")
-	}
-	if directJobSucceeded(makeBatchJob(false, true, "error")) {
-		t.Fatal("directJobSucceeded(failed) = true, want false")
+func TestWrapCommandForManifestExport_NoOutputs(t *testing.T) {
+	node := spec.Node{} // no outputs => no wrapping
+	cmd := []string{"python", "app.py"}
+	got := wrapCommandForManifestExport(cmd, node)
+	if len(got) != 2 || got[0] != "python" {
+		t.Fatalf("wrapCommandForManifestExport(no outputs) = %v, want unchanged", got)
 	}
 }
 
-func TestDirectJobFailed(t *testing.T) {
-	if !directJobFailed(makeBatchJob(false, true, "")) {
-		t.Fatal("directJobFailed(failed) = false, want true")
+func TestWrapCommandForManifestExport_WrappedShell(t *testing.T) {
+	node := spec.Node{
+		Outputs:  []string{"out.txt"},
+		Metadata: map[string]string{"jumi.outputManifestMode": "wrapped-shell"},
 	}
-	if directJobFailed(makeBatchJob(true, false, "")) {
-		t.Fatal("directJobFailed(complete) = true, want false")
+	cmd := []string{"python", "app.py"}
+	got := wrapCommandForManifestExport(cmd, node)
+	if len(got) < 4 {
+		t.Fatalf("wrapped command too short: %v", got)
+	}
+	if got[0] != "/bin/sh" || got[1] != "-ceu" {
+		t.Fatalf("wrapped prefix = %v, want [/bin/sh -ceu ...]", got[:2])
+	}
+	if !strings.Contains(got[2], "JUMI_OUTPUT_MANIFEST_PATH") {
+		t.Fatalf("wrapper script missing JUMI_OUTPUT_MANIFEST_PATH reference: %q", got[2])
 	}
 }
 
-func TestDirectJobFailureMessage(t *testing.T) {
-	if got := directJobFailureMessage(makeBatchJob(false, false, "")); got != "" {
-		t.Fatalf("directJobFailureMessage(no condition) = %q, want empty", got)
+func TestWrapCommandForManifestExport_RuntimeHelper(t *testing.T) {
+	node := spec.Node{
+		Outputs:  []string{"report"},
+		Metadata: map[string]string{"jumi.outputManifestMode": "runtime-helper"},
 	}
-	if got := directJobFailureMessage(makeBatchJobWithMessage(false, true, "BackoffLimitExceeded", "pod failed")); got != "pod failed" {
-		t.Fatalf("directJobFailureMessage(with message) = %q, want 'pod failed'", got)
+	cmd := []string{"sh", "-c", "echo hi"}
+	got := wrapCommandForManifestExport(cmd, node)
+	if len(got) < 4 {
+		t.Fatalf("runtime-helper command too short: %v", got)
 	}
-	// Falls back to reason when message is blank.
-	if got := directJobFailureMessage(makeBatchJobWithMessage(false, true, "BackoffLimitExceeded", "")); got != "BackoffLimitExceeded" {
-		t.Fatalf("directJobFailureMessage(no message) = %q, want reason", got)
+	if got[0] != "/bin/sh" || got[1] != "-ceu" {
+		t.Fatalf("runtime-helper prefix = %v, want [/bin/sh -ceu ...]", got[:2])
+	}
+	if !strings.Contains(got[2], "node-contract.json") {
+		t.Fatalf("runtime-helper wrapper missing contract path: %q", got[2])
 	}
 }

@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -1664,4 +1665,149 @@ func assertEventTypePresent(t *testing.T, reg registry.Registry, runID string, e
 		}
 	}
 	t.Fatalf("event type=%q not found", eventType)
+}
+
+// persistableAdapter wraps fakeAdapter and implements backend.HandlePersister.
+type persistableAdapter struct {
+	*fakeAdapter
+}
+
+func (a *persistableAdapter) MarshalHandle(h backend.Handle) ([]byte, error) {
+	fh, ok := h.(fakeHandle)
+	if !ok {
+		return nil, nil
+	}
+	type wire struct {
+		NodeID string `json:"nodeID"`
+	}
+	return json.Marshal(wire{NodeID: fh.nodeID})
+}
+
+func (a *persistableAdapter) UnmarshalHandle(data []byte) (backend.Handle, error) {
+	type wire struct {
+		NodeID string `json:"nodeID"`
+	}
+	var w wire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return nil, err
+	}
+	return fakeHandle{nodeID: w.NodeID}, nil
+}
+
+// TestHandlePersistence_SavedAndClearedOnCompletion verifies that CurrentAttemptHandleJSON
+// is set after StartNode and cleared when the node reaches a terminal state.
+func TestHandlePersistence_SavedAndClearedOnCompletion(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	waitCh := make(chan struct{})
+	inner := &fakeAdapter{
+		failOn: map[string]bool{},
+		waitCh: map[string]chan struct{}{"a": waitCh},
+	}
+	adapter := &persistableAdapter{fakeAdapter: inner}
+	engine := NewDagEngine(reg, adapter)
+
+	runID := "run-persist-handle"
+	specInput := spec.ExecutableRunSpec{
+		Run:   spec.RunMetadata{RunID: runID, SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{Nodes: []spec.Node{{NodeID: "a", Image: "busybox:1.36"}}},
+	}
+	record := spec.RunRecord{RunID: runID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	nodes := []spec.NodeRecord{{RunID: runID, NodeID: "a", Status: spec.NodeStatusPending}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit: %v", err)
+	}
+
+	// Wait until node is Running and handle JSON is persisted.
+	waitForNodeStatus(t, reg, runID, "a", spec.NodeStatusRunning)
+	deadline := time.Now().Add(2 * time.Second)
+	var handleJSON string
+	for time.Now().Before(deadline) {
+		node, err := reg.GetNode(context.Background(), runID, "a")
+		if err == nil && node.CurrentAttemptHandleJSON != "" {
+			handleJSON = node.CurrentAttemptHandleJSON
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if handleJSON == "" {
+		t.Fatal("CurrentAttemptHandleJSON not set after node entered Running state")
+	}
+
+	// Verify the JSON round-trips back to fakeHandle{nodeID:"a"}.
+	restored, err := adapter.UnmarshalHandle([]byte(handleJSON))
+	if err != nil {
+		t.Fatalf("UnmarshalHandle: %v", err)
+	}
+	if fh, ok := restored.(fakeHandle); !ok || fh.nodeID != "a" {
+		t.Fatalf("restored handle = %v, want fakeHandle{nodeID:\"a\"}", restored)
+	}
+
+	// Release the job and wait for success.
+	close(waitCh)
+	waitForRunStatus(t, reg, runID, spec.RunStatusSucceeded)
+
+	// Handle JSON must be cleared on terminal state.
+	node, err := reg.GetNode(context.Background(), runID, "a")
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if node.CurrentAttemptHandleJSON != "" {
+		t.Fatalf("CurrentAttemptHandleJSON = %q after success, want empty", node.CurrentAttemptHandleJSON)
+	}
+}
+
+// TestHandlePersistence_RestartRecovery simulates an executor restart.
+// The registry already has node "a" in Running state with a persisted handle.
+// A fresh engine must reattach (call runFromHandle) rather than create a new attempt.
+func TestHandlePersistence_RestartRecovery(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	inner := &fakeAdapter{failOn: map[string]bool{}}
+	adapter := &persistableAdapter{fakeAdapter: inner}
+
+	runID := "run-restart-recovery"
+	specInput := spec.ExecutableRunSpec{
+		Run:   spec.RunMetadata{RunID: runID, SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{Nodes: []spec.Node{{NodeID: "a", Image: "busybox:1.36"}}},
+	}
+	record := spec.RunRecord{RunID: runID, Status: spec.RunStatusRunning, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	existingAttemptID := runID + "-a-attempt-1"
+
+	// Pre-populate registry as if a previous executor had started node "a".
+	handleData, _ := adapter.MarshalHandle(fakeHandle{nodeID: "a"})
+	nodes := []spec.NodeRecord{{
+		RunID:                    runID,
+		NodeID:                   "a",
+		Status:                   spec.NodeStatusRunning,
+		AttemptCount:             1,
+		CurrentAttemptID:         existingAttemptID,
+		CurrentAttemptHandleJSON: string(handleData),
+	}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	// Fresh engine — simulates executor restart.
+	engine := NewDagEngine(reg, adapter)
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit: %v", err)
+	}
+	waitForRunStatus(t, reg, runID, spec.RunStatusSucceeded)
+
+	// AttemptCount must still be 1 — no new attempt was created.
+	node, err := reg.GetNode(context.Background(), runID, "a")
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if node.AttemptCount != 1 {
+		t.Fatalf("AttemptCount = %d after restart recovery, want 1 (no new attempt)", node.AttemptCount)
+	}
+	if node.CurrentAttemptHandleJSON != "" {
+		t.Fatalf("CurrentAttemptHandleJSON = %q after success, want empty", node.CurrentAttemptHandleJSON)
+	}
+
+	// recovery event must be present.
+	assertEventTypePresent(t, reg, runID, "node.recovery.reattached")
 }

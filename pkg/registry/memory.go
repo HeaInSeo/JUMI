@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 
@@ -66,6 +67,19 @@ func (r *MemoryRegistry) ListRuns(_ context.Context) ([]spec.RunRecord, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].AcceptedAt.Before(out[j].AcceptedAt) })
 	return out, nil
+}
+
+func (r *MemoryRegistry) GetNode(_ context.Context, runID, nodeID string) (spec.NodeRecord, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	nodes, ok := r.nodes[runID]
+	if !ok {
+		return spec.NodeRecord{}, ErrRunNotFound
+	}
+	if node, ok := nodes[nodeID]; ok {
+		return node, nil
+	}
+	return spec.NodeRecord{}, fmt.Errorf("node not found: %s/%s", runID, nodeID)
 }
 
 func (r *MemoryRegistry) ListNodes(_ context.Context, runID string) ([]spec.NodeRecord, error) {

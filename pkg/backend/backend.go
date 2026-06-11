@@ -45,6 +45,14 @@ type OutputMetadataProvider interface {
 	CollectOutputMetadata(ctx context.Context, handle Handle, node spec.Node) (map[string]OutputMetadata, error)
 }
 
+// HandlePersister is an optional interface that an Adapter may implement
+// to enable AttemptHandle persistence across executor restarts.
+// MarshalHandle returns (nil, nil) for handle types that do not support persistence.
+type HandlePersister interface {
+	MarshalHandle(h Handle) ([]byte, error)
+	UnmarshalHandle(data []byte) (Handle, error)
+}
+
 type AdapterStatus struct {
 	Ready                 bool `json:"ready"`
 	ReleaseBounded        bool `json:"releaseBounded"`

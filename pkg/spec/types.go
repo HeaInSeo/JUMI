@@ -193,6 +193,7 @@ type NodeRecord struct {
 	TerminalFailureReason     string          `json:"terminalFailureReason,omitempty"`
 	AttemptCount              int             `json:"attemptCount,omitempty"`
 	CurrentAttemptID          string          `json:"currentAttemptId,omitempty"`
+	CurrentAttemptHandleJSON  string          `json:"currentAttemptHandleJson,omitempty"`
 	StartedAt                 *time.Time      `json:"startedAt,omitempty"`
 	FinishedAt                *time.Time      `json:"finishedAt,omitempty"`
 	Observation               NodeObservation `json:"observation,omitempty"`
