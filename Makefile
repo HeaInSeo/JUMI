@@ -174,11 +174,11 @@ ko-smoke-remote: ko-publish-remote
 
 verify-sprint-3d-baseline: runtime-align-check handoff-proto-sync-check
 	@mkdir -p "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)"
-	env GOROOT=/usr/local/go $(GOENV) go test ./pkg/backend ./pkg/executor ./pkg/handoff
+	$(GOENV) go test ./pkg/backend ./pkg/executor ./pkg/handoff
 	test -d "$(AH_REPO_ROOT)"
-	cd "$(AH_REPO_ROOT)" && env TMPDIR=/tmp/ah-addsource-tmp GOCACHE=/tmp/ah-addsource-cache GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/domain ./pkg/inventory ./pkg/resolver
+	cd "$(AH_REPO_ROOT)" && env TMPDIR=/tmp/ah-addsource-tmp GOCACHE=/tmp/ah-addsource-cache go test ./pkg/domain ./pkg/inventory ./pkg/resolver
 	test -d "$(NAN_REPO_ROOT)"
-	cd "$(NAN_REPO_ROOT)" && env TMPDIR=/tmp/nan-node-contract-tmp GOCACHE=/tmp/nan-node-contract-cache GOROOT=/usr/local/go /usr/local/go/bin/go test ./pkg/contract ./pkg/runtimehelper ./cmd/node-artifact-runtime
+	cd "$(NAN_REPO_ROOT)" && env TMPDIR=/tmp/nan-node-contract-tmp GOCACHE=/tmp/nan-node-contract-cache go test ./pkg/contract ./pkg/runtimehelper ./cmd/node-artifact-runtime
 
 verify-sprint-3d-remote:
 	env SYNC_BACKUP_REGISTRY=true K8SGPT_MODE=required ./scripts/run-jumi-same-node-local-reuse-live-smoke.sh
