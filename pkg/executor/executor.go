@@ -516,6 +516,8 @@ const (
 
 const hostnameNodeSelectorKey = "kubernetes.io/hostname"
 
+const defaultNanShutdownGracePeriod = "25s"
+
 func (r *nodeRunner) RunE(ctx context.Context, a interface{}) error {
 	if r.node.TimeoutPolicy.Seconds > 0 {
 		var cancel context.CancelFunc
@@ -1304,6 +1306,9 @@ func injectRuntimeContextEnv(node *spec.Node, run spec.RunRecord, attemptID stri
 	node.Env["JUMI_NODE_ID"] = node.NodeID
 	node.Env["JUMI_ATTEMPT_ID"] = attemptID
 	node.Env["JUMI_OUTPUT_ROOT"] = "/out"
+	if strings.TrimSpace(node.Env["JUMI_SHUTDOWN_GRACE_PERIOD"]) == "" {
+		node.Env["JUMI_SHUTDOWN_GRACE_PERIOD"] = defaultNanShutdownGracePeriod
+	}
 	if sampleRunID := run.Spec.Run.SampleRunID; sampleRunID != "" {
 		node.Env["JUMI_SAMPLE_RUN_ID"] = sampleRunID
 	}

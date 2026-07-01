@@ -40,6 +40,7 @@ Notes:
 - [JUMI Sprint Plan](docs/JUMI_SPRINT_PLAN.ko.md)
 - [JUMI Scheduler Boundary](docs/JUMI_SCHEDULER_BOUNDARY.ko.md)
 - [JUMI Node Runtime Artifact Contract](docs/JUMI_NODE_RUNTIME_ARTIFACT_CONTRACT.md)
+- [JUMI nan PID 1 Shutdown Integration Plan](docs/JUMI_NAN_PID1_SHUTDOWN_INTEGRATION_PLAN.md)
 - [JUMI ko Service Image Migration Plan](docs/JUMI_KO_SERVICE_IMAGE_MIGRATION_PLAN.md)
 - [JUMI Node Runtime Base Image Plan](docs/JUMI_NODE_RUNTIME_BASE_IMAGE_PLAN.md)
 - [JUMI Artifact Helper Repo Split Plan](docs/JUMI_ARTIFACT_HELPER_REPO_SPLIT_PLAN.md)

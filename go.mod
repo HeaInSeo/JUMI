@@ -4,7 +4,7 @@ go 1.25.10
 
 require (
 	github.com/HeaInSeo/dag-go v1.2.0
-	github.com/HeaInSeo/spawner v0.3.0
+	github.com/HeaInSeo/spawner v0.3.1
 	github.com/prometheus/client_golang v1.23.2
 	go.opentelemetry.io/otel/exporters/prometheus v0.65.0
 	go.opentelemetry.io/otel/metric v1.43.0

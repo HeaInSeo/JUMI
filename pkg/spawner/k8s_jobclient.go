@@ -17,6 +17,13 @@ import (
 
 const labelAttemptMarker = "spawner.io/attempt-marker"
 
+const (
+	defaultNanShutdownGracePeriodEnv        = "25s"
+	defaultPodTerminationGracePeriodSeconds = int64(30)
+	podTerminationGracePeriodMarginSeconds  = int64(5)
+	nanShutdownGracePeriodEnv               = "JUMI_SHUTDOWN_GRACE_PERIOD"
+)
+
 // K8sJobClient implements spruntime.JobClient using the Kubernetes batch/v1 Job API.
 // It is the JUMI-side implementation of the spawner Runtime/JobClient contract.
 type K8sJobClient struct {
@@ -299,16 +306,37 @@ func buildK8sJob(req spruntime.JobCreateRequest) *batchv1.Job {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: r.ServiceAccountName,
-					RestartPolicy:      corev1.RestartPolicyNever,
-					Containers:         []corev1.Container{container},
-					Volumes:            volumes,
-					NodeSelector:       buildK8sNodeSelector(r.Placement),
-					Affinity:           buildK8sAffinity(r.Placement),
+					ServiceAccountName:            r.ServiceAccountName,
+					RestartPolicy:                 corev1.RestartPolicyNever,
+					TerminationGracePeriodSeconds: ptrInt64(podTerminationGracePeriodSeconds(r.Env)),
+					Containers:                    []corev1.Container{container},
+					Volumes:                       volumes,
+					NodeSelector:                  buildK8sNodeSelector(r.Placement),
+					Affinity:                      buildK8sAffinity(r.Placement),
 				},
 			},
 		},
 	}
+}
+
+func ptrInt64(v int64) *int64 {
+	return &v
+}
+
+func podTerminationGracePeriodSeconds(env map[string]string) int64 {
+	raw := defaultNanShutdownGracePeriodEnv
+	if configured := env[nanShutdownGracePeriodEnv]; configured != "" {
+		raw = configured
+	}
+	grace, err := time.ParseDuration(raw)
+	if err != nil || grace <= 0 {
+		return defaultPodTerminationGracePeriodSeconds
+	}
+	seconds := int64(grace / time.Second)
+	if grace%time.Second != 0 {
+		seconds++
+	}
+	return seconds + podTerminationGracePeriodMarginSeconds
 }
 
 func buildEnvVars(env map[string]string) []corev1.EnvVar {

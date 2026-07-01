@@ -9,7 +9,7 @@ require (
 
 require (
 	github.com/HeaInSeo/dag-go v1.2.0 // indirect
-	github.com/HeaInSeo/spawner v0.2.1 // indirect
+	github.com/HeaInSeo/spawner v0.3.1 // indirect
 	github.com/HeaInSeo/utils v0.0.0-20260504053318-1547f9bc140b // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

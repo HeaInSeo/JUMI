@@ -306,6 +306,9 @@ func TestDagEngineInjectsAttemptAwareRuntimeContext(t *testing.T) {
 	if got := preparedNode.Env["JUMI_OUTPUT_MANIFEST_PATH"]; !strings.Contains(got, "/attempts/") {
 		t.Fatalf("prepared env JUMI_OUTPUT_MANIFEST_PATH = %q, want attempt-aware path", got)
 	}
+	if got := preparedNode.Env["JUMI_SHUTDOWN_GRACE_PERIOD"]; got != "25s" {
+		t.Fatalf("prepared env JUMI_SHUTDOWN_GRACE_PERIOD = %q, want 25s", got)
+	}
 }
 
 func TestDagEngineFailsOnConflictingRequiredPlacementIntents(t *testing.T) {

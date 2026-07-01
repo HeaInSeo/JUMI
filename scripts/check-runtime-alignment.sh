@@ -37,9 +37,11 @@ PY
 
 HEAD_REF=""
 HEAD_DESCRIBE=""
+PINNED_RESOLVED_REF=""
 if [[ -d "${RUNTIME_REPO_ROOT}/.git" ]]; then
   HEAD_REF="$(git -C "${RUNTIME_REPO_ROOT}" rev-parse HEAD)"
   HEAD_DESCRIBE="$(git -C "${RUNTIME_REPO_ROOT}" describe --tags --always)"
+  PINNED_RESOLVED_REF="$(git -C "${RUNTIME_REPO_ROOT}" rev-parse "${PINNED_REF}^{commit}" 2>/dev/null || true)"
 fi
 
 python3 - <<PY
@@ -47,6 +49,7 @@ import json
 from pathlib import Path
 
 pinned = "${PINNED_REF}"
+pinned_resolved = "${PINNED_RESOLVED_REF}"
 head = "${HEAD_REF}"
 head_describe = "${HEAD_DESCRIBE}"
 
@@ -54,9 +57,10 @@ payload = {
     "containerfile": "${CONTAINERFILE_PATH}",
     "runtimeRepoRoot": "${RUNTIME_REPO_ROOT}",
     "pinnedRef": pinned,
+    "pinnedResolvedRef": pinned_resolved,
     "runtimeRepoHead": head,
     "runtimeRepoDescribe": head_describe,
-    "aligned": bool(head) and pinned == head,
+    "aligned": bool(head) and (pinned == head or pinned_resolved == head),
 }
 Path("${OUTPUT_PATH}").write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 print(json.dumps(payload, ensure_ascii=False, indent=2))
