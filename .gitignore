@@ -4,4 +4,5 @@ dist/
 coverage.out
 /jumi
 /jumi-lifecycle
+artifacts/
 reports/
