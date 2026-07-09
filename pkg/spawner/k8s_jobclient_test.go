@@ -1,12 +1,17 @@
 package spawner
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	spruntime "github.com/HeaInSeo/spawner/pkg/runtime"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestBuildK8sJobSetsTerminationGracePeriod(t *testing.T) {
@@ -260,5 +265,113 @@ func TestValidateK8sJobCreateRequestRequiresRunAndNodeIdentity(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("validateK8sJobCreateRequest() error = nil, want missing identity rejection")
+	}
+}
+
+func TestSnapshotIgnoresSameNameJobWithDifferentUID(t *testing.T) {
+	client := NewK8sJobClient(fake.NewSimpleClientset(&batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "job-1",
+			Namespace: "default",
+			UID:       types.UID("new-uid"),
+		},
+	}))
+
+	snap, err := client.Snapshot(context.Background(), spruntime.BackendRef{
+		Namespace: "default",
+		Name:      "job-1",
+		UID:       "old-uid",
+	})
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if snap.Exists {
+		t.Fatal("Snapshot().Exists = true, want false for different UID")
+	}
+}
+
+func TestDeleteIgnoresSameNameJobWithDifferentUID(t *testing.T) {
+	clientset := fake.NewSimpleClientset(&batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "job-1",
+			Namespace: "default",
+			UID:       types.UID("new-uid"),
+		},
+	})
+	client := NewK8sJobClient(clientset)
+
+	if err := client.Delete(context.Background(), spruntime.BackendRef{
+		Namespace: "default",
+		Name:      "job-1",
+		UID:       "old-uid",
+	}); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+
+	if _, err := clientset.BatchV1().Jobs("default").Get(context.Background(), "job-1", metav1.GetOptions{}); err != nil {
+		t.Fatalf("job was deleted despite UID mismatch: %v", err)
+	}
+}
+
+func TestPodWatchLabelSelectorIncludesAttemptIdentity(t *testing.T) {
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+		labelRunKey:    "run-1",
+		labelNodeKey:   "node-1",
+		labelAttemptID: "attempt-1",
+	}}}
+
+	got := podWatchLabelSelector(job, spruntime.BackendRef{Name: "job-1"})
+	for _, want := range []string{
+		"job-name=job-1",
+		labelRunKey + "=run-1",
+		labelNodeKey + "=node-1",
+		labelAttemptID + "=attempt-1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("podWatchLabelSelector() = %q, missing %q", got, want)
+		}
+	}
+}
+
+func TestPodIdentityFilterRejectsStaleAttempt(t *testing.T) {
+	expected := map[string]string{
+		labelRunKey:    "run-1",
+		labelNodeKey:   "node-1",
+		labelAttemptID: "attempt-2",
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+		labelRunKey:    "run-1",
+		labelNodeKey:   "node-1",
+		labelAttemptID: "attempt-1",
+	}}}
+	if podMatchesIdentityLabels(pod, expected) {
+		t.Fatal("podMatchesIdentityLabels() = true, want false for stale attempt")
+	}
+}
+
+func TestWatchClosesOnSameNameJobWithDifferentUID(t *testing.T) {
+	client := NewK8sJobClient(fake.NewSimpleClientset(&batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "job-1",
+			Namespace: "default",
+			UID:       types.UID("new-uid"),
+		},
+	}))
+
+	watch, err := client.Watch(context.Background(), spruntime.BackendRef{
+		Namespace: "default",
+		Name:      "job-1",
+		UID:       "old-uid",
+	})
+	if err != nil {
+		t.Fatalf("Watch() error = %v", err)
+	}
+	select {
+	case _, ok := <-watch.Events:
+		if ok {
+			t.Fatal("Watch().Events emitted event for different UID")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Watch().Events did not close for different UID")
 	}
 }

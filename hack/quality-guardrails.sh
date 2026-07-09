@@ -61,6 +61,10 @@ check_source_of_truth() {
     "label contract documents Kueue queue label"
   require_grep 'nodeSelector\["kubernetes\.io/hostname"\]' docs/JUMI_K8S_JOB_LABEL_CONTRACT.md \
     "label contract documents requiredNodeName hostname materialization"
+  require_grep 'different UID is treated as not found' docs/JUMI_K8S_JOB_LABEL_CONTRACT.md \
+    "label contract documents UID mismatch snapshot behavior"
+  require_grep 'Pod event whose identity labels do not match' docs/JUMI_K8S_JOB_LABEL_CONTRACT.md \
+    "label contract documents stale Pod event rejection"
 }
 
 check_spawner_label_contract() {
@@ -82,6 +86,12 @@ check_spawner_label_contract() {
     "spawner preserves full attempt marker annotation"
   require_grep 'existingAttemptMarkerMatches' "$file" \
     "spawner keeps idempotency marker compatibility check"
+  require_grep 'jobMatchesBackendRef' "$file" \
+    "spawner checks backend UID before observing current attempt"
+  require_grep 'podWatchLabelSelector' "$file" \
+    "spawner builds Pod watch selector from attempt identity"
+  require_grep 'podMatchesIdentityLabels' "$file" \
+    "spawner filters stale Pod events by attempt identity"
 
   require_grep 'TestBuildK8sJobAppliesIdentityLabelContract' "$test_file" \
     "unit test covers Job and Pod identity labels"
@@ -91,6 +101,14 @@ check_spawner_label_contract() {
     "unit test covers reserved user label rejection"
   require_grep 'TestValidateK8sJobCreateRequestRejectsRequiredNodeConflict' "$test_file" \
     "unit test covers requiredNodeName/nodeSelector conflict"
+  require_grep 'TestSnapshotIgnoresSameNameJobWithDifferentUID' "$test_file" \
+    "unit test covers snapshot UID mismatch"
+  require_grep 'TestDeleteIgnoresSameNameJobWithDifferentUID' "$test_file" \
+    "unit test covers delete UID mismatch"
+  require_grep 'TestPodWatchLabelSelectorIncludesAttemptIdentity' "$test_file" \
+    "unit test covers Pod watch identity selector"
+  require_grep 'TestPodIdentityFilterRejectsStaleAttempt' "$test_file" \
+    "unit test covers stale Pod identity filtering"
 }
 
 check_spec_validation_contract() {

@@ -80,3 +80,33 @@ If `requiredNodeName` conflicts with an explicit
 
 JUMI expresses soft artifact locality through preferred node affinity. Preferred
 placement is an optimization hint, not a hard scheduling guarantee.
+
+## Attempt Observation And Cleanup Safety
+
+Runtime handles include the Kubernetes Job UID. If a same-name Job exists with a
+different UID, JUMI must not treat it as the current attempt.
+
+Required behavior:
+
+```text
+Snapshot
+→ different UID is treated as not found
+
+Watch
+→ different UID closes without emitting current-attempt events
+
+Delete
+→ different UID is not deleted
+```
+
+Pod watches must use the Job controller label plus the JUMI identity selector:
+
+```text
+job-name=<job name>
+jumi.io/run-key=<run key>
+jumi.io/node-key=<node key>
+jumi.io/attempt-id=<attempt id>
+```
+
+Any Pod event whose identity labels do not match the current Job identity is a
+stale event and must be ignored.

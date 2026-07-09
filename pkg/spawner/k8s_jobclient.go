@@ -14,6 +14,8 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8slabels "k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	k8swatch "k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
@@ -103,14 +105,36 @@ func (c *K8sJobClient) Watch(ctx context.Context, ref spruntime.BackendRef) (spr
 
 // Delete removes the K8s Job. NotFound is treated as success.
 func (c *K8sJobClient) Delete(ctx context.Context, ref spruntime.BackendRef) error {
+	if ref.UID != "" {
+		job, err := c.clientset.BatchV1().Jobs(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+		if k8serrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if string(job.UID) != ref.UID {
+			return nil
+		}
+	}
 	propagation := metav1.DeletePropagationBackground
+	preconditions := deletePreconditions(ref)
 	err := c.clientset.BatchV1().Jobs(ref.Namespace).Delete(ctx, ref.Name, metav1.DeleteOptions{
 		PropagationPolicy: &propagation,
+		Preconditions:     preconditions,
 	})
 	if k8serrors.IsNotFound(err) {
 		return nil
 	}
 	return err
+}
+
+func deletePreconditions(ref spruntime.BackendRef) *metav1.Preconditions {
+	if ref.UID == "" {
+		return nil
+	}
+	uid := types.UID(ref.UID)
+	return &metav1.Preconditions{UID: &uid}
 }
 
 // Snapshot returns the current state of the Job without subscribing to a watch stream.
@@ -122,6 +146,9 @@ func (c *K8sJobClient) Snapshot(ctx context.Context, ref spruntime.BackendRef) (
 	}
 	if err != nil {
 		return spruntime.JobSnapshot{}, err
+	}
+	if !jobMatchesBackendRef(job, ref) {
+		return spruntime.JobSnapshot{Exists: false}, nil
 	}
 	state, reason, msg, ts := jobToState(job)
 	return spruntime.JobSnapshot{
@@ -151,6 +178,9 @@ func (c *K8sJobClient) watchJob(ctx context.Context, ref spruntime.BackendRef, e
 		trySendWatchErr(errCh, spruntime.ReasonWatchDisconnected, err.Error(), true)
 		return
 	}
+	if !jobMatchesBackendRef(job, ref) {
+		return
+	}
 
 	// If already terminal, emit once and close.
 	if state, reason, msg, ts := jobToState(job); state.IsTerminal() {
@@ -171,7 +201,7 @@ func (c *K8sJobClient) watchJob(ctx context.Context, ref spruntime.BackendRef, e
 	defer jw.Stop()
 
 	pw, pwErr := c.clientset.CoreV1().Pods(ref.Namespace).Watch(ctx, metav1.ListOptions{
-		LabelSelector:   "job-name=" + ref.Name,
+		LabelSelector:   podWatchLabelSelector(job, ref),
 		ResourceVersion: "0",
 		TimeoutSeconds:  &watchTimeoutSec,
 	})
@@ -212,6 +242,9 @@ func (c *K8sJobClient) watchJob(ctx context.Context, ref spruntime.BackendRef, e
 			if !ok {
 				continue
 			}
+			if !jobMatchesBackendRef(j, ref) || !jobMatchesIdentityLabels(j, job.Labels) {
+				continue
+			}
 			state, reason, msg, ts := jobToState(j)
 			if !trySendEvent(ctx, evCh, spruntime.JobEvent{State: state, Reason: reason, Message: msg, Timestamp: ts}) {
 				return
@@ -232,6 +265,9 @@ func (c *K8sJobClient) watchJob(ctx context.Context, ref spruntime.BackendRef, e
 			if !ok {
 				continue
 			}
+			if !podMatchesIdentityLabels(pod, job.Labels) {
+				continue
+			}
 			if s, emit := podPhaseToState(pod); emit {
 				if !trySendEvent(ctx, evCh, spruntime.JobEvent{State: s, Timestamp: time.Now()}) {
 					return
@@ -239,6 +275,52 @@ func (c *K8sJobClient) watchJob(ctx context.Context, ref spruntime.BackendRef, e
 			}
 		}
 	}
+}
+
+func jobMatchesBackendRef(job *batchv1.Job, ref spruntime.BackendRef) bool {
+	if job == nil {
+		return false
+	}
+	return ref.UID == "" || string(job.UID) == ref.UID
+}
+
+func jobMatchesIdentityLabels(job *batchv1.Job, expected map[string]string) bool {
+	if job == nil {
+		return false
+	}
+	return metadataMatchesIdentityLabels(job.Labels, expected)
+}
+
+func podMatchesIdentityLabels(pod *corev1.Pod, expected map[string]string) bool {
+	if pod == nil {
+		return false
+	}
+	return metadataMatchesIdentityLabels(pod.Labels, expected)
+}
+
+func metadataMatchesIdentityLabels(got, expected map[string]string) bool {
+	for _, key := range []string{labelRunKey, labelNodeKey, labelAttemptID} {
+		want := expected[key]
+		if want == "" {
+			continue
+		}
+		if got[key] != want {
+			return false
+		}
+	}
+	return true
+}
+
+func podWatchLabelSelector(job *batchv1.Job, ref spruntime.BackendRef) string {
+	selector := map[string]string{"job-name": ref.Name}
+	if job != nil {
+		for _, key := range []string{labelRunKey, labelNodeKey, labelAttemptID} {
+			if value := job.Labels[key]; value != "" {
+				selector[key] = value
+			}
+		}
+	}
+	return k8slabels.Set(selector).String()
 }
 
 // jobToState translates a K8s Job object to an AttemptState.
