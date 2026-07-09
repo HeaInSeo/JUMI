@@ -32,6 +32,11 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Verify go mod tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
       - name: Run tests
         run: make test
 
@@ -40,6 +45,9 @@ jobs:
 
       - name: Generate coverage report and enforce threshold
         run: make coverage-check
+
+      - name: Check no fmt drift
+        run: git diff --exit-code '*.go'
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4

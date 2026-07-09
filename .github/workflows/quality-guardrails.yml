@@ -1,0 +1,53 @@
+name: Quality Guardrails
+
+on:
+  push:
+    paths:
+      - ".github/workflows/quality-guardrails.yml"
+      - ".github/workflows/test.yml"
+      - "Makefile"
+      - "docs/JUMI_K8S_JOB_LABEL_CONTRACT.md"
+      - "docs/JUMI_DESIGN.ko.md"
+      - "docs/JUMI_SCHEDULER_BOUNDARY.ko.md"
+      - "hack/quality-guardrails.sh"
+      - "pkg/backend/spawner_k8s.go"
+      - "pkg/backend/spawner_k8s_test.go"
+      - "pkg/spawner/k8s_jobclient.go"
+      - "pkg/spawner/k8s_jobclient_test.go"
+      - "pkg/spec/validate.go"
+      - "pkg/spec/validate_test.go"
+  pull_request:
+    paths:
+      - ".github/workflows/quality-guardrails.yml"
+      - ".github/workflows/test.yml"
+      - "Makefile"
+      - "docs/JUMI_K8S_JOB_LABEL_CONTRACT.md"
+      - "docs/JUMI_DESIGN.ko.md"
+      - "docs/JUMI_SCHEDULER_BOUNDARY.ko.md"
+      - "hack/quality-guardrails.sh"
+      - "pkg/backend/spawner_k8s.go"
+      - "pkg/backend/spawner_k8s_test.go"
+      - "pkg/spawner/k8s_jobclient.go"
+      - "pkg/spawner/k8s_jobclient_test.go"
+      - "pkg/spec/validate.go"
+      - "pkg/spec/validate_test.go"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-guardrails-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-guardrails:
+    name: Check label, scheduling, and CI contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run quality guardrails
+        run: bash hack/quality-guardrails.sh

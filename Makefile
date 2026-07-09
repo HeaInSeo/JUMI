@@ -32,7 +32,7 @@ AH_GRPC_TARGET ?=
 AH_HTTP_URL ?=
 SAMPLE_RUN_ID ?=
 
-.PHONY: test test-regression coverage coverage-check fmt vet lint lint-depguard lint-security vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-align-check runtime-smoke-remote ko-publish-remote ko-smoke-remote verify-sprint-3d-baseline verify-sprint-3d-remote lifecycle-check
+.PHONY: test test-regression coverage coverage-check fmt vet lint lint-depguard lint-security quality-guardrails vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-align-check runtime-smoke-remote ko-publish-remote ko-smoke-remote verify-sprint-3d-baseline verify-sprint-3d-remote lifecycle-check
 
 REMOTE_SSH_TARGET ?= seoy@100.123.80.48
 REGISTRY_HOST ?= harbor.10.113.24.96.nip.io
@@ -122,6 +122,9 @@ lint-security: golangci-lint
 	$(GOENV) $(GOLANGCI_LINT) run --enable-only gosec $(PKGS_SECURITY) \
 	| tee "$(REPORT_DIR)/gosec.txt"; \
 	echo "gosec_exit=$$?" | tee -a "$(REPORT_DIR)/lint-security-summary.txt"
+
+quality-guardrails:
+	bash hack/quality-guardrails.sh
 
 vuln: govulncheck
 	@mkdir -p "$(REPORT_DIR)" "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)"
