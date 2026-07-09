@@ -165,6 +165,41 @@ func TestValidateExecutableRunSpec_NegativeRetryMaxAttempts(t *testing.T) {
 	}
 }
 
+func TestValidateExecutableRunSpec_RejectsRequiredNodeSelectorConflict(t *testing.T) {
+	s := minimalSpec("run-1", []Node{{
+		NodeID: "a",
+		Image:  "img:1",
+		Placement: &PlacementHints{
+			RequiredNodeName: "worker-1",
+			NodeSelector:     map[string]string{"kubernetes.io/hostname": "worker-2"},
+		},
+	}})
+	err := ValidateExecutableRunSpec(s)
+	if err == nil {
+		t.Fatal("expected error for requiredNodeName/nodeSelector conflict")
+	}
+	if !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("expected conflict error, got: %v", err)
+	}
+}
+
+func TestValidateExecutableRunSpec_RejectsReservedKueueLabelPrefix(t *testing.T) {
+	s := minimalSpec("run-1", []Node{{
+		NodeID: "a",
+		Image:  "img:1",
+		Kueue: &KueueHints{Labels: map[string]string{
+			"jumi.io/run-key": "override",
+		}},
+	}})
+	err := ValidateExecutableRunSpec(s)
+	if err == nil {
+		t.Fatal("expected error for reserved kueue label prefix")
+	}
+	if !strings.Contains(err.Error(), "user.jumi.io") {
+		t.Fatalf("expected user.jumi.io error, got: %v", err)
+	}
+}
+
 func TestValidateExecutableRunSpec_NegativeTimeoutSeconds(t *testing.T) {
 	s := minimalSpec("run-1", []Node{{NodeID: "a", Image: "img:1", TimeoutPolicy: TimeoutPolicy{Seconds: -1}}})
 	err := ValidateExecutableRunSpec(s)

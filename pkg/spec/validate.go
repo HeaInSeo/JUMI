@@ -3,7 +3,10 @@ package spec
 import (
 	"fmt"
 	"reflect"
+	"strings"
 )
+
+const hostnameNodeSelectorKey = "kubernetes.io/hostname"
 
 func ValidateExecutableRunSpec(spec ExecutableRunSpec) error {
 	if spec.Run.RunID == "" {
@@ -33,6 +36,18 @@ func ValidateExecutableRunSpec(spec ExecutableRunSpec) error {
 		}
 		if node.TimeoutPolicy.Seconds < 0 {
 			return fmt.Errorf("node %s: timeoutPolicy.seconds must be >= 0", node.NodeID)
+		}
+		if node.Placement != nil && node.Placement.RequiredNodeName != "" && node.Placement.NodeSelector != nil {
+			if existing := strings.TrimSpace(node.Placement.NodeSelector[hostnameNodeSelectorKey]); existing != "" && existing != node.Placement.RequiredNodeName {
+				return fmt.Errorf("node %s: requiredNodeName %q conflicts with nodeSelector[%q]=%q", node.NodeID, node.Placement.RequiredNodeName, hostnameNodeSelectorKey, existing)
+			}
+		}
+		if node.Kueue != nil {
+			for k := range node.Kueue.Labels {
+				if !strings.HasPrefix(k, "user.jumi.io/") {
+					return fmt.Errorf("node %s: kueue.labels[%q] must use user.jumi.io/ prefix", node.NodeID, k)
+				}
+			}
 		}
 		for _, binding := range node.ArtifactBindings {
 			if binding.BindingName == "" {

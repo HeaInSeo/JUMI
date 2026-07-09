@@ -2,7 +2,10 @@ package spawner
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	spruntime "github.com/HeaInSeo/spawner/pkg/runtime"
@@ -11,11 +14,29 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	k8swatch "k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 )
 
-const labelAttemptMarker = "spawner.io/attempt-marker"
+const (
+	labelAppName         = "app.kubernetes.io/name"
+	labelAppComponent    = "app.kubernetes.io/component"
+	labelAppManagedBy    = "app.kubernetes.io/managed-by"
+	labelRunKey          = "jumi.io/run-key"
+	labelNodeKey         = "jumi.io/node-key"
+	labelAttemptID       = "jumi.io/attempt-id"
+	labelWorkloadRole    = "jumi.io/workload-role"
+	labelKueueQueueName  = "kueue.x-k8s.io/queue-name"
+	labelAttemptMarker   = "spawner.io/attempt-marker"
+	annotationRunID      = "jumi.io/run-id"
+	annotationNodeID     = "jumi.io/node-id"
+	annotationAttemptID  = "jumi.io/attempt-id"
+	annotationMarker     = "jumi.io/attempt-marker"
+	annotationTraceID    = "jumi.io/trace-id"
+	userLabelPrefix      = "user.jumi.io/"
+	hostnameNodeSelector = "kubernetes.io/hostname"
+)
 
 const (
 	defaultNanShutdownGracePeriodEnv        = "25s"
@@ -39,6 +60,9 @@ func NewK8sJobClient(clientset kubernetes.Interface) *K8sJobClient {
 // same (Namespace, JobName) + matching marker → return existing BackendRef;
 // same (Namespace, JobName) + different marker → ErrJobConflict.
 func (c *K8sJobClient) Create(ctx context.Context, req spruntime.JobCreateRequest) (spruntime.BackendRef, error) {
+	if err := validateK8sJobCreateRequest(req); err != nil {
+		return spruntime.BackendRef{}, err
+	}
 	job := buildK8sJob(req)
 	created, err := c.clientset.BatchV1().Jobs(req.Namespace).Create(ctx, job, metav1.CreateOptions{})
 	if err == nil {
@@ -52,10 +76,20 @@ func (c *K8sJobClient) Create(ctx context.Context, req spruntime.JobCreateReques
 	if getErr != nil {
 		return spruntime.BackendRef{}, fmt.Errorf("job AlreadyExists but get failed: %w", getErr)
 	}
-	if existing.Labels[labelAttemptMarker] != req.AttemptMarker {
+	if !existingAttemptMarkerMatches(existing, req.AttemptMarker) {
 		return spruntime.BackendRef{}, spruntime.ErrJobConflict
 	}
 	return spruntime.NewK8sJobBackendRef(req.Namespace, req.JobName, string(existing.UID)), nil
+}
+
+func existingAttemptMarkerMatches(job *batchv1.Job, marker string) bool {
+	if job == nil {
+		return false
+	}
+	if job.Annotations[annotationMarker] == marker {
+		return true
+	}
+	return job.Labels[labelAttemptMarker] == marker
 }
 
 // Watch starts a goroutine that translates K8s Job and Pod events into JobEvents.
@@ -271,18 +305,20 @@ func buildK8sJob(req spruntime.JobCreateRequest) *batchv1.Job {
 	volumes, volumeMounts := buildK8sVolumes(r.Mounts)
 	container.VolumeMounts = volumeMounts
 
-	labels := make(map[string]string, len(r.UserLabels)+1)
-	for k, v := range r.UserLabels {
-		labels[k] = v
-	}
-	labels[labelAttemptMarker] = req.AttemptMarker
-
-	annotations := make(map[string]string, len(r.UserAnnotations))
+	labels := buildLabels(req)
+	annotations := make(map[string]string, len(r.UserAnnotations)+5)
 	for k, v := range r.UserAnnotations {
 		annotations[k] = v
 	}
+	annotations[annotationRunID] = firstNonEmpty(r.RunID, r.Env["JUMI_RUN_ID"])
+	annotations[annotationNodeID] = r.Env["JUMI_NODE_ID"]
+	annotations[annotationAttemptID] = r.AttemptID
+	annotations[annotationMarker] = req.AttemptMarker
+	if r.CorrelationID != "" {
+		annotations[annotationTraceID] = r.CorrelationID
+	}
 
-	_, useKueue := labels["kueue.x-k8s.io/queue-name"]
+	_, useKueue := labels[labelKueueQueueName]
 	suspend := useKueue
 	backoffLimit := int32(0)
 
@@ -317,6 +353,146 @@ func buildK8sJob(req spruntime.JobCreateRequest) *batchv1.Job {
 			},
 		},
 	}
+}
+
+func validateK8sJobCreateRequest(req spruntime.JobCreateRequest) error {
+	r := req.AttemptRequest
+	if strings.TrimSpace(r.AttemptID) == "" {
+		return fmt.Errorf("attempt-id is required")
+	}
+	if strings.TrimSpace(firstNonEmpty(r.RunID, r.Env["JUMI_RUN_ID"])) == "" {
+		return fmt.Errorf("run id is required")
+	}
+	if strings.TrimSpace(r.Env["JUMI_NODE_ID"]) == "" {
+		return fmt.Errorf("node id is required")
+	}
+	if err := validatePlacement(r.Placement); err != nil {
+		return err
+	}
+	for k, v := range r.UserLabels {
+		if k == labelKueueQueueName {
+			if errs := k8svalidation.IsValidLabelValue(v); len(errs) > 0 {
+				return fmt.Errorf("invalid kueue queue label value %q: %s", v, strings.Join(errs, "; "))
+			}
+			continue
+		}
+		if !strings.HasPrefix(k, userLabelPrefix) {
+			return fmt.Errorf("user label %q must use %s prefix", k, userLabelPrefix)
+		}
+		if err := validateLabel(k, v); err != nil {
+			return err
+		}
+	}
+	labels := buildLabels(req)
+	for k, v := range labels {
+		if err := validateLabel(k, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validatePlacement(p *spruntime.Placement) error {
+	if p == nil || p.RequiredNodeName == "" || p.NodeSelector == nil {
+		return nil
+	}
+	if existing := strings.TrimSpace(p.NodeSelector[hostnameNodeSelector]); existing != "" && existing != p.RequiredNodeName {
+		return fmt.Errorf("requiredNodeName %q conflicts with nodeSelector[%q]=%q", p.RequiredNodeName, hostnameNodeSelector, existing)
+	}
+	return nil
+}
+
+func validateLabel(k, v string) error {
+	if errs := k8svalidation.IsQualifiedName(k); len(errs) > 0 {
+		return fmt.Errorf("invalid Kubernetes label key %q: %s", k, strings.Join(errs, "; "))
+	}
+	if errs := k8svalidation.IsValidLabelValue(v); len(errs) > 0 {
+		return fmt.Errorf("invalid Kubernetes label value for %q: %s", k, strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func buildLabels(req spruntime.JobCreateRequest) map[string]string {
+	r := req.AttemptRequest
+	labels := make(map[string]string, len(r.UserLabels)+8)
+	labels[labelAppName] = "jumi"
+	labels[labelAppComponent] = "node-attempt"
+	labels[labelAppManagedBy] = "jumi-spawner"
+	labels[labelRunKey] = identityLabelValue(firstNonEmpty(r.RunID, r.Env["JUMI_RUN_ID"]))
+	labels[labelNodeKey] = identityLabelValue(r.Env["JUMI_NODE_ID"])
+	labels[labelAttemptID] = identityLabelValue(r.AttemptID)
+	labels[labelWorkloadRole] = "main"
+	labels[labelAttemptMarker] = identityLabelValue(req.AttemptMarker)
+	for k, v := range r.UserLabels {
+		if k == labelKueueQueueName || strings.HasPrefix(k, userLabelPrefix) {
+			labels[k] = v
+		}
+	}
+	return labels
+}
+
+func identityLabelValue(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "unknown"
+	}
+	lower := strings.ToLower(raw)
+	sanitized := sanitizeLabelValue(lower)
+	if sanitized == "" {
+		sanitized = "x"
+	}
+	if sanitized == lower && len(sanitized) <= 63 {
+		return sanitized
+	}
+	hash := shortHash(raw)
+	maxPrefix := 63 - len(hash) - 1
+	if len(sanitized) > maxPrefix {
+		sanitized = sanitized[:maxPrefix]
+		sanitized = strings.Trim(sanitized, "-_.")
+	}
+	if sanitized == "" {
+		return hash
+	}
+	return sanitized + "-" + hash
+}
+
+func sanitizeLabelValue(raw string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range raw {
+		allowed := isASCIILabelChar(r)
+		if allowed {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-_.")
+}
+
+func isASCIILabelChar(r rune) bool {
+	return r == '-' || r == '_' || r == '.' ||
+		('a' <= r && r <= 'z') ||
+		('A' <= r && r <= 'Z') ||
+		('0' <= r && r <= '9')
+}
+
+func shortHash(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])[:8]
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func ptrInt64(v int64) *int64 {
@@ -414,7 +590,7 @@ func buildK8sNodeSelector(p *spruntime.Placement) map[string]string {
 		out[k] = v
 	}
 	if p.RequiredNodeName != "" {
-		out["kubernetes.io/hostname"] = p.RequiredNodeName
+		out[hostnameNodeSelector] = p.RequiredNodeName
 	}
 	return out
 }

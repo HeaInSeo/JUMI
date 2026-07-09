@@ -928,13 +928,14 @@ func toAttemptRequest(run spec.RunRecord, node spec.Node) spruntime.AttemptReque
 	command = wrapCommandForManifestExport(command, node)
 
 	userLabels := make(map[string]string)
-	userLabels["jumi/run-id"] = run.RunID
-	userLabels["jumi/node-id"] = node.NodeID
 	if node.Kueue != nil {
 		if node.Kueue.QueueName != "" {
 			userLabels["kueue.x-k8s.io/queue-name"] = node.Kueue.QueueName
 		}
 		for k, v := range node.Kueue.Labels {
+			if !strings.HasPrefix(k, "user.jumi.io/") {
+				continue
+			}
 			userLabels[k] = v
 		}
 	}

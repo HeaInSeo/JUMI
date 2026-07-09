@@ -65,3 +65,44 @@ func TestReadArtifactsManifestFromTerminationMessage(t *testing.T) {
 		t.Fatalf("termination message manifest = %q, want report payload", string(raw))
 	}
 }
+
+func TestToAttemptRequestDoesNotExposeLegacyJumiLabels(t *testing.T) {
+	run := spec.RunRecord{
+		RunID: "run-1",
+		Spec: spec.ExecutableRunSpec{
+			Run: spec.RunMetadata{TraceID: "trace-1"},
+		},
+	}
+	node := spec.Node{
+		NodeID: "node-1",
+		Image:  "tool:latest",
+		Env: map[string]string{
+			"JUMI_RUN_ID":     "run-1",
+			"JUMI_NODE_ID":    "node-1",
+			"JUMI_ATTEMPT_ID": "attempt-1",
+		},
+		Kueue: &spec.KueueHints{
+			QueueName: "gpu-batch",
+			Labels: map[string]string{
+				"user.jumi.io/team": "genomics",
+			},
+		},
+	}
+
+	req := toAttemptRequest(run, node)
+	if _, ok := req.UserLabels["jumi/run-id"]; ok {
+		t.Fatal("legacy jumi/run-id label was propagated")
+	}
+	if _, ok := req.UserLabels["jumi/node-id"]; ok {
+		t.Fatal("legacy jumi/node-id label was propagated")
+	}
+	if got := req.UserLabels["kueue.x-k8s.io/queue-name"]; got != "gpu-batch" {
+		t.Fatalf("kueue queue label = %q, want gpu-batch", got)
+	}
+	if got := req.UserLabels["user.jumi.io/team"]; got != "genomics" {
+		t.Fatalf("user label = %q, want genomics", got)
+	}
+	if got := req.UserAnnotations["jumi.trace-id"]; got != "trace-1" {
+		t.Fatalf("trace annotation = %q, want trace-1", got)
+	}
+}
