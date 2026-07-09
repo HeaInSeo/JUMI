@@ -173,7 +173,7 @@ ko-smoke-remote: ko-publish-remote
 	REMOTE_JUMI_REPO_ROOT="/tmp/jumi-runtime-refresh" ALLOW_LOCAL_CHECKOUT_FALLBACK=true ./scripts/run-jumi-ah-dev-live-smoke-eval.sh
 
 verify-sprint-3d-baseline: runtime-align-check handoff-proto-sync-check
-	@mkdir -p "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)"
+	@mkdir -p "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)" /tmp/ah-addsource-tmp /tmp/ah-addsource-cache /tmp/nan-node-contract-tmp /tmp/nan-node-contract-cache
 	$(GOENV) go test ./pkg/backend ./pkg/executor ./pkg/handoff
 	test -d "$(AH_REPO_ROOT)"
 	cd "$(AH_REPO_ROOT)" && env TMPDIR=/tmp/ah-addsource-tmp GOCACHE=/tmp/ah-addsource-cache go test ./pkg/domain ./pkg/inventory ./pkg/resolver
