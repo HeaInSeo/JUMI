@@ -1,0 +1,22 @@
+rules:
+  - id: jumi-no-job-name-only-pod-watch
+    languages: [go]
+    severity: ERROR
+    message: >
+      Do not watch Pods with only the Kubernetes job-name label. JUMI Pod
+      watches must include job-name plus jumi.io/run-key, jumi.io/node-key, and
+      jumi.io/attempt-id so stale attempt Pod events are ignored.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $CLIENT.CoreV1().Pods($NS).Watch($CTX, metav1.ListOptions{
+                ...,
+                LabelSelector: "job-name=" + $JOB,
+                ...,
+              })
+          - pattern: |
+              $CLIENT.CoreV1().Pods($NS).Watch($CTX, metav1.ListOptions{
+                ...,
+                LabelSelector: fmt.Sprintf("job-name=%s", $JOB),
+                ...,
+              })

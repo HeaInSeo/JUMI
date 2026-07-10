@@ -1,0 +1,42 @@
+name: Semgrep
+
+on:
+  push:
+    paths:
+      - ".github/workflows/semgrep.yml"
+      - ".semgrep/**"
+      - "Makefile"
+      - "cmd/**/*.go"
+      - "pkg/**/*.go"
+  pull_request:
+    paths:
+      - ".github/workflows/semgrep.yml"
+      - ".semgrep/**"
+      - "Makefile"
+      - "cmd/**/*.go"
+      - "pkg/**/*.go"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: semgrep-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semgrep:
+    name: Run JUMI custom rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: semgrep/semgrep
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Semgrep rule fixtures
+        run: semgrep --test .semgrep/rules
+
+      - name: Run Semgrep
+        run: semgrep scan --config .semgrep/rules --error --metrics=off cmd pkg

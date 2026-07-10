@@ -1,0 +1,19 @@
+rules:
+  - id: jumi-no-job-delete-without-uid-preconditions
+    languages: [go]
+    severity: ERROR
+    message: >
+      Deleting a Kubernetes Job by name without DeleteOptions.Preconditions can
+      delete a same-name replacement Job from a different attempt. Use
+      deletePreconditions(ref) or an equivalent UID precondition.
+    patterns:
+      - pattern: |
+          $CLIENT.BatchV1().Jobs($NS).Delete($CTX, $NAME, metav1.DeleteOptions{
+            ...,
+          })
+      - pattern-not: |
+          $CLIENT.BatchV1().Jobs($NS).Delete($CTX, $NAME, metav1.DeleteOptions{
+            ...,
+            Preconditions: $PRE,
+            ...,
+          })

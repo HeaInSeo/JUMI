@@ -1,0 +1,17 @@
+rules:
+  - id: jumi-no-direct-podspec-nodename
+    languages: [go]
+    severity: ERROR
+    message: >
+      Do not set Kubernetes PodSpec.NodeName directly. Direct nodeName binding
+      bypasses the scheduler. JUMI hard placement must use RequiredNodeName,
+      which materializes as nodeSelector["kubernetes.io/hostname"].
+    patterns:
+      - pattern-either:
+          - pattern: |
+              corev1.PodSpec{
+                ...,
+                NodeName: $NODE,
+                ...,
+              }
+          - pattern: $P.Spec.NodeName = $NODE

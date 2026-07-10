@@ -140,8 +140,26 @@ check_backend_adapter_contract() {
 check_ci_contract() {
   echo "== CI guardrails =="
   require_file .github/workflows/quality-guardrails.yml
+  require_file .github/workflows/kube-linter.yml
+  require_file .github/workflows/semgrep.yml
   require_grep 'bash hack/quality-guardrails\.sh' .github/workflows/quality-guardrails.yml \
     "quality guardrails workflow runs the guardrail script"
+  require_grep '\.github/workflows/kube-linter\.yml' .github/workflows/quality-guardrails.yml \
+    "quality guardrails workflow runs when kube-linter workflow changes"
+  require_grep '\.github/workflows/semgrep\.yml' .github/workflows/quality-guardrails.yml \
+    "quality guardrails workflow runs when Semgrep workflow changes"
+  require_grep 'deploy/k8s/\*\*' .github/workflows/quality-guardrails.yml \
+    "quality guardrails workflow runs when deploy manifests change"
+  require_grep 'go install golang\.stackrox\.io/kube-linter/cmd/kube-linter@v0\.8\.3' .github/workflows/kube-linter.yml \
+    "kube-linter workflow installs pinned kube-linter into project bin"
+  require_grep 'make kube-linter' .github/workflows/kube-linter.yml \
+    "kube-linter workflow runs Makefile target"
+  require_grep '\.semgrep/\*\*' .github/workflows/quality-guardrails.yml \
+    "quality guardrails workflow runs when Semgrep rules change"
+  require_grep 'semgrep --test \.semgrep/rules' .github/workflows/semgrep.yml \
+    "Semgrep workflow validates rule fixtures"
+  require_grep 'semgrep scan --config \.semgrep/rules --error' .github/workflows/semgrep.yml \
+    "Semgrep workflow runs custom rules as blocking checks"
   require_grep 'go mod tidy' .github/workflows/test.yml \
     "test workflow verifies go mod tidy drift"
   require_grep 'git diff --exit-code go\.mod go\.sum' .github/workflows/test.yml \
@@ -154,11 +172,36 @@ check_ci_contract() {
     "sprint baseline creates node-artifact-runtime TMPDIR"
 }
 
+check_semgrep_contract() {
+  echo "== Semgrep guardrails =="
+  require_file .semgrepignore
+  require_file .semgrep/rules/jumi-no-direct-podspec-nodename.yaml
+  require_file .semgrep/rules/jumi-no-job-name-only-pod-watch.yaml
+  require_file .semgrep/rules/jumi-no-job-delete-without-uid-preconditions.yaml
+  require_grep 'jumi-no-direct-podspec-nodename' .semgrep/rules/jumi-no-direct-podspec-nodename.yaml \
+    "Semgrep blocks direct PodSpec.NodeName binding"
+  require_grep 'jumi-no-job-name-only-pod-watch' .semgrep/rules/jumi-no-job-name-only-pod-watch.yaml \
+    "Semgrep blocks job-name-only Pod watches"
+  require_grep 'jumi-no-job-delete-without-uid-preconditions' .semgrep/rules/jumi-no-job-delete-without-uid-preconditions.yaml \
+    "Semgrep blocks Job delete without UID preconditions"
+  require_grep 'SEMGREP \?= \$\(LOCALBIN\)/semgrep' Makefile \
+    "Makefile uses project-local Semgrep binary"
+  require_grep 'KUBE_LINTER \?= \$\(LOCALBIN\)/kube-linter' Makefile \
+    "Makefile uses project-local kube-linter binary"
+  require_grep '"\$\(SEMGREP\)" scan --config \.semgrep/rules --error' Makefile \
+    "Makefile exposes blocking Semgrep scan"
+  require_grep '"\$\(SEMGREP\)" --test \.semgrep/rules' Makefile \
+    "Makefile exposes Semgrep fixture tests"
+  require_grep '"\$\(KUBE_LINTER\)" lint deploy/k8s' Makefile \
+    "Makefile exposes blocking kube-linter scan"
+}
+
 check_source_of_truth
 check_spawner_label_contract
 check_spec_validation_contract
 check_backend_adapter_contract
 check_ci_contract
+check_semgrep_contract
 
 if (( failures > 0 )); then
   echo "quality guardrails failed: ${failures} issue(s)"

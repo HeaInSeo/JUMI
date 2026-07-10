@@ -13,6 +13,9 @@ GOLANGCI_LINT_VERSION := v2.11.3
 GOVULNCHECK := $(LOCALBIN)/govulncheck
 GOVULNCHECK_VERSION := v1.1.4
 
+SEMGREP ?= $(LOCALBIN)/semgrep
+KUBE_LINTER ?= $(LOCALBIN)/kube-linter
+
 GOENV := GOCACHE="$(GOCACHE_DIR)" GOTMPDIR="$(GOTMPDIR_DIR)"
 GOENV_SMOKE := GOCACHE="$(GOCACHE_DIR)" GOTMPDIR="$(GOTMPDIR_DIR)" GOMODCACHE="$(GOMODCACHE_DIR)"
 AH_PROTO_DIR ?= ../artifact-handoff/api/proto/ahv1
@@ -32,7 +35,7 @@ AH_GRPC_TARGET ?=
 AH_HTTP_URL ?=
 SAMPLE_RUN_ID ?=
 
-.PHONY: test test-regression coverage coverage-check fmt vet lint lint-depguard lint-security quality-guardrails vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-align-check runtime-smoke-remote ko-publish-remote ko-smoke-remote verify-sprint-3d-baseline verify-sprint-3d-remote lifecycle-check
+.PHONY: test test-regression coverage coverage-check fmt vet lint lint-depguard lint-security semgrep semgrep-test kube-linter quality-guardrails vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-align-check runtime-smoke-remote ko-publish-remote ko-smoke-remote verify-sprint-3d-baseline verify-sprint-3d-remote lifecycle-check
 
 REMOTE_SSH_TARGET ?= seoy@100.123.80.48
 REGISTRY_HOST ?= harbor.10.113.24.96.nip.io
@@ -122,6 +125,27 @@ lint-security: golangci-lint
 	$(GOENV) $(GOLANGCI_LINT) run --enable-only gosec $(PKGS_SECURITY) \
 	| tee "$(REPORT_DIR)/gosec.txt"; \
 	echo "gosec_exit=$$?" | tee -a "$(REPORT_DIR)/lint-security-summary.txt"
+
+semgrep:
+	@test -x "$(SEMGREP)" || { \
+		echo "semgrep not found at $(SEMGREP). Put the semgrep executable in ./bin or use the CI container."; \
+		exit 1; \
+	}
+	"$(SEMGREP)" scan --config .semgrep/rules --error --metrics=off cmd pkg
+
+semgrep-test:
+	@test -x "$(SEMGREP)" || { \
+		echo "semgrep not found at $(SEMGREP). Put the semgrep executable in ./bin or use the CI container."; \
+		exit 1; \
+	}
+	"$(SEMGREP)" --test .semgrep/rules
+
+kube-linter:
+	@test -x "$(KUBE_LINTER)" || { \
+		echo "kube-linter not found at $(KUBE_LINTER). Put the kube-linter executable in ./bin or use CI installation."; \
+		exit 1; \
+	}
+	"$(KUBE_LINTER)" lint deploy/k8s
 
 quality-guardrails:
 	bash hack/quality-guardrails.sh
