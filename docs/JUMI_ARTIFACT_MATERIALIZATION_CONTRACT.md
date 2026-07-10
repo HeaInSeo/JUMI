@@ -136,6 +136,22 @@ This allows artifact-handoff to choose an execution-specific materialization
 candidate after Kubernetes placement is known. The initial resolve still must be
 valid enough to submit the child attempt safely.
 
+In Patch 2B this post-scheduling resolve is observation-only. It records the
+actual-node decision for telemetry and future materializer integration, but it
+does not mutate the already-submitted Pod environment, JobSpec, or runtime
+materialization plan. JUMI emits:
+
+```text
+node.input_post_scheduling_resolved
+observationOnly=true
+runtimeEnvUpdated=false
+```
+
+If a later materializer or init workload needs to consume the post-scheduling
+decision, that workload must fetch a fresh plan after the Pod node is known.
+The executor must not pretend that a post-scheduling resolve has changed the
+environment variables already rendered into the child attempt.
+
 ## Environment Contract
 
 For each resolved input, JUMI injects environment variables with this shape:
@@ -171,4 +187,5 @@ unsafe materialization localPath values fail before backend submission.
 preferred locality remains a soft scheduling hint.
 required locality maps to hard nodeSelector placement.
 post-scheduling resolve can refine materialization after Pod node observation.
+post-scheduling resolve is observation-only until a runtime materializer consumes it.
 ```

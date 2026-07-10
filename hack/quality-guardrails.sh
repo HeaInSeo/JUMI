@@ -78,13 +78,21 @@ check_source_of_truth() {
     "materialization contract documents remote fetch"
   require_grep 'Post-Scheduling Resolve' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
     "materialization contract documents post-scheduling resolve"
+  require_grep 'observation-only' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
+    "materialization contract documents post-scheduling observation-only scope"
 }
 
 check_spawner_label_contract() {
   echo "== spawner label contract guardrails =="
   local file="pkg/spawner/k8s_jobclient.go"
   local test_file="pkg/spawner/k8s_jobclient_test.go"
+  local fixture_file="pkg/spawner/testdata/k8s-job-main-attempt.golden.yaml"
 
+  require_file "$fixture_file"
+  require_grep 'APIVersion: "batch/v1"' "$file" \
+    "spawner renders Job TypeMeta apiVersion"
+  require_grep 'Kind:[[:space:]]+"Job"' "$file" \
+    "spawner renders Job TypeMeta kind"
   require_grep 'labelRunKey[[:space:]]+= "jumi\.io/run-key"' "$file" \
     "spawner defines run-key label constant"
   require_grep 'labelNodeKey[[:space:]]+= "jumi\.io/node-key"' "$file" \
@@ -122,6 +130,26 @@ check_spawner_label_contract() {
     "unit test covers Pod watch identity selector"
   require_grep 'TestPodIdentityFilterRejectsStaleAttempt' "$test_file" \
     "unit test covers stale Pod identity filtering"
+  require_grep 'TestRenderedK8sJobGoldenFixture' "$test_file" \
+    "unit test guards rendered Job YAML fixture drift"
+  require_grep 'UPDATE_GOLDEN=1 go test ./pkg/spawner -run TestRenderedK8sJobGoldenFixture' "$test_file" \
+    "golden fixture has explicit update command"
+  require_grep 'apiVersion: batch/v1' "$fixture_file" \
+    "rendered Job fixture includes apiVersion"
+  require_grep 'kind: Job' "$fixture_file" \
+    "rendered Job fixture includes kind"
+  require_grep 'jumi\.io/run-key' "$fixture_file" \
+    "rendered Job fixture includes run-key label"
+  require_grep 'jumi\.io/node-key' "$fixture_file" \
+    "rendered Job fixture includes node-key label"
+  require_grep 'jumi\.io/attempt-id' "$fixture_file" \
+    "rendered Job fixture includes attempt-id label"
+  require_grep 'JUMI_INPUT_ALIGNED_BAM_MATERIALIZATION_MODE' "$fixture_file" \
+    "rendered Job fixture includes materialization env"
+  require_grep 'preferredDuringSchedulingIgnoredDuringExecution' "$fixture_file" \
+    "rendered Job fixture includes preferred node affinity"
+  require_grep 'persistentVolumeClaim' "$fixture_file" \
+    "rendered Job fixture includes PVC volume"
 }
 
 check_spec_validation_contract() {

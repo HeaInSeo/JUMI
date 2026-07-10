@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -411,6 +412,10 @@ func buildK8sJob(req spruntime.JobCreateRequest) *batchv1.Job {
 	}
 
 	return &batchv1.Job{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "batch/v1",
+			Kind:       "Job",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        req.JobName,
 			Namespace:   req.Namespace,
@@ -601,9 +606,14 @@ func buildEnvVars(env map[string]string) []corev1.EnvVar {
 	if len(env) == 0 {
 		return nil
 	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
 	vars := make([]corev1.EnvVar, 0, len(env))
-	for k, v := range env {
-		vars = append(vars, corev1.EnvVar{Name: k, Value: v})
+	for _, k := range keys {
+		vars = append(vars, corev1.EnvVar{Name: k, Value: env[k]})
 	}
 	return vars
 }

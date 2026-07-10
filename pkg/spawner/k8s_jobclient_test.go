@@ -2,6 +2,8 @@ package spawner
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
+	"sigs.k8s.io/yaml"
 )
 
 func TestBuildK8sJobSetsTerminationGracePeriod(t *testing.T) {
@@ -121,6 +124,68 @@ func TestBuildK8sJobAppliesIdentityLabelContract(t *testing.T) {
 	}
 	if job.Spec.Template.Annotations[annotationTraceID] != "trace-1" {
 		t.Fatalf("trace-id pod annotation = %q, want trace-1", job.Spec.Template.Annotations[annotationTraceID])
+	}
+}
+
+func TestRenderedK8sJobGoldenFixture(t *testing.T) {
+	job := buildK8sJob(spruntime.JobCreateRequest{
+		AttemptRequest: spruntime.AttemptRequest{
+			AttemptID:          "attempt-0002",
+			RunID:              "run-2026-07-09-8c1f9c4a9d2e",
+			CorrelationID:      "trace-7f9c4d2a",
+			ImageRef:           "registry.example.com/jumi/samtools@sha256:abc",
+			Command:            []string{"samtools", "sort", "/input/aligned.bam", "-o", "/output/sorted.bam"},
+			ServiceAccountName: "jumi-node-runner",
+			Env: map[string]string{
+				"JUMI_RUN_ID":                     "run-2026-07-09-8c1f9c4a9d2e",
+				"JUMI_NODE_ID":                    "sort-bam-after-bwa-align",
+				"JUMI_ATTEMPT_ID":                 "attempt-0002",
+				"JUMI_INPUT_ALIGNED_BAM_DECISION": "remote_fetch",
+				"JUMI_INPUT_ALIGNED_BAM_MATERIALIZATION_MODE":     "remote_fetch",
+				"JUMI_INPUT_ALIGNED_BAM_PLACEMENT_MODE":           "preferred_node",
+				"JUMI_INPUT_ALIGNED_BAM_REQUIRES_MATERIALIZATION": "true",
+				"JUMI_INPUT_ALIGNED_BAM_SOURCE_NODE":              "worker-1",
+				"JUMI_INPUT_ALIGNED_BAM_URI":                      "http://artifact.local/aligned.bam",
+			},
+			Resources: spruntime.Resources{CPU: "2", Memory: "4Gi"},
+			Mounts: []spruntime.Mount{
+				{Kind: spruntime.MountKindPVC, Source: "jumi-run01-input", Target: "/input", ReadOnly: true},
+				{Kind: spruntime.MountKindPVC, Source: "jumi-run01-output", Target: "/output"},
+			},
+			Placement: &spruntime.Placement{
+				NodeSelector: map[string]string{"disk": "nvme"},
+				PreferredNodes: []spruntime.PreferredNode{
+					{NodeName: "worker-1", Weight: 100},
+				},
+			},
+			UserLabels: map[string]string{
+				labelKueueQueueName:    "gpu-batch",
+				"user.jumi.io/project": "cancer-pipeline",
+				"user.jumi.io/team":    "genomics",
+			},
+			Cleanup: spruntime.CleanupPolicy{TTLSecondsAfterFinished: 3600},
+		},
+		JobName:       "jumi-run01-node-sortbam-attempt-0002",
+		Namespace:     "jumi-runs",
+		AttemptMarker: "attempt-0002-9f31a7",
+	})
+
+	rendered, err := yaml.Marshal(job)
+	if err != nil {
+		t.Fatalf("marshal job fixture: %v", err)
+	}
+	path := filepath.Join("testdata", "k8s-job-main-attempt.golden.yaml")
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		if err := os.WriteFile(path, rendered, 0o644); err != nil {
+			t.Fatalf("update golden fixture: %v", err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read golden fixture: %v", err)
+	}
+	if string(rendered) != string(want) {
+		t.Fatalf("rendered Job YAML drifted from %s\n\nUpdate intentionally with:\nUPDATE_GOLDEN=1 go test ./pkg/spawner -run TestRenderedK8sJobGoldenFixture", path)
 	}
 }
 

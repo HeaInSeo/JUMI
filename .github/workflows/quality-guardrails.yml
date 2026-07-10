@@ -19,6 +19,7 @@ on:
       - "pkg/backend/spawner_k8s_test.go"
       - "pkg/spawner/k8s_jobclient.go"
       - "pkg/spawner/k8s_jobclient_test.go"
+      - "pkg/spawner/testdata/**"
       - "pkg/spec/validate.go"
       - "pkg/spec/validate_test.go"
   pull_request:
@@ -39,6 +40,7 @@ on:
       - "pkg/backend/spawner_k8s_test.go"
       - "pkg/spawner/k8s_jobclient.go"
       - "pkg/spawner/k8s_jobclient_test.go"
+      - "pkg/spawner/testdata/**"
       - "pkg/spec/validate.go"
       - "pkg/spec/validate_test.go"
   workflow_dispatch:

@@ -1,0 +1,114 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  annotations:
+    jumi.io/attempt-id: attempt-0002
+    jumi.io/attempt-marker: attempt-0002-9f31a7
+    jumi.io/node-id: sort-bam-after-bwa-align
+    jumi.io/run-id: run-2026-07-09-8c1f9c4a9d2e
+    jumi.io/trace-id: trace-7f9c4d2a
+  labels:
+    app.kubernetes.io/component: node-attempt
+    app.kubernetes.io/managed-by: jumi-spawner
+    app.kubernetes.io/name: jumi
+    jumi.io/attempt-id: attempt-0002
+    jumi.io/node-key: sort-bam-after-bwa-align
+    jumi.io/run-key: run-2026-07-09-8c1f9c4a9d2e
+    jumi.io/workload-role: main
+    kueue.x-k8s.io/queue-name: gpu-batch
+    spawner.io/attempt-marker: attempt-0002-9f31a7
+    user.jumi.io/project: cancer-pipeline
+    user.jumi.io/team: genomics
+  name: jumi-run01-node-sortbam-attempt-0002
+  namespace: jumi-runs
+spec:
+  backoffLimit: 0
+  suspend: true
+  template:
+    metadata:
+      annotations:
+        jumi.io/attempt-id: attempt-0002
+        jumi.io/attempt-marker: attempt-0002-9f31a7
+        jumi.io/node-id: sort-bam-after-bwa-align
+        jumi.io/run-id: run-2026-07-09-8c1f9c4a9d2e
+        jumi.io/trace-id: trace-7f9c4d2a
+      labels:
+        app.kubernetes.io/component: node-attempt
+        app.kubernetes.io/managed-by: jumi-spawner
+        app.kubernetes.io/name: jumi
+        jumi.io/attempt-id: attempt-0002
+        jumi.io/node-key: sort-bam-after-bwa-align
+        jumi.io/run-key: run-2026-07-09-8c1f9c4a9d2e
+        jumi.io/workload-role: main
+        kueue.x-k8s.io/queue-name: gpu-batch
+        spawner.io/attempt-marker: attempt-0002-9f31a7
+        user.jumi.io/project: cancer-pipeline
+        user.jumi.io/team: genomics
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - preference:
+              matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                - worker-1
+            weight: 100
+      containers:
+      - command:
+        - samtools
+        - sort
+        - /input/aligned.bam
+        - -o
+        - /output/sorted.bam
+        env:
+        - name: JUMI_ATTEMPT_ID
+          value: attempt-0002
+        - name: JUMI_INPUT_ALIGNED_BAM_DECISION
+          value: remote_fetch
+        - name: JUMI_INPUT_ALIGNED_BAM_MATERIALIZATION_MODE
+          value: remote_fetch
+        - name: JUMI_INPUT_ALIGNED_BAM_PLACEMENT_MODE
+          value: preferred_node
+        - name: JUMI_INPUT_ALIGNED_BAM_REQUIRES_MATERIALIZATION
+          value: "true"
+        - name: JUMI_INPUT_ALIGNED_BAM_SOURCE_NODE
+          value: worker-1
+        - name: JUMI_INPUT_ALIGNED_BAM_URI
+          value: http://artifact.local/aligned.bam
+        - name: JUMI_NODE_ID
+          value: sort-bam-after-bwa-align
+        - name: JUMI_RUN_ID
+          value: run-2026-07-09-8c1f9c4a9d2e
+        image: registry.example.com/jumi/samtools@sha256:abc
+        imagePullPolicy: IfNotPresent
+        name: main
+        resources:
+          limits:
+            cpu: "2"
+            memory: 4Gi
+          requests:
+            cpu: "2"
+            memory: 4Gi
+        volumeMounts:
+        - mountPath: /input
+          name: vol-0
+          readOnly: true
+        - mountPath: /output
+          name: vol-1
+      nodeSelector:
+        disk: nvme
+      restartPolicy: Never
+      serviceAccountName: jumi-node-runner
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: vol-0
+        persistentVolumeClaim:
+          claimName: jumi-run01-input
+          readOnly: true
+      - name: vol-1
+        persistentVolumeClaim:
+          claimName: jumi-run01-output
+  ttlSecondsAfterFinished: 3600
+status: {}

@@ -1501,6 +1501,7 @@ func TestDagEnginePostSchedulingResolveUsesActualPodNode(t *testing.T) {
 	}
 
 	assertEventTypePresent(t, reg, record.RunID, "node.input_post_scheduling_resolved")
+	assertEventMessageContains(t, reg, record.RunID, "node.input_post_scheduling_resolved", "observationOnly=true runtimeEnvUpdated=false")
 }
 
 func TestDagEngineCancelRunningNode(t *testing.T) {
@@ -1668,6 +1669,20 @@ func assertEventTypePresent(t *testing.T, reg registry.Registry, runID string, e
 		}
 	}
 	t.Fatalf("event type=%q not found", eventType)
+}
+
+func assertEventMessageContains(t *testing.T, reg registry.Registry, runID string, eventType string, want string) {
+	t.Helper()
+	events, err := reg.ListEvents(context.Background(), runID, 0)
+	if err != nil {
+		t.Fatalf("ListEvents() error = %v", err)
+	}
+	for _, event := range events {
+		if event.Type == eventType && strings.Contains(event.Message, want) {
+			return
+		}
+	}
+	t.Fatalf("event type=%q message containing %q not found", eventType, want)
 }
 
 // persistableAdapter wraps fakeAdapter and implements backend.HandlePersister.

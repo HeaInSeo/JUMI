@@ -1033,7 +1033,7 @@ func (r *nodeRunner) resolvePostSchedulingBindings(ctx context.Context, attemptI
 			OccurredAt: time.Now().UTC(),
 			Level:      "info",
 			Message: fmt.Sprintf(
-				"binding=%s targetNode=%s decision=%s status=%s materialization=%s initialDecision=%s initialMaterialization=%s",
+				"binding=%s targetNode=%s decision=%s status=%s materialization=%s initialDecision=%s initialMaterialization=%s observationOnly=true runtimeEnvUpdated=false",
 				bindingName,
 				targetNodeName,
 				resolved.Decision,
