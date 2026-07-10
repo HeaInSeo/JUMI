@@ -46,6 +46,7 @@ reject_grep() {
 check_source_of_truth() {
   echo "== source-of-truth guardrails =="
   require_file docs/JUMI_K8S_JOB_LABEL_CONTRACT.md
+  require_file docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md
   require_file docs/JUMI_DESIGN.ko.md
   require_file docs/JUMI_SCHEDULER_BOUNDARY.ko.md
 
@@ -65,6 +66,18 @@ check_source_of_truth() {
     "label contract documents UID mismatch snapshot behavior"
   require_grep 'Pod event whose identity labels do not match' docs/JUMI_K8S_JOB_LABEL_CONTRACT.md \
     "label contract documents stale Pod event rejection"
+  require_grep 'input_materialization_contract_invalid' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
+    "materialization contract documents fail-fast reason"
+  require_grep 'preferred_node' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
+    "materialization contract documents preferred locality"
+  require_grep 'required_node' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
+    "materialization contract documents required locality"
+  require_grep 'local_reuse' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
+    "materialization contract documents local reuse"
+  require_grep 'remote_fetch' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
+    "materialization contract documents remote fetch"
+  require_grep 'Post-Scheduling Resolve' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
+    "materialization contract documents post-scheduling resolve"
 }
 
 check_spawner_label_contract() {
@@ -137,6 +150,35 @@ check_backend_adapter_contract() {
     "backend adapter test guards legacy label removal"
 }
 
+check_materialization_contract() {
+  echo "== artifact materialization guardrails =="
+  local file="pkg/executor/executor.go"
+  local test_file="pkg/executor/executor_test.go"
+
+  require_grep 'validateResolvedBindingContract' "$file" \
+    "executor validates resolved materialization contract"
+  require_grep 'input_materialization_contract_invalid' "$file" \
+    "executor fails invalid materialization contracts with stable reason"
+  require_grep 'placementModePreferredNode[[:space:]]+= "preferred_node"' "$file" \
+    "executor defines preferred_node placement mode"
+  require_grep 'placementModeRequiredNode[[:space:]]+= "required_node"' "$file" \
+    "executor defines required_node placement mode"
+  require_grep 'materializationModeLocalReuse[[:space:]]+= "local_reuse"' "$file" \
+    "executor defines local_reuse materialization mode"
+  require_grep 'materializationModeRemoteFetch[[:space:]]+= "remote_fetch"' "$file" \
+    "executor defines remote_fetch materialization mode"
+  require_grep 'TestValidateResolvedBindingContractAcceptsPreferredRemoteFetch' "$test_file" \
+    "unit test covers preferred remote_fetch contract"
+  require_grep 'TestValidateResolvedBindingContractRejectsPlacementWithoutNode' "$test_file" \
+    "unit test covers placement nodeName requirement"
+  require_grep 'TestValidateResolvedBindingContractRejectsLocalReuseWithoutNodeLocalSource' "$test_file" \
+    "unit test covers local_reuse source requirement"
+  require_grep 'TestValidateResolvedBindingContractRejectsRemoteFetchWithoutSource' "$test_file" \
+    "unit test covers remote_fetch source requirement"
+  require_grep 'TestValidateResolvedBindingContractRejectsUnsafeLocalPath' "$test_file" \
+    "unit test covers localPath safety"
+}
+
 check_ci_contract() {
   echo "== CI guardrails =="
   require_file .github/workflows/quality-guardrails.yml
@@ -200,6 +242,7 @@ check_source_of_truth
 check_spawner_label_contract
 check_spec_validation_contract
 check_backend_adapter_contract
+check_materialization_contract
 check_ci_contract
 check_semgrep_contract
 

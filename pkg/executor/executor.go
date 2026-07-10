@@ -518,6 +518,15 @@ const hostnameNodeSelectorKey = "kubernetes.io/hostname"
 
 const defaultNanShutdownGracePeriod = "25s"
 
+const (
+	placementModePreferredNode = "preferred_node"
+	placementModeRequiredNode  = "required_node"
+
+	materializationModeNone        = "none"
+	materializationModeLocalReuse  = "local_reuse"
+	materializationModeRemoteFetch = "remote_fetch"
+)
+
 func (r *nodeRunner) RunE(ctx context.Context, a interface{}) error {
 	if r.node.TimeoutPolicy.Seconds > 0 {
 		var cancel context.CancelFunc
@@ -1325,7 +1334,7 @@ func applyPlacementHints(node *spec.Node, hints []bindingLocalityHint) error {
 	hasPreferred := false
 	for _, hint := range hints {
 		switch hint.PlacementMode {
-		case "required_node":
+		case placementModeRequiredNode:
 			if strings.TrimSpace(hint.PreferredNodeName) == "" {
 				continue
 			}
@@ -1336,7 +1345,7 @@ func applyPlacementHints(node *spec.Node, hints []bindingLocalityHint) error {
 			if requiredNode != hint.PreferredNodeName {
 				return fmt.Errorf("conflicting required_node placement intents: %s vs %s", requiredNode, hint.PreferredNodeName)
 			}
-		case "preferred_node":
+		case placementModePreferredNode:
 			if strings.TrimSpace(hint.PreferredNodeName) != "" {
 				hasPreferred = true
 			}
@@ -1368,7 +1377,7 @@ func applyPlacementHints(node *spec.Node, hints []bindingLocalityHint) error {
 	preferred := make([]spec.WeightedNodePreference, 0, len(hints))
 	seen := map[string]struct{}{}
 	for _, hint := range hints {
-		if hint.PlacementMode != "preferred_node" || strings.TrimSpace(hint.PreferredNodeName) == "" {
+		if hint.PlacementMode != placementModePreferredNode || strings.TrimSpace(hint.PreferredNodeName) == "" {
 			continue
 		}
 		if _, ok := seen[hint.PreferredNodeName]; ok {
@@ -1397,7 +1406,7 @@ func recordPlacementHintApplication(ctx context.Context, reg registry.Registry, 
 	for _, hint := range hints {
 		bindingName := util.FirstNonEmpty(hint.ChildInputName, hint.BindingName)
 		switch hint.PlacementMode {
-		case "required_node":
+		case placementModeRequiredNode:
 			if appliedRequired == hint.PreferredNodeName && appliedRequired != "" {
 				appendEvent(ctx, reg, spec.EventRecord{
 					RunID:      runID,
@@ -1409,7 +1418,7 @@ func recordPlacementHintApplication(ctx context.Context, reg registry.Registry, 
 					Message:    fmt.Sprintf("binding=%s nodeSelector[%s]=%s", bindingName, hostnameNodeSelectorKey, appliedRequired),
 				})
 			}
-		case "preferred_node":
+		case placementModePreferredNode:
 			appendEvent(ctx, reg, spec.EventRecord{
 				RunID:      runID,
 				NodeID:     nodeID,
@@ -1497,6 +1506,46 @@ func classifyResolvedBinding(binding spec.ArtifactBinding, resolved handoff.Reso
 	default:
 		return resolveFail, "input_resolution_unknown_status"
 	}
+}
+
+func validateResolvedBindingContract(binding spec.ArtifactBinding, resolved handoff.ResolveBindingResponse) error {
+	if mode := strings.TrimSpace(resolved.PlacementIntent.Mode); mode != "" {
+		switch mode {
+		case placementModePreferredNode, placementModeRequiredNode:
+			if strings.TrimSpace(resolved.PlacementIntent.NodeName) == "" {
+				return fmt.Errorf("input_materialization_contract_invalid: binding %s placement mode %s requires nodeName", binding.BindingName, mode)
+			}
+		default:
+			return fmt.Errorf("input_materialization_contract_invalid: binding %s has unsupported placement mode %q", binding.BindingName, mode)
+		}
+	}
+	mode := strings.TrimSpace(resolved.MaterializationPlan.Mode)
+	if mode == "" {
+		mode = materializationModeNone
+	}
+	switch mode {
+	case materializationModeNone:
+		return nil
+	case materializationModeLocalReuse:
+		if resolved.MaterializationPlan.SourceLocation == nil || resolved.MaterializationPlan.SourceLocation.NodeLocal == nil {
+			return fmt.Errorf("input_materialization_contract_invalid: binding %s local_reuse requires nodeLocal source", binding.BindingName)
+		}
+		if strings.TrimSpace(resolved.MaterializationPlan.SourceLocation.NodeLocal.Path) == "" {
+			return fmt.Errorf("input_materialization_contract_invalid: binding %s local_reuse requires nodeLocal path", binding.BindingName)
+		}
+	case materializationModeRemoteFetch:
+		if strings.TrimSpace(resolved.MaterializationPlan.URI) == "" {
+			if resolved.MaterializationPlan.SourceLocation == nil || resolved.MaterializationPlan.SourceLocation.HTTP == nil || strings.TrimSpace(resolved.MaterializationPlan.SourceLocation.HTTP.URI) == "" {
+				return fmt.Errorf("input_materialization_contract_invalid: binding %s remote_fetch requires URI or HTTP source", binding.BindingName)
+			}
+		}
+	default:
+		return fmt.Errorf("input_materialization_contract_invalid: binding %s has unsupported materialization mode %q", binding.BindingName, mode)
+	}
+	if localPath := strings.TrimSpace(resolved.MaterializationPlan.LocalPath); localPath != "" && sanitizeResolvedLocalPath(localPath) == "" {
+		return fmt.Errorf("input_materialization_contract_invalid: binding %s has unsafe localPath %q", binding.BindingName, localPath)
+	}
+	return nil
 }
 
 func resolveFailureReason(err error) string {
@@ -1632,7 +1681,12 @@ func (r *nodeRunner) resolveBindingForExecution(ctx context.Context, req handoff
 		lastResolved = resolved
 		action, failureReason := classifyResolvedBinding(binding, resolved)
 		switch action {
-		case resolveProceed, resolveSkipOptional:
+		case resolveProceed:
+			if err := validateResolvedBindingContract(binding, resolved); err != nil {
+				return handoff.ResolveBindingResponse{}, err
+			}
+			return resolved, nil
+		case resolveSkipOptional:
 			return resolved, nil
 		case resolveFail:
 			return handoff.ResolveBindingResponse{}, fmt.Errorf("%s", failureReason)

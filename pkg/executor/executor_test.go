@@ -106,3 +106,83 @@ func TestValidateResolvedBindingEnvKeysRejectsCollisions(t *testing.T) {
 		t.Fatal("expected env key collision error")
 	}
 }
+
+func TestValidateResolvedBindingContractAcceptsPreferredRemoteFetch(t *testing.T) {
+	binding := spec.ArtifactBinding{BindingName: "dataset"}
+	resolved := handoff.ResolveBindingResponse{
+		ResolutionStatus: "RESOLVED",
+		PlacementIntent: handoff.PlacementIntent{
+			Mode:     placementModePreferredNode,
+			NodeName: "worker-1",
+		},
+		MaterializationPlan: handoff.MaterializationPlan{
+			Mode:           materializationModeRemoteFetch,
+			URI:            "http://artifact.local/dataset",
+			ExpectedDigest: "sha256:abc",
+			LocalPath:      "inputs/dataset",
+		},
+	}
+
+	if err := validateResolvedBindingContract(binding, resolved); err != nil {
+		t.Fatalf("validateResolvedBindingContract() error = %v", err)
+	}
+}
+
+func TestValidateResolvedBindingContractRejectsPlacementWithoutNode(t *testing.T) {
+	binding := spec.ArtifactBinding{BindingName: "dataset"}
+	resolved := handoff.ResolveBindingResponse{
+		ResolutionStatus: "RESOLVED",
+		PlacementIntent:  handoff.PlacementIntent{Mode: placementModeRequiredNode},
+		MaterializationPlan: handoff.MaterializationPlan{
+			Mode: materializationModeNone,
+		},
+	}
+
+	if err := validateResolvedBindingContract(binding, resolved); err == nil {
+		t.Fatal("expected placement contract error")
+	}
+}
+
+func TestValidateResolvedBindingContractRejectsLocalReuseWithoutNodeLocalSource(t *testing.T) {
+	binding := spec.ArtifactBinding{BindingName: "dataset"}
+	resolved := handoff.ResolveBindingResponse{
+		ResolutionStatus: "RESOLVED",
+		MaterializationPlan: handoff.MaterializationPlan{
+			Mode: materializationModeLocalReuse,
+		},
+	}
+
+	if err := validateResolvedBindingContract(binding, resolved); err == nil {
+		t.Fatal("expected local_reuse contract error")
+	}
+}
+
+func TestValidateResolvedBindingContractRejectsRemoteFetchWithoutSource(t *testing.T) {
+	binding := spec.ArtifactBinding{BindingName: "dataset"}
+	resolved := handoff.ResolveBindingResponse{
+		ResolutionStatus: "RESOLVED",
+		MaterializationPlan: handoff.MaterializationPlan{
+			Mode: materializationModeRemoteFetch,
+		},
+	}
+
+	if err := validateResolvedBindingContract(binding, resolved); err == nil {
+		t.Fatal("expected remote_fetch contract error")
+	}
+}
+
+func TestValidateResolvedBindingContractRejectsUnsafeLocalPath(t *testing.T) {
+	binding := spec.ArtifactBinding{BindingName: "dataset"}
+	resolved := handoff.ResolveBindingResponse{
+		ResolutionStatus: "RESOLVED",
+		MaterializationPlan: handoff.MaterializationPlan{
+			Mode:      materializationModeRemoteFetch,
+			URI:       "http://artifact.local/dataset",
+			LocalPath: "../escape",
+		},
+	}
+
+	if err := validateResolvedBindingContract(binding, resolved); err == nil {
+		t.Fatal("expected unsafe localPath contract error")
+	}
+}
