@@ -67,6 +67,12 @@ spec:
           value: attempt-0002
         - name: JUMI_INPUT_ALIGNED_BAM_DECISION
           value: remote_fetch
+        - name: JUMI_INPUT_ALIGNED_BAM_EXPECTED_DIGEST
+          value: sha256:abc
+        - name: JUMI_INPUT_ALIGNED_BAM_EXPECTED_SIZE_BYTES
+          value: "128849018880"
+        - name: JUMI_INPUT_ALIGNED_BAM_LOCAL_PATH
+          value: inputs/aligned.bam
         - name: JUMI_INPUT_ALIGNED_BAM_MATERIALIZATION_MODE
           value: remote_fetch
         - name: JUMI_INPUT_ALIGNED_BAM_PLACEMENT_MODE

@@ -80,6 +80,12 @@ check_source_of_truth() {
     "materialization contract documents post-scheduling resolve"
   require_grep 'observation-only' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
     "materialization contract documents post-scheduling observation-only scope"
+  require_grep 'runtime materializer contract' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
+    "materialization contract documents runtime materializer env contract"
+  require_grep '_EXPECTED_SIZE_BYTES' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
+    "materialization contract documents expected size env suffix"
+  require_grep '_NODE_LOCAL_PATH' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
+    "materialization contract documents node-local path env suffix"
 }
 
 check_spawner_label_contract() {
@@ -146,6 +152,12 @@ check_spawner_label_contract() {
     "rendered Job fixture includes attempt-id label"
   require_grep 'JUMI_INPUT_ALIGNED_BAM_MATERIALIZATION_MODE' "$fixture_file" \
     "rendered Job fixture includes materialization env"
+  require_grep 'JUMI_INPUT_ALIGNED_BAM_EXPECTED_DIGEST' "$fixture_file" \
+    "rendered Job fixture includes expected digest env"
+  require_grep 'JUMI_INPUT_ALIGNED_BAM_EXPECTED_SIZE_BYTES' "$fixture_file" \
+    "rendered Job fixture includes expected size env"
+  require_grep 'JUMI_INPUT_ALIGNED_BAM_LOCAL_PATH' "$fixture_file" \
+    "rendered Job fixture includes local path env"
   require_grep 'preferredDuringSchedulingIgnoredDuringExecution' "$fixture_file" \
     "rendered Job fixture includes preferred node affinity"
   require_grep 'persistentVolumeClaim' "$fixture_file" \
@@ -176,6 +188,14 @@ check_backend_adapter_contract() {
     "backend adapter no longer emits legacy jumi/node-id label"
   require_grep 'TestToAttemptRequestDoesNotExposeLegacyJumiLabels' pkg/backend/spawner_k8s_test.go \
     "backend adapter test guards legacy label removal"
+  require_grep 'contractInputEnvSuffixes = \[\]string' pkg/backend/spawner_k8s.go \
+    "backend adapter has explicit node contract input env suffix allowlist"
+  require_grep '"_MATERIALIZATION_MODE"' pkg/backend/spawner_k8s.go \
+    "backend adapter parses materialization mode env"
+  require_grep '"_NODE_LOCAL_PATH"' pkg/backend/spawner_k8s.go \
+    "backend adapter parses node-local path env"
+  require_grep 'TestBuildNodeContractInputs_FullInput' pkg/backend/pure_logic_test.go \
+    "backend test covers full materialization node contract input"
 }
 
 check_materialization_contract() {
@@ -183,6 +203,18 @@ check_materialization_contract() {
   local file="pkg/executor/executor.go"
   local test_file="pkg/executor/executor_test.go"
 
+  require_grep 'materializationEnvPrefix[[:space:]]+= "JUMI_INPUT_"' "$file" \
+    "executor defines materialization env prefix"
+  require_grep 'materializationEnvSuffixMaterializationMode[[:space:]]+= "_MATERIALIZATION_MODE"' "$file" \
+    "executor defines materialization mode env suffix"
+  require_grep 'materializationEnvSuffixExpectedDigest[[:space:]]+= "_EXPECTED_DIGEST"' "$file" \
+    "executor defines expected digest env suffix"
+  require_grep 'materializationEnvSuffixExpectedSizeBytes[[:space:]]+= "_EXPECTED_SIZE_BYTES"' "$file" \
+    "executor defines expected size env suffix"
+  require_grep 'materializationEnvSuffixNodeLocalPath[[:space:]]+= "_NODE_LOCAL_PATH"' "$file" \
+    "executor defines node-local path env suffix"
+  require_grep 'materializationEnvKey' "$file" \
+    "executor builds materialization env keys through helper"
   require_grep 'validateResolvedBindingContract' "$file" \
     "executor validates resolved materialization contract"
   require_grep 'input_materialization_contract_invalid' "$file" \
@@ -205,6 +237,10 @@ check_materialization_contract() {
     "unit test covers remote_fetch source requirement"
   require_grep 'TestValidateResolvedBindingContractRejectsUnsafeLocalPath' "$test_file" \
     "unit test covers localPath safety"
+  require_grep 'TestInjectResolvedBindingEnvRemoteFetchContract' "$test_file" \
+    "unit test covers remote_fetch runtime env contract"
+  require_grep 'TestInjectResolvedBindingEnvLocalReuseContract' "$test_file" \
+    "unit test covers local_reuse runtime env contract"
 }
 
 check_ci_contract() {

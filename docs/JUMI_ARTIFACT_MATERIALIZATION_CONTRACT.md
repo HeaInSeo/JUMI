@@ -173,6 +173,44 @@ JUMI_INPUT_<NAME>_REQUIRES_MATERIALIZATION
 Input names must sanitize to unique environment key segments. Collisions fail
 before backend submission.
 
+The runtime materializer contract for supported modes is:
+
+```text
+none
+→ JUMI_INPUT_<NAME>_REQUIRES_MATERIALIZATION=false
+
+remote_fetch
+→ JUMI_INPUT_<NAME>_MATERIALIZATION_MODE=remote_fetch
+→ JUMI_INPUT_<NAME>_URI is required
+→ JUMI_INPUT_<NAME>_EXPECTED_DIGEST is strongly expected when AH provides it
+→ JUMI_INPUT_<NAME>_EXPECTED_SIZE_BYTES is optional
+→ JUMI_INPUT_<NAME>_LOCAL_PATH, when present, must be under inputs/
+
+local_reuse
+→ JUMI_INPUT_<NAME>_MATERIALIZATION_MODE=local_reuse
+→ JUMI_INPUT_<NAME>_NODE_LOCAL_PATH is required
+→ JUMI_INPUT_<NAME>_EXPECTED_DIGEST is strongly expected when AH provides it
+→ JUMI_INPUT_<NAME>_EXPECTED_SIZE_BYTES is optional
+→ JUMI_INPUT_<NAME>_LOCAL_PATH, when present, must be under inputs/
+```
+
+The backend adapter also converts these `JUMI_INPUT_*` variables into the node
+contract JSON consumed by the node runtime. The suffix set is intentionally
+small and guarded:
+
+```text
+_URI
+_EXPECTED_DIGEST
+_EXPECTED_SIZE_BYTES
+_MATERIALIZATION_MODE
+_NODE_LOCAL_PATH
+_LOCAL_PATH
+```
+
+Status, decision, placement, source node, and requires-materialization env vars
+are kept in the Pod environment for observability and compatibility. Runtime
+materialization execution should use the node contract JSON when available.
+
 ## Acceptance Criteria
 
 Patch 2 is complete when:
@@ -188,4 +226,5 @@ preferred locality remains a soft scheduling hint.
 required locality maps to hard nodeSelector placement.
 post-scheduling resolve can refine materialization after Pod node observation.
 post-scheduling resolve is observation-only until a runtime materializer consumes it.
+runtime materializer env suffixes are documented and guarded by tests.
 ```

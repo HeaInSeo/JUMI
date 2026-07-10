@@ -527,6 +527,21 @@ const (
 	materializationModeRemoteFetch = "remote_fetch"
 )
 
+const (
+	materializationEnvPrefix                    = "JUMI_INPUT_"
+	materializationEnvSuffixStatus              = "_STATUS"
+	materializationEnvSuffixDecision            = "_DECISION"
+	materializationEnvSuffixURI                 = "_URI"
+	materializationEnvSuffixSourceNode          = "_SOURCE_NODE"
+	materializationEnvSuffixPlacementMode       = "_PLACEMENT_MODE"
+	materializationEnvSuffixMaterializationMode = "_MATERIALIZATION_MODE"
+	materializationEnvSuffixExpectedDigest      = "_EXPECTED_DIGEST"
+	materializationEnvSuffixExpectedSizeBytes   = "_EXPECTED_SIZE_BYTES"
+	materializationEnvSuffixNodeLocalPath       = "_NODE_LOCAL_PATH"
+	materializationEnvSuffixLocalPath           = "_LOCAL_PATH"
+	materializationEnvSuffixRequiresMaterialize = "_REQUIRES_MATERIALIZATION"
+)
+
 func (r *nodeRunner) RunE(ctx context.Context, a interface{}) error {
 	if r.node.TimeoutPolicy.Seconds > 0 {
 		var cancel context.CancelFunc
@@ -1284,27 +1299,31 @@ func injectResolvedBindingEnv(node *spec.Node, binding spec.ArtifactBinding, res
 		node.Env = make(map[string]string)
 	}
 	keyBase := sanitizeEnvSegment(util.FirstNonEmpty(binding.ChildInputName, binding.BindingName, binding.ProducerOutputName))
-	node.Env["JUMI_INPUT_"+keyBase+"_STATUS"] = resolved.ResolutionStatus
-	node.Env["JUMI_INPUT_"+keyBase+"_DECISION"] = resolved.Decision
-	node.Env["JUMI_INPUT_"+keyBase+"_URI"] = resolved.MaterializationPlan.URI
-	node.Env["JUMI_INPUT_"+keyBase+"_SOURCE_NODE"] = resolved.PlacementIntent.NodeName
-	node.Env["JUMI_INPUT_"+keyBase+"_PLACEMENT_MODE"] = resolved.PlacementIntent.Mode
-	node.Env["JUMI_INPUT_"+keyBase+"_MATERIALIZATION_MODE"] = resolved.MaterializationPlan.Mode
-	node.Env["JUMI_INPUT_"+keyBase+"_EXPECTED_DIGEST"] = resolved.MaterializationPlan.ExpectedDigest
+	node.Env[materializationEnvKey(keyBase, materializationEnvSuffixStatus)] = resolved.ResolutionStatus
+	node.Env[materializationEnvKey(keyBase, materializationEnvSuffixDecision)] = resolved.Decision
+	node.Env[materializationEnvKey(keyBase, materializationEnvSuffixURI)] = resolved.MaterializationPlan.URI
+	node.Env[materializationEnvKey(keyBase, materializationEnvSuffixSourceNode)] = resolved.PlacementIntent.NodeName
+	node.Env[materializationEnvKey(keyBase, materializationEnvSuffixPlacementMode)] = resolved.PlacementIntent.Mode
+	node.Env[materializationEnvKey(keyBase, materializationEnvSuffixMaterializationMode)] = resolved.MaterializationPlan.Mode
+	node.Env[materializationEnvKey(keyBase, materializationEnvSuffixExpectedDigest)] = resolved.MaterializationPlan.ExpectedDigest
 	if resolved.MaterializationPlan.ExpectedSize > 0 {
-		node.Env["JUMI_INPUT_"+keyBase+"_EXPECTED_SIZE_BYTES"] = strconv.FormatInt(resolved.MaterializationPlan.ExpectedSize, 10)
+		node.Env[materializationEnvKey(keyBase, materializationEnvSuffixExpectedSizeBytes)] = strconv.FormatInt(resolved.MaterializationPlan.ExpectedSize, 10)
 	}
 	if resolved.MaterializationPlan.SourceLocation != nil && resolved.MaterializationPlan.SourceLocation.NodeLocal != nil {
-		node.Env["JUMI_INPUT_"+keyBase+"_NODE_LOCAL_PATH"] = resolved.MaterializationPlan.SourceLocation.NodeLocal.Path
+		node.Env[materializationEnvKey(keyBase, materializationEnvSuffixNodeLocalPath)] = resolved.MaterializationPlan.SourceLocation.NodeLocal.Path
 	}
 	if safeLocalPath := sanitizeResolvedLocalPath(resolved.MaterializationPlan.LocalPath); safeLocalPath != "" {
-		node.Env["JUMI_INPUT_"+keyBase+"_LOCAL_PATH"] = safeLocalPath
+		node.Env[materializationEnvKey(keyBase, materializationEnvSuffixLocalPath)] = safeLocalPath
 	}
 	if requiresMaterialization(resolved) {
-		node.Env["JUMI_INPUT_"+keyBase+"_REQUIRES_MATERIALIZATION"] = "true"
+		node.Env[materializationEnvKey(keyBase, materializationEnvSuffixRequiresMaterialize)] = "true"
 	} else {
-		node.Env["JUMI_INPUT_"+keyBase+"_REQUIRES_MATERIALIZATION"] = "false"
+		node.Env[materializationEnvKey(keyBase, materializationEnvSuffixRequiresMaterialize)] = "false"
 	}
+}
+
+func materializationEnvKey(base string, suffix string) string {
+	return materializationEnvPrefix + base + suffix
 }
 
 func injectRuntimeContextEnv(node *spec.Node, run spec.RunRecord, attemptID string) {

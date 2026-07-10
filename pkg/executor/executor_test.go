@@ -82,6 +82,93 @@ func TestInjectResolvedBindingEnvAddsExpectedSizeBytes(t *testing.T) {
 	}
 }
 
+func TestInjectResolvedBindingEnvRemoteFetchContract(t *testing.T) {
+	node := &spec.Node{}
+	binding := spec.ArtifactBinding{
+		BindingName:        "aligned-bam",
+		ChildInputName:     "aligned.bam",
+		ProducerOutputName: "bam",
+	}
+	resolved := handoff.ResolveBindingResponse{
+		ResolutionStatus: "RESOLVED",
+		Decision:         "remote_fetch",
+		PlacementIntent:  handoff.PlacementIntent{Mode: placementModePreferredNode, NodeName: "worker-1"},
+		MaterializationPlan: handoff.MaterializationPlan{
+			Mode:           materializationModeRemoteFetch,
+			URI:            "http://artifact.local/aligned.bam",
+			ExpectedDigest: "sha256:abc",
+			ExpectedSize:   120,
+			LocalPath:      "inputs/aligned.bam",
+		},
+	}
+
+	injectResolvedBindingEnv(node, binding, resolved)
+
+	want := map[string]string{
+		"JUMI_INPUT_ALIGNED_BAM_STATUS":                   "RESOLVED",
+		"JUMI_INPUT_ALIGNED_BAM_DECISION":                 "remote_fetch",
+		"JUMI_INPUT_ALIGNED_BAM_URI":                      "http://artifact.local/aligned.bam",
+		"JUMI_INPUT_ALIGNED_BAM_SOURCE_NODE":              "worker-1",
+		"JUMI_INPUT_ALIGNED_BAM_PLACEMENT_MODE":           placementModePreferredNode,
+		"JUMI_INPUT_ALIGNED_BAM_MATERIALIZATION_MODE":     materializationModeRemoteFetch,
+		"JUMI_INPUT_ALIGNED_BAM_EXPECTED_DIGEST":          "sha256:abc",
+		"JUMI_INPUT_ALIGNED_BAM_EXPECTED_SIZE_BYTES":      "120",
+		"JUMI_INPUT_ALIGNED_BAM_LOCAL_PATH":               "inputs/aligned.bam",
+		"JUMI_INPUT_ALIGNED_BAM_REQUIRES_MATERIALIZATION": "true",
+	}
+	for key, value := range want {
+		if got := node.Env[key]; got != value {
+			t.Fatalf("%s = %q, want %q", key, got, value)
+		}
+	}
+	if _, ok := node.Env["JUMI_INPUT_ALIGNED_BAM_NODE_LOCAL_PATH"]; ok {
+		t.Fatal("remote_fetch env unexpectedly includes NODE_LOCAL_PATH")
+	}
+}
+
+func TestInjectResolvedBindingEnvLocalReuseContract(t *testing.T) {
+	node := &spec.Node{}
+	binding := spec.ArtifactBinding{
+		BindingName:        "result",
+		ChildInputName:     "result",
+		ProducerOutputName: "result",
+	}
+	resolved := handoff.ResolveBindingResponse{
+		ResolutionStatus: "RESOLVED",
+		Decision:         "local_reuse",
+		PlacementIntent:  handoff.PlacementIntent{Mode: placementModeRequiredNode, NodeName: "worker-1"},
+		MaterializationPlan: handoff.MaterializationPlan{
+			Mode:           materializationModeLocalReuse,
+			ExpectedDigest: "sha256:def",
+			ExpectedSize:   42,
+			LocalPath:      "inputs/result",
+			SourceLocation: &handoff.ArtifactLocation{
+				NodeLocal: &handoff.NodeLocalLocation{NodeName: "worker-1", Path: "/var/lib/jumi-artifacts/cas/sha256/def"},
+			},
+		},
+	}
+
+	injectResolvedBindingEnv(node, binding, resolved)
+
+	want := map[string]string{
+		"JUMI_INPUT_RESULT_STATUS":                   "RESOLVED",
+		"JUMI_INPUT_RESULT_DECISION":                 "local_reuse",
+		"JUMI_INPUT_RESULT_SOURCE_NODE":              "worker-1",
+		"JUMI_INPUT_RESULT_PLACEMENT_MODE":           placementModeRequiredNode,
+		"JUMI_INPUT_RESULT_MATERIALIZATION_MODE":     materializationModeLocalReuse,
+		"JUMI_INPUT_RESULT_EXPECTED_DIGEST":          "sha256:def",
+		"JUMI_INPUT_RESULT_EXPECTED_SIZE_BYTES":      "42",
+		"JUMI_INPUT_RESULT_NODE_LOCAL_PATH":          "/var/lib/jumi-artifacts/cas/sha256/def",
+		"JUMI_INPUT_RESULT_LOCAL_PATH":               "inputs/result",
+		"JUMI_INPUT_RESULT_REQUIRES_MATERIALIZATION": "true",
+	}
+	for key, value := range want {
+		if got := node.Env[key]; got != value {
+			t.Fatalf("%s = %q, want %q", key, got, value)
+		}
+	}
+}
+
 func TestToHandoffLocationsBackfillsNodeName(t *testing.T) {
 	locations := toHandoffLocations([]provenance.ArtifactLocation{{
 		NodeLocal: &provenance.NodeLocalLocation{
