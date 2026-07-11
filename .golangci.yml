@@ -9,6 +9,7 @@ linters:
     - depguard
     - errcheck
     - govet
+    - gocyclo
     - ineffassign
     - misspell
     - revive
@@ -44,6 +45,8 @@ linters:
               desc: "only pkg/backend may depend directly on Kubernetes packages"
             - pkg: "sigs.k8s.io/**"
               desc: "only pkg/backend may depend directly on controller-runtime style packages"
+    gocyclo:
+      min-complexity: 35
     revive:
       rules:
         - name: comment-spacings

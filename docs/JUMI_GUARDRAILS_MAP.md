@@ -67,6 +67,12 @@ planning source for:
 It deliberately separates contract smoke from materialization smoke so an
 external runtime failure is not reported as a successful JUMI node.
 
+## Scorecard
+
+[JUMI_QUALITY_GUARDRAIL_SCORECARD.md](JUMI_QUALITY_GUARDRAIL_SCORECARD.md)
+tracks guardrail coverage across formatting, security, complexity, dependency
+checks, API usage rules, coverage, and architecture layer dependency checks.
+
 ## Kube-Linter
 
 `make kube-linter` lints static manifests in `deploy/k8s`.

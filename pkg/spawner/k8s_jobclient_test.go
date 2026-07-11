@@ -164,10 +164,12 @@ func assertRenderedK8sJobGolden(t *testing.T, filename string, job *batchv1.Job)
 	}
 	path := filepath.Join("testdata", filename)
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		// #nosec G306 -- golden fixtures are repository testdata files and should be readable in reviews.
 		if err := os.WriteFile(path, rendered, 0o644); err != nil {
 			t.Fatalf("update golden fixture: %v", err)
 		}
 	}
+	// #nosec G304 -- filename comes from the test's static fixture table.
 	want, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read golden fixture: %v", err)
@@ -338,6 +340,83 @@ func TestValidateK8sJobCreateRequestRejectsReservedUserLabel(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("validateK8sJobCreateRequest() error = nil, want reserved label rejection")
+	}
+}
+
+func TestSpawnerBadFixtureMatrix(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*spruntime.JobCreateRequest)
+	}{
+		{
+			name: "user label uses jumi.io reserved prefix",
+			mutate: func(req *spruntime.JobCreateRequest) {
+				req.UserLabels = map[string]string{"jumi.io/run-key": "override"}
+			},
+		},
+		{
+			name: "user label uses spawner.io reserved prefix",
+			mutate: func(req *spruntime.JobCreateRequest) {
+				req.UserLabels = map[string]string{"spawner.io/attempt-marker": "override"}
+			},
+		},
+		{
+			name: "user label uses Kueue integration prefix directly",
+			mutate: func(req *spruntime.JobCreateRequest) {
+				req.UserLabels = map[string]string{"kueue.x-k8s.io/other": "override"}
+			},
+		},
+		{
+			name: "user label uses app.kubernetes.io reserved prefix",
+			mutate: func(req *spruntime.JobCreateRequest) {
+				req.UserLabels = map[string]string{"app.kubernetes.io/name": "override"}
+			},
+		},
+		{
+			name: "required node conflicts with hostname nodeSelector",
+			mutate: func(req *spruntime.JobCreateRequest) {
+				req.Placement = &spruntime.Placement{
+					RequiredNodeName: "worker-1",
+					NodeSelector:     map[string]string{hostnameNodeSelector: "worker-2"},
+				}
+			},
+		},
+		{
+			name: "missing run identity",
+			mutate: func(req *spruntime.JobCreateRequest) {
+				req.RunID = ""
+			},
+		},
+		{
+			name: "missing node identity",
+			mutate: func(req *spruntime.JobCreateRequest) {
+				delete(req.Env, "JUMI_NODE_ID")
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := validK8sJobCreateRequest()
+			tt.mutate(&req)
+			if err := validateK8sJobCreateRequest(req); err == nil {
+				t.Fatal("validateK8sJobCreateRequest() error = nil, want bad fixture rejection")
+			}
+		})
+	}
+}
+
+func validK8sJobCreateRequest() spruntime.JobCreateRequest {
+	return spruntime.JobCreateRequest{
+		AttemptRequest: spruntime.AttemptRequest{
+			AttemptID: "attempt-1",
+			RunID:     "run-1",
+			ImageRef:  "tool:latest",
+			Command:   []string{"true"},
+			Env:       map[string]string{"JUMI_NODE_ID": "node-1"},
+		},
+		JobName:       "job-1",
+		Namespace:     "default",
+		AttemptMarker: "marker-1",
 	}
 }
 

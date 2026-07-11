@@ -273,6 +273,7 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 	appendEvent(ctx, e.registry, spec.EventRecord{RunID: run.RunID, Type: "run.running", OccurredAt: now, Level: "info", Message: "run execution started"})
 	failFast := run.Spec.Run.FailurePolicy.Mode == "" || run.Spec.Run.FailurePolicy.Mode == "fail-fast"
 	firstErr := make(chan error, 1)
+	// #nosec G118 -- this watcher is intentionally bound to the run graph context, not a request context.
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()

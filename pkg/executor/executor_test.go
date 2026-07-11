@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/HeaInSeo/JUMI/pkg/handoff"
@@ -191,6 +192,91 @@ func TestValidateResolvedBindingEnvKeysRejectsCollisions(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected env key collision error")
+	}
+}
+
+func TestMaterializationBadFixtureMatrix(t *testing.T) {
+	tests := []struct {
+		name     string
+		validate func() error
+	}{
+		{
+			name: "placement required_node without nodeName",
+			validate: func() error {
+				return validateResolvedBindingContract(spec.ArtifactBinding{BindingName: "dataset"}, handoff.ResolveBindingResponse{
+					ResolutionStatus: "RESOLVED",
+					PlacementIntent:  handoff.PlacementIntent{Mode: placementModeRequiredNode},
+					MaterializationPlan: handoff.MaterializationPlan{
+						Mode: materializationModeNone,
+					},
+				})
+			},
+		},
+		{
+			name: "unsupported placement mode",
+			validate: func() error {
+				return validateResolvedBindingContract(spec.ArtifactBinding{BindingName: "dataset"}, handoff.ResolveBindingResponse{
+					ResolutionStatus: "RESOLVED",
+					PlacementIntent:  handoff.PlacementIntent{Mode: "same_rack", NodeName: "worker-1"},
+					MaterializationPlan: handoff.MaterializationPlan{
+						Mode: materializationModeNone,
+					},
+				})
+			},
+		},
+		{
+			name: "local_reuse without node-local source",
+			validate: func() error {
+				return validateResolvedBindingContract(spec.ArtifactBinding{BindingName: "dataset"}, handoff.ResolveBindingResponse{
+					ResolutionStatus: "RESOLVED",
+					MaterializationPlan: handoff.MaterializationPlan{
+						Mode: materializationModeLocalReuse,
+					},
+				})
+			},
+		},
+		{
+			name: "remote_fetch without fetchable source",
+			validate: func() error {
+				return validateResolvedBindingContract(spec.ArtifactBinding{BindingName: "dataset"}, handoff.ResolveBindingResponse{
+					ResolutionStatus: "RESOLVED",
+					MaterializationPlan: handoff.MaterializationPlan{
+						Mode: materializationModeRemoteFetch,
+					},
+				})
+			},
+		},
+		{
+			name: "unsafe materialization localPath",
+			validate: func() error {
+				return validateResolvedBindingContract(spec.ArtifactBinding{BindingName: "dataset"}, handoff.ResolveBindingResponse{
+					ResolutionStatus: "RESOLVED",
+					MaterializationPlan: handoff.MaterializationPlan{
+						Mode:      materializationModeRemoteFetch,
+						URI:       "http://artifact.local/dataset",
+						LocalPath: "../escape",
+					},
+				})
+			},
+		},
+		{
+			name: "input env key collision",
+			validate: func() error {
+				return validateResolvedBindingEnvKeys([]spec.ArtifactBinding{
+					{BindingName: "a-b", ProducerOutputName: "out-a"},
+					{BindingName: "a_b", ProducerOutputName: "out-b"},
+				})
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.validate(); err == nil {
+				t.Fatal("validate() error = nil, want bad fixture rejection")
+			} else if !strings.Contains(err.Error(), "input_materialization_contract_invalid") && !strings.Contains(err.Error(), "input env key collision") {
+				t.Fatalf("validate() error = %v, want stable bad fixture rejection", err)
+			}
+		})
 	}
 }
 

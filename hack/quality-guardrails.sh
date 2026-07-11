@@ -48,6 +48,7 @@ check_source_of_truth() {
   require_file docs/JUMI_K8S_JOB_LABEL_CONTRACT.md
   require_file docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md
   require_file docs/JUMI_GUARDRAILS_MAP.md
+  require_file docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md
   require_file docs/JUMI_TEST_STRATEGY.md
   require_file docs/JUMI_DESIGN.ko.md
   require_file docs/JUMI_SCHEDULER_BOUNDARY.ko.md
@@ -104,6 +105,22 @@ check_source_of_truth() {
     "guardrails map documents golden fixture update workflow"
   require_grep 'waitAndFinalize' docs/JUMI_GUARDRAILS_MAP.md \
     "guardrails map documents WaitNode success-result guardrail"
+  require_grep 'formatting, naming, static analysis' docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md \
+    "scorecard tracks formatting, naming, and static analysis"
+  require_grep 'security vulnerable pattern detection' docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md \
+    "scorecard tracks security vulnerable pattern detection"
+  require_grep 'complexity limit' docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md \
+    "scorecard tracks complexity limits"
+  require_grep 'dependency and license checks' docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md \
+    "scorecard tracks dependency and license checks"
+  require_grep 'API usage rules' docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md \
+    "scorecard tracks API usage rules"
+  require_grep 'test coverage threshold' docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md \
+    "scorecard tracks test coverage threshold"
+  require_grep 'architecture layer dependency checks' docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md \
+    "scorecard tracks architecture layer dependency checks"
+  require_grep 'dependency license scanning is not yet blocking' docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md \
+    "scorecard explicitly records dependency license scanning gap"
   require_grep 'Bad Fixture Matrix' docs/JUMI_TEST_STRATEGY.md \
     "test strategy documents bad fixture matrix"
   require_grep 'Spec Validation Fixtures' docs/JUMI_TEST_STRATEGY.md \
@@ -178,6 +195,8 @@ check_spawner_label_contract() {
     "unit test covers full attempt marker annotation"
   require_grep 'TestValidateK8sJobCreateRequestRejectsReservedUserLabel' "$test_file" \
     "unit test covers reserved user label rejection"
+  require_grep 'TestSpawnerBadFixtureMatrix' "$test_file" \
+    "unit test covers Spawner bad fixture matrix"
   require_grep 'TestValidateK8sJobCreateRequestRejectsRequiredNodeConflict' "$test_file" \
     "unit test covers requiredNodeName/nodeSelector conflict"
   require_grep 'TestSnapshotIgnoresSameNameJobWithDifferentUID' "$test_file" \
@@ -339,12 +358,16 @@ check_materialization_contract() {
     "unit test covers remote_fetch source requirement"
   require_grep 'TestValidateResolvedBindingContractRejectsUnsafeLocalPath' "$test_file" \
     "unit test covers localPath safety"
+  require_grep 'TestMaterializationBadFixtureMatrix' "$test_file" \
+    "unit test covers materialization bad fixture matrix"
   require_grep 'TestInjectResolvedBindingEnvRemoteFetchContract' "$test_file" \
     "unit test covers remote_fetch runtime env contract"
   require_grep 'TestInjectResolvedBindingEnvLocalReuseContract' "$test_file" \
     "unit test covers local_reuse runtime env contract"
   require_grep 'TestDagEnginePropagatesRuntimeMaterializationFailureReasons' pkg/executor/dag_engine_test.go \
     "dag test covers runtime materialization failure reason propagation"
+  require_grep 'TestSmokeMatrixRemoteAndLocalMaterializationFailures' pkg/executor/dag_engine_test.go \
+    "dag test covers SMOKE-4 and SMOKE-5 materialization failure matrix"
 }
 
 check_ci_contract() {
@@ -376,6 +399,14 @@ check_ci_contract() {
     "test workflow fails on go.mod/go.sum drift"
   require_grep "git diff --exit-code '\\*\\.go'" .github/workflows/test.yml \
     "test workflow fails on gofmt drift"
+  require_grep 'COVERAGE_THRESHOLD := 70' Makefile \
+    "Makefile enforces minimum coverage threshold"
+  require_grep 'gocyclo' .golangci.yml \
+    "golangci-lint enforces cyclomatic complexity guardrail"
+  require_grep 'min-complexity: 35' .golangci.yml \
+    "gocyclo threshold is pinned"
+  require_grep 'depguard' .golangci.yml \
+    "golangci-lint enforces architecture dependency guardrail"
   require_grep '/tmp/ah-addsource-tmp' Makefile \
     "sprint baseline creates artifact-handoff TMPDIR"
   require_grep '/tmp/nan-node-contract-tmp' Makefile \
