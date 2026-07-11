@@ -127,8 +127,58 @@ func TestBuildK8sJobAppliesIdentityLabelContract(t *testing.T) {
 	}
 }
 
-func TestRenderedK8sJobGoldenFixture(t *testing.T) {
-	job := buildK8sJob(spruntime.JobCreateRequest{
+func TestRenderedK8sJobGoldenFixtures(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		req  spruntime.JobCreateRequest
+	}{
+		{
+			name: "preferred remote_fetch kueue",
+			path: "k8s-job-preferred-remote-fetch-kueue.golden.yaml",
+			req:  preferredRemoteFetchKueueJobRequest(),
+		},
+		{
+			name: "required local_reuse",
+			path: "k8s-job-required-local-reuse.golden.yaml",
+			req:  requiredLocalReuseJobRequest(),
+		},
+		{
+			name: "plain non-kueue",
+			path: "k8s-job-plain-non-kueue.golden.yaml",
+			req:  plainNonKueueJobRequest(),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRenderedK8sJobGolden(t, tt.path, buildK8sJob(tt.req))
+		})
+	}
+}
+
+func assertRenderedK8sJobGolden(t *testing.T, filename string, job *batchv1.Job) {
+	t.Helper()
+	rendered, err := yaml.Marshal(job)
+	if err != nil {
+		t.Fatalf("marshal job fixture: %v", err)
+	}
+	path := filepath.Join("testdata", filename)
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		if err := os.WriteFile(path, rendered, 0o644); err != nil {
+			t.Fatalf("update golden fixture: %v", err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read golden fixture: %v", err)
+	}
+	if string(rendered) != string(want) {
+		t.Fatalf("rendered Job YAML drifted from %s\n\nUpdate intentionally with:\nUPDATE_GOLDEN=1 go test ./pkg/spawner -run TestRenderedK8sJobGoldenFixtures", path)
+	}
+}
+
+func preferredRemoteFetchKueueJobRequest() spruntime.JobCreateRequest {
+	return spruntime.JobCreateRequest{
 		AttemptRequest: spruntime.AttemptRequest{
 			AttemptID:          "attempt-0002",
 			RunID:              "run-2026-07-09-8c1f9c4a9d2e",
@@ -171,24 +221,78 @@ func TestRenderedK8sJobGoldenFixture(t *testing.T) {
 		JobName:       "jumi-run01-node-sortbam-attempt-0002",
 		Namespace:     "jumi-runs",
 		AttemptMarker: "attempt-0002-9f31a7",
-	})
+	}
+}
 
-	rendered, err := yaml.Marshal(job)
-	if err != nil {
-		t.Fatalf("marshal job fixture: %v", err)
+func requiredLocalReuseJobRequest() spruntime.JobCreateRequest {
+	return spruntime.JobCreateRequest{
+		AttemptRequest: spruntime.AttemptRequest{
+			AttemptID:          "attempt-0003",
+			RunID:              "run-local-reuse-2026-07-11",
+			CorrelationID:      "trace-local-reuse",
+			ImageRef:           "registry.example.com/jumi/bam-indexer@sha256:def",
+			Command:            []string{"nan", "run", "--", "samtools", "index", "/work/inputs/result.bam"},
+			ServiceAccountName: "jumi-node-runner",
+			Env: map[string]string{
+				"JUMI_RUN_ID":                                "run-local-reuse-2026-07-11",
+				"JUMI_NODE_ID":                               "index-bam",
+				"JUMI_ATTEMPT_ID":                            "attempt-0003",
+				"JUMI_INPUT_RESULT_DECISION":                 "local_reuse",
+				"JUMI_INPUT_RESULT_EXPECTED_DIGEST":          "sha256:def",
+				"JUMI_INPUT_RESULT_EXPECTED_SIZE_BYTES":      "4294967296",
+				"JUMI_INPUT_RESULT_LOCAL_PATH":               "inputs/result.bam",
+				"JUMI_INPUT_RESULT_MATERIALIZATION_MODE":     "local_reuse",
+				"JUMI_INPUT_RESULT_NODE_LOCAL_PATH":          "/var/lib/jumi-artifacts/cas/sha256/def",
+				"JUMI_INPUT_RESULT_PLACEMENT_MODE":           "required_node",
+				"JUMI_INPUT_RESULT_REQUIRES_MATERIALIZATION": "true",
+				"JUMI_INPUT_RESULT_SOURCE_NODE":              "worker-1",
+			},
+			Resources: spruntime.Resources{CPU: "1", Memory: "2Gi"},
+			Mounts: []spruntime.Mount{
+				{Kind: spruntime.MountKindPVC, Source: "jumi-run01-output", Target: "/output"},
+			},
+			Placement: &spruntime.Placement{
+				RequiredNodeName: "worker-1",
+				NodeSelector:     map[string]string{"disk": "nvme"},
+			},
+			UserLabels: map[string]string{
+				"user.jumi.io/project": "cancer-pipeline",
+				"user.jumi.io/team":    "genomics",
+			},
+			Cleanup: spruntime.CleanupPolicy{TTLSecondsAfterFinished: 1800},
+		},
+		JobName:       "jumi-run01-node-indexbam-attempt-0003",
+		Namespace:     "jumi-runs",
+		AttemptMarker: "attempt-0003-a1b2c3",
 	}
-	path := filepath.Join("testdata", "k8s-job-main-attempt.golden.yaml")
-	if os.Getenv("UPDATE_GOLDEN") == "1" {
-		if err := os.WriteFile(path, rendered, 0o644); err != nil {
-			t.Fatalf("update golden fixture: %v", err)
-		}
-	}
-	want, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read golden fixture: %v", err)
-	}
-	if string(rendered) != string(want) {
-		t.Fatalf("rendered Job YAML drifted from %s\n\nUpdate intentionally with:\nUPDATE_GOLDEN=1 go test ./pkg/spawner -run TestRenderedK8sJobGoldenFixture", path)
+}
+
+func plainNonKueueJobRequest() spruntime.JobCreateRequest {
+	return spruntime.JobCreateRequest{
+		AttemptRequest: spruntime.AttemptRequest{
+			AttemptID:          "attempt-0001",
+			RunID:              "run-plain-2026-07-11",
+			ImageRef:           "registry.example.com/jumi/fastqc@sha256:123",
+			Command:            []string{"fastqc", "/input/sample.fastq", "-o", "/output"},
+			ServiceAccountName: "jumi-node-runner",
+			Env: map[string]string{
+				"JUMI_RUN_ID":     "run-plain-2026-07-11",
+				"JUMI_NODE_ID":    "fastqc",
+				"JUMI_ATTEMPT_ID": "attempt-0001",
+			},
+			Resources: spruntime.Resources{CPU: "500m", Memory: "1Gi"},
+			Mounts: []spruntime.Mount{
+				{Kind: spruntime.MountKindPVC, Source: "jumi-run01-input", Target: "/input", ReadOnly: true},
+				{Kind: spruntime.MountKindPVC, Source: "jumi-run01-output", Target: "/output"},
+			},
+			UserLabels: map[string]string{
+				"user.jumi.io/team": "genomics",
+			},
+			Cleanup: spruntime.CleanupPolicy{TTLSecondsAfterFinished: 600},
+		},
+		JobName:       "jumi-run01-node-fastqc-attempt-0001",
+		Namespace:     "jumi-runs",
+		AttemptMarker: "attempt-0001-plain",
 	}
 }
 

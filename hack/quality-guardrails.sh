@@ -86,15 +86,29 @@ check_source_of_truth() {
     "materialization contract documents expected size env suffix"
   require_grep '_NODE_LOCAL_PATH' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
     "materialization contract documents node-local path env suffix"
+  require_grep 'Materialization Failure Reasons' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
+    "materialization contract documents failure reason catalog"
+  require_grep 'input_materialization_digest_mismatch' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
+    "materialization contract documents digest mismatch failure reason"
+  require_grep 'input_materialization_remote_unavailable' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
+    "materialization contract documents remote unavailable failure reason"
+  require_grep 'input_materialization_path_rejected' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
+    "materialization contract documents path rejected failure reason"
+  require_grep 'input_materialization_local_source_missing' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
+    "materialization contract documents local source missing failure reason"
 }
 
 check_spawner_label_contract() {
   echo "== spawner label contract guardrails =="
   local file="pkg/spawner/k8s_jobclient.go"
   local test_file="pkg/spawner/k8s_jobclient_test.go"
-  local fixture_file="pkg/spawner/testdata/k8s-job-main-attempt.golden.yaml"
+  local preferred_fixture="pkg/spawner/testdata/k8s-job-preferred-remote-fetch-kueue.golden.yaml"
+  local required_fixture="pkg/spawner/testdata/k8s-job-required-local-reuse.golden.yaml"
+  local plain_fixture="pkg/spawner/testdata/k8s-job-plain-non-kueue.golden.yaml"
 
-  require_file "$fixture_file"
+  require_file "$preferred_fixture"
+  require_file "$required_fixture"
+  require_file "$plain_fixture"
   require_grep 'APIVersion: "batch/v1"' "$file" \
     "spawner renders Job TypeMeta apiVersion"
   require_grep 'Kind:[[:space:]]+"Job"' "$file" \
@@ -136,32 +150,70 @@ check_spawner_label_contract() {
     "unit test covers Pod watch identity selector"
   require_grep 'TestPodIdentityFilterRejectsStaleAttempt' "$test_file" \
     "unit test covers stale Pod identity filtering"
-  require_grep 'TestRenderedK8sJobGoldenFixture' "$test_file" \
-    "unit test guards rendered Job YAML fixture drift"
-  require_grep 'UPDATE_GOLDEN=1 go test ./pkg/spawner -run TestRenderedK8sJobGoldenFixture' "$test_file" \
+  require_grep 'TestRenderedK8sJobGoldenFixtures' "$test_file" \
+    "unit test guards rendered Job YAML fixture matrix drift"
+  require_grep 'preferredRemoteFetchKueueJobRequest' "$test_file" \
+    "fixture matrix covers preferred remote_fetch Kueue Job"
+  require_grep 'requiredLocalReuseJobRequest' "$test_file" \
+    "fixture matrix covers required local_reuse Job"
+  require_grep 'plainNonKueueJobRequest' "$test_file" \
+    "fixture matrix covers plain non-Kueue Job"
+  require_grep 'UPDATE_GOLDEN=1 go test ./pkg/spawner -run TestRenderedK8sJobGoldenFixtures' "$test_file" \
     "golden fixture has explicit update command"
-  require_grep 'apiVersion: batch/v1' "$fixture_file" \
-    "rendered Job fixture includes apiVersion"
-  require_grep 'kind: Job' "$fixture_file" \
-    "rendered Job fixture includes kind"
-  require_grep 'jumi\.io/run-key' "$fixture_file" \
-    "rendered Job fixture includes run-key label"
-  require_grep 'jumi\.io/node-key' "$fixture_file" \
-    "rendered Job fixture includes node-key label"
-  require_grep 'jumi\.io/attempt-id' "$fixture_file" \
-    "rendered Job fixture includes attempt-id label"
-  require_grep 'JUMI_INPUT_ALIGNED_BAM_MATERIALIZATION_MODE' "$fixture_file" \
-    "rendered Job fixture includes materialization env"
-  require_grep 'JUMI_INPUT_ALIGNED_BAM_EXPECTED_DIGEST' "$fixture_file" \
-    "rendered Job fixture includes expected digest env"
-  require_grep 'JUMI_INPUT_ALIGNED_BAM_EXPECTED_SIZE_BYTES' "$fixture_file" \
-    "rendered Job fixture includes expected size env"
-  require_grep 'JUMI_INPUT_ALIGNED_BAM_LOCAL_PATH' "$fixture_file" \
-    "rendered Job fixture includes local path env"
-  require_grep 'preferredDuringSchedulingIgnoredDuringExecution' "$fixture_file" \
-    "rendered Job fixture includes preferred node affinity"
-  require_grep 'persistentVolumeClaim' "$fixture_file" \
-    "rendered Job fixture includes PVC volume"
+  require_grep 'apiVersion: batch/v1' "$preferred_fixture" \
+    "preferred rendered Job fixture includes apiVersion"
+  require_grep 'kind: Job' "$preferred_fixture" \
+    "preferred rendered Job fixture includes kind"
+  require_grep 'jumi\.io/run-key' "$preferred_fixture" \
+    "preferred rendered Job fixture includes run-key label"
+  require_grep 'jumi\.io/node-key' "$preferred_fixture" \
+    "preferred rendered Job fixture includes node-key label"
+  require_grep 'jumi\.io/attempt-id' "$preferred_fixture" \
+    "preferred rendered Job fixture includes attempt-id label"
+  require_grep 'suspend: true' "$preferred_fixture" \
+    "preferred Kueue fixture keeps Job suspended for admission"
+  require_grep 'kueue\.x-k8s\.io/queue-name' "$preferred_fixture" \
+    "preferred Kueue fixture includes queue integration label"
+  require_grep 'JUMI_INPUT_ALIGNED_BAM_MATERIALIZATION_MODE' "$preferred_fixture" \
+    "preferred fixture includes materialization env"
+  require_grep 'remote_fetch' "$preferred_fixture" \
+    "preferred fixture captures remote_fetch materialization"
+  require_grep 'JUMI_INPUT_ALIGNED_BAM_EXPECTED_DIGEST' "$preferred_fixture" \
+    "preferred fixture includes expected digest env"
+  require_grep 'JUMI_INPUT_ALIGNED_BAM_EXPECTED_SIZE_BYTES' "$preferred_fixture" \
+    "preferred fixture includes expected size env"
+  require_grep 'JUMI_INPUT_ALIGNED_BAM_LOCAL_PATH' "$preferred_fixture" \
+    "preferred fixture includes local path env"
+  require_grep 'preferredDuringSchedulingIgnoredDuringExecution' "$preferred_fixture" \
+    "preferred fixture includes soft node affinity"
+  require_grep 'persistentVolumeClaim' "$preferred_fixture" \
+    "preferred fixture includes PVC volume"
+  require_grep 'suspend: false' "$required_fixture" \
+    "required local_reuse fixture is not Kueue suspended"
+  require_grep 'local_reuse' "$required_fixture" \
+    "required fixture captures local_reuse materialization"
+  require_grep 'JUMI_INPUT_RESULT_NODE_LOCAL_PATH' "$required_fixture" \
+    "required fixture includes node-local source env"
+  require_grep 'nodeSelector:' "$required_fixture" \
+    "required fixture includes hard node selector"
+  require_grep 'kubernetes\.io/hostname: worker-1' "$required_fixture" \
+    "required fixture pins hostname through nodeSelector"
+  reject_grep 'kueue\.x-k8s\.io/queue-name' "$required_fixture" \
+    "required fixture does not include Kueue label"
+  reject_grep 'preferredDuringSchedulingIgnoredDuringExecution' "$required_fixture" \
+    "required fixture does not encode soft affinity"
+  require_grep 'apiVersion: batch/v1' "$plain_fixture" \
+    "plain rendered Job fixture includes apiVersion"
+  require_grep 'kind: Job' "$plain_fixture" \
+    "plain rendered Job fixture includes kind"
+  require_grep 'suspend: false' "$plain_fixture" \
+    "plain fixture is not Kueue suspended"
+  reject_grep 'kueue\.x-k8s\.io/queue-name' "$plain_fixture" \
+    "plain fixture does not include Kueue label"
+  reject_grep 'JUMI_INPUT_' "$plain_fixture" \
+    "plain fixture does not include materialization env"
+  reject_grep 'affinity:' "$plain_fixture" \
+    "plain fixture does not include placement affinity"
 }
 
 check_spec_validation_contract() {

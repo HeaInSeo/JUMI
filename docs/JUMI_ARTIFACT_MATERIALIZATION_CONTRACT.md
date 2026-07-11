@@ -211,6 +211,38 @@ Status, decision, placement, source node, and requires-materialization env vars
 are kept in the Pod environment for observability and compatibility. Runtime
 materialization execution should use the node contract JSON when available.
 
+## Materialization Failure Reasons
+
+Runtime materialization failures must be reported with stable reason strings so
+JUMI can surface and eventually map them to retry policy consistently.
+
+The reserved materialization failure reasons are:
+
+```text
+input_materialization_digest_mismatch
+input_materialization_remote_unavailable
+input_materialization_path_rejected
+input_materialization_local_source_missing
+```
+
+`input_materialization_digest_mismatch` means the materialized bytes did not
+match the expected digest. This is a data integrity failure and should not be
+silently retried as a generic infrastructure error.
+
+`input_materialization_remote_unavailable` means a `remote_fetch` source could
+not be reached or completed. This may be retryable depending on runtime policy
+and the underlying error class.
+
+`input_materialization_path_rejected` means the requested local path or source
+path violated the runtime path policy.
+
+`input_materialization_local_source_missing` means a `local_reuse` source path
+was expected on the scheduled node but was not present or readable.
+
+Patch 2D only defines and guards these reason strings. Runtime propagation from
+node-artifact-runtime into JUMI terminal node state is intentionally left to the
+runtime integration patch.
+
 ## Acceptance Criteria
 
 Patch 2 is complete when:
@@ -227,4 +259,5 @@ required locality maps to hard nodeSelector placement.
 post-scheduling resolve can refine materialization after Pod node observation.
 post-scheduling resolve is observation-only until a runtime materializer consumes it.
 runtime materializer env suffixes are documented and guarded by tests.
+materialization failure reasons are documented and guarded.
 ```

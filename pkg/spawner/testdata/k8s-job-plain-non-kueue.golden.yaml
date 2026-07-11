@@ -1,0 +1,83 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  annotations:
+    jumi.io/attempt-id: attempt-0001
+    jumi.io/attempt-marker: attempt-0001-plain
+    jumi.io/node-id: fastqc
+    jumi.io/run-id: run-plain-2026-07-11
+  labels:
+    app.kubernetes.io/component: node-attempt
+    app.kubernetes.io/managed-by: jumi-spawner
+    app.kubernetes.io/name: jumi
+    jumi.io/attempt-id: attempt-0001
+    jumi.io/node-key: fastqc
+    jumi.io/run-key: run-plain-2026-07-11
+    jumi.io/workload-role: main
+    spawner.io/attempt-marker: attempt-0001-plain
+    user.jumi.io/team: genomics
+  name: jumi-run01-node-fastqc-attempt-0001
+  namespace: jumi-runs
+spec:
+  backoffLimit: 0
+  suspend: false
+  template:
+    metadata:
+      annotations:
+        jumi.io/attempt-id: attempt-0001
+        jumi.io/attempt-marker: attempt-0001-plain
+        jumi.io/node-id: fastqc
+        jumi.io/run-id: run-plain-2026-07-11
+      labels:
+        app.kubernetes.io/component: node-attempt
+        app.kubernetes.io/managed-by: jumi-spawner
+        app.kubernetes.io/name: jumi
+        jumi.io/attempt-id: attempt-0001
+        jumi.io/node-key: fastqc
+        jumi.io/run-key: run-plain-2026-07-11
+        jumi.io/workload-role: main
+        spawner.io/attempt-marker: attempt-0001-plain
+        user.jumi.io/team: genomics
+    spec:
+      containers:
+      - command:
+        - fastqc
+        - /input/sample.fastq
+        - -o
+        - /output
+        env:
+        - name: JUMI_ATTEMPT_ID
+          value: attempt-0001
+        - name: JUMI_NODE_ID
+          value: fastqc
+        - name: JUMI_RUN_ID
+          value: run-plain-2026-07-11
+        image: registry.example.com/jumi/fastqc@sha256:123
+        imagePullPolicy: IfNotPresent
+        name: main
+        resources:
+          limits:
+            cpu: 500m
+            memory: 1Gi
+          requests:
+            cpu: 500m
+            memory: 1Gi
+        volumeMounts:
+        - mountPath: /input
+          name: vol-0
+          readOnly: true
+        - mountPath: /output
+          name: vol-1
+      restartPolicy: Never
+      serviceAccountName: jumi-node-runner
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: vol-0
+        persistentVolumeClaim:
+          claimName: jumi-run01-input
+          readOnly: true
+      - name: vol-1
+        persistentVolumeClaim:
+          claimName: jumi-run01-output
+  ttlSecondsAfterFinished: 600
+status: {}

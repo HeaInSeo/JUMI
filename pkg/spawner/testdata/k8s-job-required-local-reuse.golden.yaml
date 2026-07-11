@@ -1,0 +1,103 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  annotations:
+    jumi.io/attempt-id: attempt-0003
+    jumi.io/attempt-marker: attempt-0003-a1b2c3
+    jumi.io/node-id: index-bam
+    jumi.io/run-id: run-local-reuse-2026-07-11
+    jumi.io/trace-id: trace-local-reuse
+  labels:
+    app.kubernetes.io/component: node-attempt
+    app.kubernetes.io/managed-by: jumi-spawner
+    app.kubernetes.io/name: jumi
+    jumi.io/attempt-id: attempt-0003
+    jumi.io/node-key: index-bam
+    jumi.io/run-key: run-local-reuse-2026-07-11
+    jumi.io/workload-role: main
+    spawner.io/attempt-marker: attempt-0003-a1b2c3
+    user.jumi.io/project: cancer-pipeline
+    user.jumi.io/team: genomics
+  name: jumi-run01-node-indexbam-attempt-0003
+  namespace: jumi-runs
+spec:
+  backoffLimit: 0
+  suspend: false
+  template:
+    metadata:
+      annotations:
+        jumi.io/attempt-id: attempt-0003
+        jumi.io/attempt-marker: attempt-0003-a1b2c3
+        jumi.io/node-id: index-bam
+        jumi.io/run-id: run-local-reuse-2026-07-11
+        jumi.io/trace-id: trace-local-reuse
+      labels:
+        app.kubernetes.io/component: node-attempt
+        app.kubernetes.io/managed-by: jumi-spawner
+        app.kubernetes.io/name: jumi
+        jumi.io/attempt-id: attempt-0003
+        jumi.io/node-key: index-bam
+        jumi.io/run-key: run-local-reuse-2026-07-11
+        jumi.io/workload-role: main
+        spawner.io/attempt-marker: attempt-0003-a1b2c3
+        user.jumi.io/project: cancer-pipeline
+        user.jumi.io/team: genomics
+    spec:
+      containers:
+      - command:
+        - nan
+        - run
+        - --
+        - samtools
+        - index
+        - /work/inputs/result.bam
+        env:
+        - name: JUMI_ATTEMPT_ID
+          value: attempt-0003
+        - name: JUMI_INPUT_RESULT_DECISION
+          value: local_reuse
+        - name: JUMI_INPUT_RESULT_EXPECTED_DIGEST
+          value: sha256:def
+        - name: JUMI_INPUT_RESULT_EXPECTED_SIZE_BYTES
+          value: "4294967296"
+        - name: JUMI_INPUT_RESULT_LOCAL_PATH
+          value: inputs/result.bam
+        - name: JUMI_INPUT_RESULT_MATERIALIZATION_MODE
+          value: local_reuse
+        - name: JUMI_INPUT_RESULT_NODE_LOCAL_PATH
+          value: /var/lib/jumi-artifacts/cas/sha256/def
+        - name: JUMI_INPUT_RESULT_PLACEMENT_MODE
+          value: required_node
+        - name: JUMI_INPUT_RESULT_REQUIRES_MATERIALIZATION
+          value: "true"
+        - name: JUMI_INPUT_RESULT_SOURCE_NODE
+          value: worker-1
+        - name: JUMI_NODE_ID
+          value: index-bam
+        - name: JUMI_RUN_ID
+          value: run-local-reuse-2026-07-11
+        image: registry.example.com/jumi/bam-indexer@sha256:def
+        imagePullPolicy: IfNotPresent
+        name: main
+        resources:
+          limits:
+            cpu: "1"
+            memory: 2Gi
+          requests:
+            cpu: "1"
+            memory: 2Gi
+        volumeMounts:
+        - mountPath: /output
+          name: vol-0
+      nodeSelector:
+        disk: nvme
+        kubernetes.io/hostname: worker-1
+      restartPolicy: Never
+      serviceAccountName: jumi-node-runner
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: vol-0
+        persistentVolumeClaim:
+          claimName: jumi-run01-output
+  ttlSecondsAfterFinished: 1800
+status: {}
