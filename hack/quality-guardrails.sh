@@ -47,6 +47,7 @@ check_source_of_truth() {
   echo "== source-of-truth guardrails =="
   require_file docs/JUMI_K8S_JOB_LABEL_CONTRACT.md
   require_file docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md
+  require_file docs/JUMI_GUARDRAILS_MAP.md
   require_file docs/JUMI_DESIGN.ko.md
   require_file docs/JUMI_SCHEDULER_BOUNDARY.ko.md
 
@@ -98,6 +99,10 @@ check_source_of_truth() {
     "materialization contract documents local source missing failure reason"
   require_grep 'runtime materialization failure reasons propagate to attempt, node, and run terminal state' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
     "materialization contract documents runtime failure propagation acceptance criterion"
+  require_grep 'make update-spawner-fixtures' docs/JUMI_GUARDRAILS_MAP.md \
+    "guardrails map documents golden fixture update workflow"
+  require_grep 'waitAndFinalize' docs/JUMI_GUARDRAILS_MAP.md \
+    "guardrails map documents WaitNode success-result guardrail"
 }
 
 check_spawner_label_contract() {
@@ -354,6 +359,7 @@ check_semgrep_contract() {
   require_file .semgrep/rules/jumi-no-job-delete-without-uid-preconditions.yaml
   require_file .semgrep/rules/jumi-no-adhoc-materialization-env-key.yaml
   require_file .semgrep/rules/jumi-no-failed-execution-result-without-reason.yaml
+  require_file .semgrep/rules/jumi-waitnode-must-check-succeeded.yaml
   require_grep 'jumi-no-direct-podspec-nodename' .semgrep/rules/jumi-no-direct-podspec-nodename.yaml \
     "Semgrep blocks direct PodSpec.NodeName binding"
   require_grep 'jumi-no-job-name-only-pod-watch' .semgrep/rules/jumi-no-job-name-only-pod-watch.yaml \
@@ -370,6 +376,8 @@ check_semgrep_contract() {
     "Semgrep blocks sprintf materialization env key construction"
   require_grep 'jumi-no-failed-execution-result-without-reason' .semgrep/rules/jumi-no-failed-execution-result-without-reason.yaml \
     "Semgrep blocks failed ExecutionResult without terminal failure reason"
+  require_grep 'jumi-waitnode-must-check-succeeded' .semgrep/rules/jumi-waitnode-must-check-succeeded.yaml \
+    "Semgrep blocks removing WaitNode Succeeded handling"
   require_grep 'SEMGREP \?= \$\(LOCALBIN\)/semgrep' Makefile \
     "Makefile uses project-local Semgrep binary"
   require_grep 'KUBE_LINTER \?= \$\(LOCALBIN\)/kube-linter' Makefile \
@@ -380,6 +388,10 @@ check_semgrep_contract() {
     "Makefile exposes Semgrep fixture tests"
   require_grep '"\$\(KUBE_LINTER\)" lint deploy/k8s' Makefile \
     "Makefile exposes blocking kube-linter scan"
+  require_grep 'update-spawner-fixtures:' Makefile \
+    "Makefile exposes golden fixture update target"
+  require_grep 'UPDATE_GOLDEN=1 go test ./pkg/spawner -run TestRenderedK8sJobGoldenFixtures' Makefile \
+    "golden fixture update target runs the rendered Job fixture matrix"
 }
 
 check_source_of_truth

@@ -1,0 +1,23 @@
+rules:
+  - id: jumi-waitnode-must-check-succeeded
+    languages: [go]
+    severity: ERROR
+    message: >
+      waitAndFinalize must branch on !result.Succeeded after WaitNode returns
+      without error. Failed runtime materialization can arrive as a terminal
+      backend result rather than a Go error.
+    patterns:
+      - pattern: |
+          func ($R *$T) waitAndFinalize($CTX context.Context, $HANDLE backend.Handle, $ATTEMPT string, $STARTED time.Time, $NODE spec.Node) error {
+            ...
+            $RESULT, $ERR := $R.adapter.WaitNode($CTX, $HANDLE)
+            ...
+          }
+      - pattern-not: |
+          func ($R *$T) waitAndFinalize($CTX context.Context, $HANDLE backend.Handle, $ATTEMPT string, $STARTED time.Time, $NODE spec.Node) error {
+            ...
+            if !$RESULT.Succeeded {
+              ...
+            }
+            ...
+          }
