@@ -35,7 +35,7 @@ AH_GRPC_TARGET ?=
 AH_HTTP_URL ?=
 SAMPLE_RUN_ID ?=
 
-.PHONY: test test-regression coverage coverage-check fmt vet lint lint-depguard lint-security semgrep semgrep-test kube-linter quality-guardrails update-spawner-fixtures vuln vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-align-check runtime-smoke-remote ko-publish-remote ko-smoke-remote verify-sprint-3d-baseline verify-sprint-3d-remote lifecycle-check
+.PHONY: test test-regression coverage coverage-check fmt vet lint lint-depguard lint-security license-check semgrep semgrep-test kube-linter quality-guardrails update-spawner-fixtures vuln vuln-check vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-align-check runtime-smoke-remote ko-publish-remote ko-smoke-remote verify-sprint-3d-baseline verify-sprint-3d-remote lifecycle-check
 
 REMOTE_SSH_TARGET ?= seoy@100.123.80.48
 REGISTRY_HOST ?= harbor.10.113.24.96.nip.io
@@ -126,6 +126,10 @@ lint-security: golangci-lint
 	| tee "$(REPORT_DIR)/gosec.txt"; \
 	echo "gosec_exit=$$?" | tee -a "$(REPORT_DIR)/lint-security-summary.txt"
 
+license-check:
+	@mkdir -p "$(REPORT_DIR)"
+	bash hack/license-guardrails.sh 2>&1 | tee "$(REPORT_DIR)/license-check.txt"
+
 semgrep:
 	@test -x "$(SEMGREP)" || { \
 		echo "semgrep not found at $(SEMGREP). Put the semgrep executable in ./bin or use the CI container."; \
@@ -158,6 +162,10 @@ vuln: govulncheck
 	@set +e; \
 	$(GOENV) $(GOVULNCHECK) $(PKGS_SECURITY) 2>&1 | tee "$(REPORT_DIR)/govulncheck-core.txt"; \
 	echo "govulncheck_core_exit=$$?" | tee "$(REPORT_DIR)/govulncheck-core.summary"
+
+vuln-check: govulncheck
+	@mkdir -p "$(REPORT_DIR)" "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)"
+	$(GOENV) $(GOVULNCHECK) $(PKGS_SECURITY) 2>&1 | tee "$(REPORT_DIR)/govulncheck-core.txt"
 
 vuln-all: govulncheck
 	@mkdir -p "$(REPORT_DIR)" "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)"

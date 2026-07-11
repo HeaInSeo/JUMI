@@ -73,6 +73,10 @@ external runtime failure is not reported as a successful JUMI node.
 tracks guardrail coverage across formatting, security, complexity, dependency
 checks, API usage rules, coverage, and architecture layer dependency checks.
 
+[JUMI_LICENSE_GUARDRAIL.md](JUMI_LICENSE_GUARDRAIL.md) defines the blocking
+third-party dependency license scan and the temporary owner-scoped exceptions
+for repositories that do not yet publish license files.
+
 ## Kube-Linter
 
 `make kube-linter` lints static manifests in `deploy/k8s`.

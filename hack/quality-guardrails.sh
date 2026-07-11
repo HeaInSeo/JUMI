@@ -49,6 +49,7 @@ check_source_of_truth() {
   require_file docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md
   require_file docs/JUMI_GUARDRAILS_MAP.md
   require_file docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md
+  require_file docs/JUMI_LICENSE_GUARDRAIL.md
   require_file docs/JUMI_TEST_STRATEGY.md
   require_file docs/JUMI_DESIGN.ko.md
   require_file docs/JUMI_SCHEDULER_BOUNDARY.ko.md
@@ -113,14 +114,38 @@ check_source_of_truth() {
     "scorecard tracks complexity limits"
   require_grep 'dependency and license checks' docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md \
     "scorecard tracks dependency and license checks"
+  require_grep 'blocking `make license-check`' docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md \
+    "scorecard tracks blocking dependency license scan"
+  require_grep 'blocking `make vuln-check`' docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md \
+    "scorecard tracks blocking vulnerability scan"
   require_grep 'API usage rules' docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md \
     "scorecard tracks API usage rules"
   require_grep 'test coverage threshold' docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md \
     "scorecard tracks test coverage threshold"
   require_grep 'architecture layer dependency checks' docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md \
     "scorecard tracks architecture layer dependency checks"
-  require_grep 'dependency license scanning is not yet blocking' docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md \
-    "scorecard explicitly records dependency license scanning gap"
+  require_grep 'same-owner modules without license files' docs/JUMI_QUALITY_GUARDRAIL_SCORECARD.md \
+    "scorecard explicitly records owner-scoped license gap"
+  require_grep 'make license-check' docs/JUMI_LICENSE_GUARDRAIL.md \
+    "license guardrail documents blocking make target"
+  require_grep 'forbidden' docs/JUMI_LICENSE_GUARDRAIL.md \
+    "license guardrail documents forbidden license rejection"
+  require_grep 'unknown' docs/JUMI_LICENSE_GUARDRAIL.md \
+    "license guardrail documents unknown license rejection"
+  require_grep 'github.com/HeaInSeo/JUMI' docs/JUMI_LICENSE_GUARDRAIL.md \
+    "license guardrail documents owner-scoped JUMI exception"
+  require_grep 'github.com/HeaInSeo/spawner' docs/JUMI_LICENSE_GUARDRAIL.md \
+    "license guardrail documents owner-scoped spawner exception"
+  require_grep 'github.com/HeaInSeo/utils' docs/JUMI_LICENSE_GUARDRAIL.md \
+    "license guardrail documents owner-scoped utils exception"
+  require_grep 'Apache-2.0' docs/JUMI_LICENSE_GUARDRAIL.md \
+    "license guardrail documents Apache allowlist"
+  require_grep 'MIT' docs/JUMI_LICENSE_GUARDRAIL.md \
+    "license guardrail documents MIT allowlist"
+  require_grep 'BSD' docs/JUMI_LICENSE_GUARDRAIL.md \
+    "license guardrail documents BSD allowlist"
+  require_grep 'ISC' docs/JUMI_LICENSE_GUARDRAIL.md \
+    "license guardrail documents ISC allowlist"
   require_grep 'Bad Fixture Matrix' docs/JUMI_TEST_STRATEGY.md \
     "test strategy documents bad fixture matrix"
   require_grep 'Spec Validation Fixtures' docs/JUMI_TEST_STRATEGY.md \
@@ -401,6 +426,23 @@ check_ci_contract() {
     "test workflow fails on gofmt drift"
   require_grep 'COVERAGE_THRESHOLD := 70' Makefile \
     "Makefile enforces minimum coverage threshold"
+  require_file hack/license-guardrails.sh
+  require_grep '^license-check:' Makefile \
+    "Makefile exposes blocking dependency license check"
+  require_grep 'hack/license-guardrails.sh' Makefile \
+    "Makefile runs repository license guardrail script"
+  require_grep 'go list -deps' hack/license-guardrails.sh \
+    "license guardrail enumerates runtime package dependencies"
+  require_grep 'github.com/HeaInSeo/JUMI|github.com/HeaInSeo/spawner|github.com/HeaInSeo/utils' hack/license-guardrails.sh \
+    "license guardrail keeps owner-scoped exceptions narrow"
+  require_grep 'GNU .*General Public License' hack/license-guardrails.sh \
+    "license guardrail rejects GPL-family text"
+  require_grep '^vuln-check: govulncheck' Makefile \
+    "Makefile exposes blocking vulnerability check"
+  require_grep 'make license-check' .github/workflows/test.yml \
+    "test workflow runs dependency license guardrail"
+  require_grep 'make vuln-check' .github/workflows/test.yml \
+    "test workflow runs vulnerability guardrail"
   require_grep 'gocyclo' .golangci.yml \
     "golangci-lint enforces cyclomatic complexity guardrail"
   require_grep 'min-complexity: 35' .golangci.yml \

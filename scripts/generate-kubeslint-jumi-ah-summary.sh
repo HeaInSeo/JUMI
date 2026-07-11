@@ -14,8 +14,10 @@ GO_BIN="${GO_BIN:-}"
 GO_ROOT_OVERRIDE="${GO_ROOT_OVERRIDE:-}"
 
 if [[ -z "${GO_BIN}" ]]; then
-  if [[ -x /opt/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.10.linux-amd64/bin/go ]]; then
-    GO_BIN="/opt/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.10.linux-amd64/bin/go"
+  ROOT_GO_VERSION="$(awk '$1 == "go" { print $2; exit }' "${ROOT_DIR}/go.mod")"
+  TOOLCHAIN_GO="/opt/go/pkg/mod/golang.org/toolchain@v0.0.1-go${ROOT_GO_VERSION}.linux-amd64/bin/go"
+  if [[ -n "${ROOT_GO_VERSION}" && -x "${TOOLCHAIN_GO}" ]]; then
+    GO_BIN="${TOOLCHAIN_GO}"
   else
     GO_BIN="go"
   fi
