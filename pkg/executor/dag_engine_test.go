@@ -34,6 +34,7 @@ type fakeAdapter struct {
 	canceled                 map[string]bool
 	prepared                 map[string]spec.Node
 	outputs                  map[string]map[string]backend.OutputMetadata
+	waitResults              map[string]backend.ExecutionResult
 	observe                  *backend.OptionalKueueInfo
 	startDelay               time.Duration
 	forceMetadataUnavailable bool
@@ -1141,6 +1142,9 @@ func (f *fakeAdapter) WaitNode(ctx context.Context, handle backend.Handle) (back
 	if f.failOn[h.nodeID] {
 		return backend.ExecutionResult{TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"}, fmt.Errorf("forced failure")
 	}
+	if result, ok := f.waitResults[h.nodeID]; ok {
+		return result, nil
+	}
 	return backend.ExecutionResult{Succeeded: true, TerminalStopCause: "finished"}, nil
 }
 
@@ -1315,6 +1319,105 @@ func TestDagEngineKeepsOriginalFailureReasonWhenNotifyNodeTerminalFailsOnFailedN
 		}
 	}
 	assertEventPresent(t, reg, record.RunID, "node.handoff.notify_failed", "notify_node_terminal_error")
+}
+
+func TestDagEnginePropagatesRuntimeMaterializationFailureReasons(t *testing.T) {
+	reasons := []string{
+		materializationFailureDigestMismatch,
+		materializationFailureRemoteUnavailable,
+		materializationFailurePathRejected,
+		materializationFailureLocalSourceMissing,
+	}
+	for _, reason := range reasons {
+		t.Run(reason, func(t *testing.T) {
+			reg := registry.NewMemoryRegistry()
+			adapter := &fakeAdapter{
+				failOn: map[string]bool{},
+				waitResults: map[string]backend.ExecutionResult{
+					"consume": {
+						Succeeded:             false,
+						TerminalStopCause:     "failed",
+						TerminalFailureReason: reason,
+					},
+				},
+			}
+			handoffClient := &fakeHandoffClient{
+				response: handoff.ResolveBindingResponse{
+					ResolutionStatus: "RESOLVED",
+					Decision:         "remote_fetch",
+					PlacementIntent:  handoff.PlacementIntent{Mode: placementModePreferredNode, NodeName: "worker-1"},
+					MaterializationPlan: handoff.MaterializationPlan{
+						Mode:           materializationModeRemoteFetch,
+						URI:            "http://artifact.local/result",
+						ExpectedDigest: "sha256:abc",
+						LocalPath:      "inputs/result",
+					},
+				},
+			}
+			engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
+			specInput := spec.ExecutableRunSpec{
+				Run: spec.RunMetadata{
+					RunID:         "run-" + strings.ReplaceAll(strings.TrimPrefix(reason, "input_materialization_"), "_", "-"),
+					SampleRunID:   "sample-runtime-materialization",
+					SubmittedAt:   time.Now().UTC(),
+					FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"},
+				},
+				Graph: spec.Graph{
+					Nodes: []spec.Node{{
+						NodeID: "consume",
+						Image:  "busybox:1.36",
+						ArtifactBindings: []spec.ArtifactBinding{{
+							BindingName:        "result",
+							ChildInputName:     "result",
+							ProducerNodeID:     "produce",
+							ProducerOutputName: "result",
+							ArtifactID:         "sample-runtime-materialization:produce:result",
+							ConsumePolicy:      "RemoteOK",
+							Required:           true,
+						}},
+					}},
+				},
+			}
+			record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
+			nodes := []spec.NodeRecord{{RunID: record.RunID, NodeID: "consume", Status: spec.NodeStatusPending}}
+			if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+				t.Fatalf("CreateRun() error = %v", err)
+			}
+			if err := engine.Admit(context.Background(), record); err != nil {
+				t.Fatalf("Admit() error = %v", err)
+			}
+			waitForRunStatus(t, reg, record.RunID, spec.RunStatusFailed)
+
+			run, err := reg.GetRun(context.Background(), record.RunID)
+			if err != nil {
+				t.Fatalf("GetRun() error = %v", err)
+			}
+			if run.TerminalFailureReason != reason {
+				t.Fatalf("run failureReason = %q, want %q", run.TerminalFailureReason, reason)
+			}
+			runNodes, err := reg.ListNodes(context.Background(), record.RunID)
+			if err != nil {
+				t.Fatalf("ListNodes() error = %v", err)
+			}
+			if len(runNodes) != 1 {
+				t.Fatalf("ListNodes() len = %d, want 1", len(runNodes))
+			}
+			if runNodes[0].TerminalFailureReason != reason {
+				t.Fatalf("node failureReason = %q, want %q", runNodes[0].TerminalFailureReason, reason)
+			}
+			attempts, err := reg.ListAttempts(context.Background(), record.RunID, "consume")
+			if err != nil {
+				t.Fatalf("ListAttempts() error = %v", err)
+			}
+			if len(attempts) != 1 {
+				t.Fatalf("ListAttempts() len = %d, want 1", len(attempts))
+			}
+			if attempts[0].TerminalFailureReason != reason {
+				t.Fatalf("attempt failureReason = %q, want %q", attempts[0].TerminalFailureReason, reason)
+			}
+			assertEventPresent(t, reg, record.RunID, "node.failed", reason)
+		})
+	}
 }
 
 func TestDagEngineRecordsLocalityMissAndFallbackSuccess(t *testing.T) {

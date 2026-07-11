@@ -96,6 +96,8 @@ check_source_of_truth() {
     "materialization contract documents path rejected failure reason"
   require_grep 'input_materialization_local_source_missing' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
     "materialization contract documents local source missing failure reason"
+  require_grep 'runtime materialization failure reasons propagate to attempt, node, and run terminal state' docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md \
+    "materialization contract documents runtime failure propagation acceptance criterion"
 }
 
 check_spawner_label_contract() {
@@ -279,6 +281,18 @@ check_materialization_contract() {
     "executor defines local_reuse materialization mode"
   require_grep 'materializationModeRemoteFetch[[:space:]]+= "remote_fetch"' "$file" \
     "executor defines remote_fetch materialization mode"
+  require_grep 'materializationFailureDigestMismatch[[:space:]]+= "input_materialization_digest_mismatch"' "$file" \
+    "executor defines digest mismatch materialization failure reason"
+  require_grep 'materializationFailureRemoteUnavailable[[:space:]]+= "input_materialization_remote_unavailable"' "$file" \
+    "executor defines remote unavailable materialization failure reason"
+  require_grep 'materializationFailurePathRejected[[:space:]]+= "input_materialization_path_rejected"' "$file" \
+    "executor defines path rejected materialization failure reason"
+  require_grep 'materializationFailureLocalSourceMissing[[:space:]]+= "input_materialization_local_source_missing"' "$file" \
+    "executor defines local source missing materialization failure reason"
+  require_grep 'terminalFailureReasonFromResult' "$file" \
+    "executor derives terminal failure reason from failed backend result"
+  require_grep '!result\.Succeeded' "$file" \
+    "executor treats unsuccessful backend result as failed node"
   require_grep 'TestValidateResolvedBindingContractAcceptsPreferredRemoteFetch' "$test_file" \
     "unit test covers preferred remote_fetch contract"
   require_grep 'TestValidateResolvedBindingContractRejectsPlacementWithoutNode' "$test_file" \
@@ -293,6 +307,8 @@ check_materialization_contract() {
     "unit test covers remote_fetch runtime env contract"
   require_grep 'TestInjectResolvedBindingEnvLocalReuseContract' "$test_file" \
     "unit test covers local_reuse runtime env contract"
+  require_grep 'TestDagEnginePropagatesRuntimeMaterializationFailureReasons' pkg/executor/dag_engine_test.go \
+    "dag test covers runtime materialization failure reason propagation"
 }
 
 check_ci_contract() {

@@ -525,6 +525,11 @@ const (
 	materializationModeNone        = "none"
 	materializationModeLocalReuse  = "local_reuse"
 	materializationModeRemoteFetch = "remote_fetch"
+
+	materializationFailureDigestMismatch     = "input_materialization_digest_mismatch"
+	materializationFailureRemoteUnavailable  = "input_materialization_remote_unavailable"
+	materializationFailurePathRejected       = "input_materialization_path_rejected"
+	materializationFailureLocalSourceMissing = "input_materialization_local_source_missing"
 )
 
 const (
@@ -864,6 +869,22 @@ func (r *nodeRunner) waitAndFinalize(ctx context.Context, handle backend.Handle,
 		return r.failNode(err, attemptID, "failed", "backend_wait_error")
 	}
 	finishedAt := time.Now().UTC()
+	if !result.Succeeded {
+		r.recordLocalityFallbackFailure(attemptID)
+		failureReason := terminalFailureReasonFromResult(result)
+		terminalStopCause := util.FirstNonEmpty(result.TerminalStopCause, "failed")
+		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
+			RunID:                 r.runID,
+			NodeID:                r.node.NodeID,
+			AttemptID:             attemptID,
+			Status:                spec.AttemptStatusErrored,
+			StartedAt:             &startedAt,
+			FinishedAt:            &finishedAt,
+			TerminalStopCause:     terminalStopCause,
+			TerminalFailureReason: failureReason,
+		})
+		return r.failNode(fmt.Errorf("%s", failureReason), attemptID, terminalStopCause, failureReason)
+	}
 	r.recordLocalityFallbackSuccess(attemptID)
 	if err := r.registerNodeOutputs(context.Background(), handle, attemptID, execNode); err != nil {
 		r.recordLocalityFallbackFailure(attemptID)
@@ -1576,6 +1597,26 @@ func resolveFailureReason(err error) string {
 		return msg
 	}
 	return "resolve_handoff_error"
+}
+
+func terminalFailureReasonFromResult(result backend.ExecutionResult) string {
+	reason := strings.TrimSpace(result.TerminalFailureReason)
+	if isMaterializationFailureReason(reason) {
+		return reason
+	}
+	return util.FirstNonEmpty(reason, "node_execution_failed")
+}
+
+func isMaterializationFailureReason(reason string) bool {
+	switch reason {
+	case materializationFailureDigestMismatch,
+		materializationFailureRemoteUnavailable,
+		materializationFailurePathRejected,
+		materializationFailureLocalSourceMissing:
+		return true
+	default:
+		return false
+	}
 }
 
 func sanitizeEnvSegment(value string) string {

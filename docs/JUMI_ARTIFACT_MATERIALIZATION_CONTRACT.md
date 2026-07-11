@@ -239,9 +239,10 @@ path violated the runtime path policy.
 `input_materialization_local_source_missing` means a `local_reuse` source path
 was expected on the scheduled node but was not present or readable.
 
-Patch 2D only defines and guards these reason strings. Runtime propagation from
-node-artifact-runtime into JUMI terminal node state is intentionally left to the
-runtime integration patch.
+Patch 2E propagates these reason strings from backend execution results into
+attempt, node, and run terminal state. Runtime materializers must return one of
+these strings through `terminalFailureReason` when the failure is caused by
+input materialization rather than generic backend execution.
 
 ## Acceptance Criteria
 
@@ -260,4 +261,5 @@ post-scheduling resolve can refine materialization after Pod node observation.
 post-scheduling resolve is observation-only until a runtime materializer consumes it.
 runtime materializer env suffixes are documented and guarded by tests.
 materialization failure reasons are documented and guarded.
+runtime materialization failure reasons propagate to attempt, node, and run terminal state.
 ```
