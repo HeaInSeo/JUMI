@@ -48,6 +48,7 @@ check_source_of_truth() {
   require_file docs/JUMI_K8S_JOB_LABEL_CONTRACT.md
   require_file docs/JUMI_ARTIFACT_MATERIALIZATION_CONTRACT.md
   require_file docs/JUMI_GUARDRAILS_MAP.md
+  require_file docs/JUMI_TEST_STRATEGY.md
   require_file docs/JUMI_DESIGN.ko.md
   require_file docs/JUMI_SCHEDULER_BOUNDARY.ko.md
 
@@ -103,6 +104,36 @@ check_source_of_truth() {
     "guardrails map documents golden fixture update workflow"
   require_grep 'waitAndFinalize' docs/JUMI_GUARDRAILS_MAP.md \
     "guardrails map documents WaitNode success-result guardrail"
+  require_grep 'Bad Fixture Matrix' docs/JUMI_TEST_STRATEGY.md \
+    "test strategy documents bad fixture matrix"
+  require_grep 'Spec Validation Fixtures' docs/JUMI_TEST_STRATEGY.md \
+    "test strategy documents spec validation fixtures"
+  require_grep 'Artifact Resolution Fixtures' docs/JUMI_TEST_STRATEGY.md \
+    "test strategy documents artifact resolution fixtures"
+  require_grep 'Runtime Failure Fixtures' docs/JUMI_TEST_STRATEGY.md \
+    "test strategy documents runtime failure fixtures"
+  require_grep 'Golden Job Fixture Matrix' docs/JUMI_TEST_STRATEGY.md \
+    "test strategy documents golden Job fixture matrix"
+  require_grep 'Smoke Acceptance Matrix' docs/JUMI_TEST_STRATEGY.md \
+    "test strategy documents smoke acceptance matrix"
+  require_grep 'SMOKE-4 \| remote materialization failure' docs/JUMI_TEST_STRATEGY.md \
+    "test strategy includes remote materialization failure smoke"
+  require_grep 'SMOKE-5 \| local reuse materialization failure' docs/JUMI_TEST_STRATEGY.md \
+    "test strategy includes local reuse materialization failure smoke"
+  require_grep 'SMOKE-6 \| stale attempt event' docs/JUMI_TEST_STRATEGY.md \
+    "test strategy includes stale attempt event smoke"
+  require_grep 'input_materialization_digest_mismatch' docs/JUMI_TEST_STRATEGY.md \
+    "test strategy includes digest mismatch failure fixture"
+  require_grep 'input_materialization_remote_unavailable' docs/JUMI_TEST_STRATEGY.md \
+    "test strategy includes remote unavailable failure fixture"
+  require_grep 'input_materialization_path_rejected' docs/JUMI_TEST_STRATEGY.md \
+    "test strategy includes path rejected failure fixture"
+  require_grep 'input_materialization_local_source_missing' docs/JUMI_TEST_STRATEGY.md \
+    "test strategy includes local source missing failure fixture"
+  require_grep 'make verify-sprint-3d-baseline' docs/JUMI_TEST_STRATEGY.md \
+    "test strategy documents cross-repo baseline command"
+  require_grep 'make verify-sprint-3d-remote' docs/JUMI_TEST_STRATEGY.md \
+    "test strategy documents live smoke command"
 }
 
 check_spawner_label_contract() {

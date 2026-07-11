@@ -15,6 +15,7 @@ drift:
 - Spawner golden YAML fixture coverage.
 - Artifact materialization env contract.
 - Runtime materialization failure reason propagation.
+- Bad fixture and smoke acceptance matrix.
 - CI, Semgrep, and kube-linter wiring.
 
 The GitHub Actions workflow runs this check when contract files, workflows,
@@ -51,6 +52,20 @@ make update-spawner-fixtures
 ```
 
 The golden test fails with the same command when rendered YAML drifts.
+
+## Test Strategy
+
+[JUMI_TEST_STRATEGY.md](JUMI_TEST_STRATEGY.md) is the canonical guardrail
+planning source for:
+
+- spec validation bad fixtures.
+- artifact resolution bad fixtures.
+- runtime failure reason propagation fixtures.
+- generated Job golden fixture matrix.
+- smoke acceptance criteria.
+
+It deliberately separates contract smoke from materialization smoke so an
+external runtime failure is not reported as a successful JUMI node.
 
 ## Kube-Linter
 
