@@ -1,0 +1,23 @@
+rules:
+  - id: jumi-no-failed-execution-result-without-reason
+    languages: [go]
+    severity: ERROR
+    message: >
+      Failed backend.ExecutionResult values must include TerminalFailureReason.
+      Materialization failures rely on stable failure reasons propagating to
+      attempt, node, and run terminal state.
+    patterns:
+      - pattern: |
+          backend.ExecutionResult{
+            ...,
+            Succeeded: false,
+            ...,
+          }
+      - pattern-not: |
+          backend.ExecutionResult{
+            ...,
+            Succeeded: false,
+            ...,
+            TerminalFailureReason: $REASON,
+            ...,
+          }

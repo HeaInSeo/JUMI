@@ -352,12 +352,24 @@ check_semgrep_contract() {
   require_file .semgrep/rules/jumi-no-direct-podspec-nodename.yaml
   require_file .semgrep/rules/jumi-no-job-name-only-pod-watch.yaml
   require_file .semgrep/rules/jumi-no-job-delete-without-uid-preconditions.yaml
+  require_file .semgrep/rules/jumi-no-adhoc-materialization-env-key.yaml
+  require_file .semgrep/rules/jumi-no-failed-execution-result-without-reason.yaml
   require_grep 'jumi-no-direct-podspec-nodename' .semgrep/rules/jumi-no-direct-podspec-nodename.yaml \
     "Semgrep blocks direct PodSpec.NodeName binding"
   require_grep 'jumi-no-job-name-only-pod-watch' .semgrep/rules/jumi-no-job-name-only-pod-watch.yaml \
     "Semgrep blocks job-name-only Pod watches"
   require_grep 'jumi-no-job-delete-without-uid-preconditions' .semgrep/rules/jumi-no-job-delete-without-uid-preconditions.yaml \
     "Semgrep blocks Job delete without UID preconditions"
+  require_grep 'jumi-no-literal-materialization-env-key-write' .semgrep/rules/jumi-no-adhoc-materialization-env-key.yaml \
+    "Semgrep blocks literal materialization env key writes"
+  require_grep 'jumi-no-literal-materialization-env-map-entry' .semgrep/rules/jumi-no-adhoc-materialization-env-key.yaml \
+    "Semgrep blocks literal materialization env map entries"
+  require_grep 'jumi-no-adhoc-materialization-env-key-concat' .semgrep/rules/jumi-no-adhoc-materialization-env-key.yaml \
+    "Semgrep blocks ad hoc materialization env key concatenation"
+  require_grep 'jumi-no-adhoc-materialization-env-key-sprintf' .semgrep/rules/jumi-no-adhoc-materialization-env-key.yaml \
+    "Semgrep blocks sprintf materialization env key construction"
+  require_grep 'jumi-no-failed-execution-result-without-reason' .semgrep/rules/jumi-no-failed-execution-result-without-reason.yaml \
+    "Semgrep blocks failed ExecutionResult without terminal failure reason"
   require_grep 'SEMGREP \?= \$\(LOCALBIN\)/semgrep' Makefile \
     "Makefile uses project-local Semgrep binary"
   require_grep 'KUBE_LINTER \?= \$\(LOCALBIN\)/kube-linter' Makefile \

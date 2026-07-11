@@ -1,0 +1,58 @@
+rules:
+  - id: jumi-no-literal-materialization-env-key-write
+    languages: [go]
+    severity: ERROR
+    message: >
+      Do not write JUMI_INPUT_* materialization env keys as string literals.
+      Use the executor materializationEnvKey helper and suffix constants.
+    paths:
+      exclude:
+        - "*_test.go"
+    patterns:
+      - pattern: $ENV[$KEY] = $VALUE
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: '^"JUMI_INPUT_[^"]*"$'
+
+  - id: jumi-no-literal-materialization-env-map-entry
+    languages: [go]
+    severity: ERROR
+    message: >
+      Do not put JUMI_INPUT_* materialization env keys into map literals as
+      string literals. Use the executor materializationEnvKey helper and suffix
+      constants.
+    paths:
+      exclude:
+        - "*_test.go"
+    pattern-regex: '"JUMI_INPUT_[^"]*"\s*:'
+
+  - id: jumi-no-adhoc-materialization-env-key-concat
+    languages: [go]
+    severity: ERROR
+    message: >
+      Do not construct JUMI_INPUT_* materialization env keys with ad hoc string
+      concatenation. Use materializationEnvKey and suffix constants.
+    paths:
+      exclude:
+        - "*_test.go"
+    patterns:
+      - pattern: '"JUMI_INPUT_" + $REST'
+      - pattern-not-inside: |
+          func materializationEnvKey($BASE string, $SUFFIX string) string {
+            ...
+          }
+
+  - id: jumi-no-adhoc-materialization-env-key-sprintf
+    languages: [go]
+    severity: ERROR
+    message: >
+      Do not construct JUMI_INPUT_* materialization env keys with fmt.Sprintf.
+      Use materializationEnvKey and suffix constants.
+    paths:
+      exclude:
+        - "*_test.go"
+    patterns:
+      - pattern: fmt.Sprintf($FORMAT, ...)
+      - metavariable-regex:
+          metavariable: $FORMAT
+          regex: '^"JUMI_INPUT_.*"$'
