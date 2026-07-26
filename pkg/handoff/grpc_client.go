@@ -3,12 +3,50 @@ package handoff
 import (
 	"context"
 	"fmt"
+	"time"
 
 	ahv1 "github.com/HeaInSeo/JUMI/pkg/handoff/ahv1"
 	"github.com/HeaInSeo/JUMI/pkg/metrics"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+// Default per-RPC timeouts applied when a caller invokes a GRPCClient method
+// with a context that carries no deadline of its own (e.g. context.Background(),
+// which several cleanup/best-effort call sites in pkg/executor use today).
+//
+// grpc.NewClient (used by NewGRPCClient below) establishes the transport
+// lazily: it never blocks on dial, so there is no separate "dial timeout" to
+// configure. Instead, the connection attempt happens as part of the first RPC
+// on an idle/connecting channel. If artifact-handoff is unreachable in a way
+// that doesn't fail fast (e.g. a network partition that silently drops
+// packets instead of resetting the connection), that first RPC — and every
+// RPC after it while the channel stays non-Ready — can block until something
+// bounds it. These defaults are that bound: they only take effect when the
+// caller-supplied context has no deadline, so a caller that already set one
+// (e.g. cmd/jumi's --timeout flag) is always respected as-is.
+// These are declared as vars (not consts) so tests can shrink them to keep
+// timeout-behavior tests fast; production code must not mutate them.
+var (
+	// defaultResolveBindingTimeout bounds ResolveBinding, which is retried by
+	// callers (see resolveBindingMaxAttempts in pkg/executor) on
+	// context.DeadlineExceeded, so a shorter per-attempt bound is preferable.
+	defaultResolveBindingTimeout = 15 * time.Second
+	// defaultCallTimeout bounds the remaining lightweight control-plane RPCs
+	// (artifact registration, terminal notification, finalize/GC, lifecycle
+	// lookups), none of which transfer artifact bytes over gRPC itself.
+	defaultCallTimeout = 30 * time.Second
+)
+
+// withDefaultTimeout returns ctx unchanged (aside from a no-op cancel func) if
+// it already carries a deadline, otherwise it returns a derived context bounded
+// by d. Callers must always invoke the returned cancel func.
+func withDefaultTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, d)
+}
 
 type GRPCClient struct {
 	conn    *grpc.ClientConn
@@ -41,6 +79,8 @@ func (c *GRPCClient) Close() error {
 }
 
 func (c *GRPCClient) ResolveBinding(ctx context.Context, req ResolveBindingRequest) (ResolveBindingResponse, error) {
+	ctx, cancel := withDefaultTimeout(ctx, defaultResolveBindingTimeout)
+	defer cancel()
 	if c.metrics != nil {
 		c.metrics.IncHandoffResolve()
 	}
@@ -89,6 +129,8 @@ func (c *GRPCClient) ResolveBinding(ctx context.Context, req ResolveBindingReque
 }
 
 func (c *GRPCClient) RegisterArtifact(ctx context.Context, req RegisterArtifactRequest) error {
+	ctx, cancel := withDefaultTimeout(ctx, defaultCallTimeout)
+	defer cancel()
 	if c.metrics != nil {
 		c.metrics.IncHandoffRegisterArtifact()
 	}
@@ -212,6 +254,8 @@ func grpcMaterializationCandidates(candidates []*ahv1.MaterializationCandidate) 
 }
 
 func (c *GRPCClient) NotifyNodeTerminal(ctx context.Context, req NotifyNodeTerminalRequest) error {
+	ctx, cancel := withDefaultTimeout(ctx, defaultCallTimeout)
+	defer cancel()
 	if c.metrics != nil {
 		c.metrics.IncHandoffNotifyTerminal()
 	}
@@ -227,6 +271,8 @@ func (c *GRPCClient) NotifyNodeTerminal(ctx context.Context, req NotifyNodeTermi
 }
 
 func (c *GRPCClient) FinalizeSampleRun(ctx context.Context, req FinalizeSampleRunRequest) error {
+	ctx, cancel := withDefaultTimeout(ctx, defaultCallTimeout)
+	defer cancel()
 	if c.metrics != nil {
 		c.metrics.IncHandoffFinalize()
 	}
@@ -239,6 +285,8 @@ func (c *GRPCClient) FinalizeSampleRun(ctx context.Context, req FinalizeSampleRu
 }
 
 func (c *GRPCClient) EvaluateGC(ctx context.Context, req EvaluateGCRequest) error {
+	ctx, cancel := withDefaultTimeout(ctx, defaultCallTimeout)
+	defer cancel()
 	if c.metrics != nil {
 		c.metrics.IncHandoffGCEvaluate()
 	}
@@ -251,6 +299,8 @@ func (c *GRPCClient) EvaluateGC(ctx context.Context, req EvaluateGCRequest) erro
 }
 
 func (c *GRPCClient) GetSampleRunLifecycle(ctx context.Context, req GetSampleRunLifecycleRequest) (SampleRunLifecycle, bool, error) {
+	ctx, cancel := withDefaultTimeout(ctx, defaultCallTimeout)
+	defer cancel()
 	resp, err := c.client.GetSampleRunLifecycle(ctx, &ahv1.GetSampleRunLifecycleRequest{
 		SampleRunId: req.SampleRunID,
 	})
