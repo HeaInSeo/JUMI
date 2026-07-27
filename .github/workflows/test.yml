@@ -56,6 +56,22 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
 
+      - name: Prepare local replacements
+        run: |
+          if grep -R "=> ../../../kube-slint" tools >/dev/null 2>&1; then
+            if [ ! -d ../kube-slint/.git ]; then
+              git clone --depth 1 https://github.com/HeaInSeo/kube-slint ../kube-slint
+            fi
+          fi
+
+      - name: Verify nested module go.mod/go.sum are tidy
+        run: |
+          for mod in tools/jumi-smoke tools/kubeslint-smoke-summary; do
+            (cd "$mod" && go mod tidy)
+          done
+          git diff --exit-code -- tools/jumi-smoke/go.mod tools/jumi-smoke/go.sum \
+            tools/kubeslint-smoke-summary/go.mod tools/kubeslint-smoke-summary/go.sum
+
       - name: Run tests
         run: make test
 
