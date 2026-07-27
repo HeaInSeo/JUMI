@@ -48,15 +48,15 @@ PUBLISH_JUMI_SERVICE_KO_REMOTE_SCRIPT := $(CURDIR)/scripts/publish-jumi-service-
 
 test:
 	@mkdir -p "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)"
-	$(GOENV) go test $(PKGS_ALL)
+	$(GOENV) go test -shuffle=on -count=1 $(PKGS_ALL)
 
 test-regression:
 	@mkdir -p "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)"
-	$(GOENV) go test $(PKGS_REGRESSION)
+	$(GOENV) go test -shuffle=on -count=1 $(PKGS_REGRESSION)
 
 coverage:
 	@mkdir -p "$(REPORT_DIR)" "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)"
-	$(GOENV) go test $(PKGS_COVER) -coverprofile="$(REPORT_DIR)/cover.out" -covermode=atomic -coverpkg="$(PKGS_COVERPKG)"
+	$(GOENV) go test -shuffle=on -count=1 $(PKGS_COVER) -coverprofile="$(REPORT_DIR)/cover.out" -covermode=atomic -coverpkg="$(PKGS_COVERPKG)"
 	go tool cover -func="$(REPORT_DIR)/cover.out" | tee "$(REPORT_DIR)/coverage.txt"
 
 coverage-check: coverage
