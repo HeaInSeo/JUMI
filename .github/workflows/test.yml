@@ -19,7 +19,26 @@ concurrency:
   group: test-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  ACTIONLINT_VERSION: v1.7.7
+
 jobs:
+  actionlint:
+    name: Actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Validate GitHub Actions workflows
+        run: go run "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
+
   test:
     name: Unit Regression And Coverage
     runs-on: ubuntu-latest
@@ -36,6 +55,22 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code go.mod go.sum
+
+      - name: Prepare local replacements
+        run: |
+          if grep -R "=> ../../../kube-slint" tools >/dev/null 2>&1; then
+            if [ ! -d ../kube-slint/.git ]; then
+              git clone --depth 1 https://github.com/HeaInSeo/kube-slint ../kube-slint
+            fi
+          fi
+
+      - name: Verify nested module go.mod/go.sum are tidy
+        run: |
+          for mod in tools/jumi-smoke tools/kubeslint-smoke-summary; do
+            (cd "$mod" && go mod tidy)
+          done
+          git diff --exit-code -- tools/jumi-smoke/go.mod tools/jumi-smoke/go.sum \
+            tools/kubeslint-smoke-summary/go.mod tools/kubeslint-smoke-summary/go.sum
 
       - name: Run tests
         run: make test
