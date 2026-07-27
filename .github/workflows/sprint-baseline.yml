@@ -26,19 +26,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout JUMI
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: JUMI
 
       - name: Checkout artifact-handoff
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: HeaInSeo/artifact-handoff
           path: artifact-handoff
           token: ${{ secrets.CROSS_REPO_READ_TOKEN || github.token }}
 
       - name: Checkout node-artifact-runtime
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: HeaInSeo/node-artifact-runtime
           path: node-artifact-runtime
