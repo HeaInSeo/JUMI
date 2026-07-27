@@ -33,7 +33,7 @@ jobs:
       image: semgrep/semgrep
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Validate Semgrep rule fixtures
         run: semgrep --test .semgrep/rules
