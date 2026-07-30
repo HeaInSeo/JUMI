@@ -75,6 +75,15 @@ jobs:
           test -z "$(git status --porcelain -- tools/jumi-smoke/go.mod tools/jumi-smoke/go.sum \
             tools/kubeslint-smoke-summary/go.mod tools/kubeslint-smoke-summary/go.sum)"
 
+      - name: Clone artifact-handoff (proto sync source of truth)
+        run: |
+          if [ ! -d ../artifact-handoff/.git ]; then
+            git clone --depth 1 https://github.com/HeaInSeo/artifact-handoff ../artifact-handoff
+          fi
+
+      - name: Verify handoff proto is in sync with artifact-handoff
+        run: make handoff-proto-sync-check AH_REPO_ROOT="${{ github.workspace }}/../artifact-handoff"
+
       - name: Run tests
         run: make test
 
