@@ -82,7 +82,7 @@ jobs:
           fi
 
       - name: Verify handoff proto is in sync with artifact-handoff
-        run: make handoff-proto-sync-check
+        run: make handoff-proto-sync-check AH_REPO_ROOT="${{ github.workspace }}/../artifact-handoff"
 
       - name: Run tests
         run: make test
