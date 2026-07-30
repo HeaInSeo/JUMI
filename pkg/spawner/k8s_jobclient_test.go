@@ -2,6 +2,7 @@ package spawner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -624,5 +625,67 @@ func TestWatchClosesOnSameNameJobWithDifferentUID(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Watch().Events did not close for different UID")
+	}
+}
+
+// TestCreateIsIdempotentWhenAttemptMarkerMatches exercises the end-to-end
+// AlreadyExists path of K8sJobClient.Create: a Job with the requested name
+// already exists (e.g. because a prior Create call timed out on the client
+// side but actually succeeded server-side) and carries the same
+// AttemptMarker. Create must recognize this as its own prior attempt and
+// return the existing Job's ref rather than erroring or creating a
+// duplicate.
+func TestCreateIsIdempotentWhenAttemptMarkerMatches(t *testing.T) {
+	req := validK8sJobCreateRequest()
+	existing := buildK8sJob(req)
+	existing.UID = types.UID("existing-uid")
+	clientset := fake.NewSimpleClientset(existing)
+	client := NewK8sJobClient(clientset)
+
+	ref, err := client.Create(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Create() error = %v, want nil (idempotent replay)", err)
+	}
+	if ref.UID != "existing-uid" {
+		t.Fatalf("Create().UID = %q, want %q (existing job, not a new one)", ref.UID, "existing-uid")
+	}
+	if ref.Namespace != req.Namespace || ref.Name != req.JobName {
+		t.Fatalf("Create() ref = %+v, want namespace=%q name=%q", ref, req.Namespace, req.JobName)
+	}
+
+	jobs, err := clientset.BatchV1().Jobs(req.Namespace).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(jobs.Items) != 1 {
+		t.Fatalf("Jobs in cluster = %d, want 1 (Create must not create a duplicate)", len(jobs.Items))
+	}
+}
+
+// TestCreateReturnsErrJobConflictWhenAttemptMarkerMismatches exercises the
+// name-collision-with-different-owner path: a Job with the requested name
+// already exists but was created for a different attempt (different
+// AttemptMarker). Create must refuse to adopt it and return ErrJobConflict
+// rather than silently returning someone else's Job.
+func TestCreateReturnsErrJobConflictWhenAttemptMarkerMismatches(t *testing.T) {
+	req := validK8sJobCreateRequest()
+	other := req
+	other.AttemptMarker = "a-completely-different-marker"
+	existing := buildK8sJob(other)
+	existing.UID = types.UID("someone-elses-uid")
+	clientset := fake.NewSimpleClientset(existing)
+	client := NewK8sJobClient(clientset)
+
+	_, err := client.Create(context.Background(), req)
+	if !errors.Is(err, spruntime.ErrJobConflict) {
+		t.Fatalf("Create() error = %v, want ErrJobConflict", err)
+	}
+
+	jobs, listErr := clientset.BatchV1().Jobs(req.Namespace).List(context.Background(), metav1.ListOptions{})
+	if listErr != nil {
+		t.Fatalf("List() error = %v", listErr)
+	}
+	if len(jobs.Items) != 1 || jobs.Items[0].UID != "someone-elses-uid" {
+		t.Fatalf("Jobs in cluster = %+v, want only the original conflicting job untouched", jobs.Items)
 	}
 }
