@@ -11,17 +11,57 @@ import (
 	"github.com/HeaInSeo/JUMI/pkg/spec"
 )
 
+// statusRecordingRegistry wraps a real Registry and records every NodeStatus
+// value observed for one specific node, in the order UpdateNode's mutation
+// closures actually set them - as opposed to inferring status transitions
+// from which events were emitted, which can diverge from the status values
+// a caller (or a future refactor) actually persists.
+type statusRecordingRegistry struct {
+	registry.Registry
+	nodeID string
+
+	mu       sync.Mutex
+	statuses []spec.NodeStatus
+}
+
+func (s *statusRecordingRegistry) UpdateNode(ctx context.Context, runID, nodeID string, update func(*spec.NodeRecord) error) error {
+	if nodeID != s.nodeID {
+		return s.Registry.UpdateNode(ctx, runID, nodeID, update)
+	}
+	wrapped := func(current *spec.NodeRecord) error {
+		if err := update(current); err != nil {
+			return err
+		}
+		s.mu.Lock()
+		s.statuses = append(s.statuses, current.Status)
+		s.mu.Unlock()
+		return nil
+	}
+	return s.Registry.UpdateNode(ctx, runID, nodeID, wrapped)
+}
+
+func (s *statusRecordingRegistry) recordedStatuses() []spec.NodeStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]spec.NodeStatus, len(s.statuses))
+	copy(out, s.statuses)
+	return out
+}
+
 // TestDagEngineOrderedStateTransitionSequence asserts the full intended
 // node lifecycle sequence (Ready -> BuildingBindings -> ResolvingInputs ->
 // Starting -> Releasing -> Running -> Succeeded) actually happens in that
-// order, not just that the final status is correct. Node "b" has an
-// artifact binding on "a" specifically so BuildingBindings/ResolvingInputs
-// (which only run when ArtifactBindings is non-empty) are exercised.
-// ResolvingInputs itself has no dedicated event, so its occurrence is
-// evidenced by "node.input_resolved" appearing between "node.building_bindings"
-// and "node.starting".
+// order, by recording the actual NodeStatus values passed to
+// Registry.UpdateNode via statusRecordingRegistry - not by inferring the
+// sequence from emitted event types, which don't necessarily correspond
+// 1:1 with status transitions (e.g. node.input_resolved is emitted after
+// resolving a binding regardless of whether NodeStatusResolvingInputs was
+// ever actually set). Node "b" has an artifact binding on "a" specifically
+// so BuildingBindings/ResolvingInputs (which only run when ArtifactBindings
+// is non-empty) are exercised.
 func TestDagEngineOrderedStateTransitionSequence(t *testing.T) {
-	reg := registry.NewMemoryRegistry()
+	base := registry.NewMemoryRegistry()
+	reg := &statusRecordingRegistry{Registry: base, nodeID: "b"}
 	adapter := &fakeAdapter{failOn: map[string]bool{}}
 	handoffClient := &fakeHandoffClient{
 		response: handoff.ResolveBindingResponse{
@@ -62,7 +102,28 @@ func TestDagEngineOrderedStateTransitionSequence(t *testing.T) {
 	}
 	waitForRunStatus(t, reg, record.RunID, spec.RunStatusSucceeded)
 
-	events, err := reg.ListEvents(context.Background(), record.RunID, 0)
+	gotStatuses := reg.recordedStatuses()
+	wantStatuses := []spec.NodeStatus{
+		spec.NodeStatusReady,
+		spec.NodeStatusBuildingBindings,
+		spec.NodeStatusResolvingInputs,
+		spec.NodeStatusStarting,
+		spec.NodeStatusReleasing,
+		spec.NodeStatusRunning,
+		spec.NodeStatusSucceeded,
+	}
+	if len(gotStatuses) != len(wantStatuses) {
+		t.Fatalf("node b UpdateNode status sequence = %v, want exactly %v", gotStatuses, wantStatuses)
+	}
+	for i, want := range wantStatuses {
+		if gotStatuses[i] != want {
+			t.Fatalf("node b UpdateNode status sequence = %v, want exactly %v", gotStatuses, wantStatuses)
+		}
+	}
+
+	// Corroborate with the emitted events too, as a secondary check that
+	// the two views of the lifecycle stay consistent with each other.
+	events, err := base.ListEvents(context.Background(), record.RunID, 0)
 	if err != nil {
 		t.Fatalf("ListEvents() error = %v", err)
 	}
@@ -72,16 +133,15 @@ func TestDagEngineOrderedStateTransitionSequence(t *testing.T) {
 			seq = append(seq, ev.Type)
 		}
 	}
-
-	wantOrder := []string{"node.ready", "node.building_bindings", "node.input_resolved", "node.starting", "node.releasing", "node.running", "node.succeeded"}
+	wantEvents := []string{"node.ready", "node.building_bindings", "node.input_resolved", "node.starting", "node.releasing", "node.running", "node.succeeded"}
 	idx := 0
 	for _, evType := range seq {
-		if idx < len(wantOrder) && evType == wantOrder[idx] {
+		if idx < len(wantEvents) && evType == wantEvents[idx] {
 			idx++
 		}
 	}
-	if idx != len(wantOrder) {
-		t.Fatalf("event sequence for node b did not contain %v in order, got %v (matched %d/%d)", wantOrder, seq, idx, len(wantOrder))
+	if idx != len(wantEvents) {
+		t.Fatalf("event sequence for node b did not contain %v in order, got %v (matched %d/%d)", wantEvents, seq, idx, len(wantEvents))
 	}
 }
 
@@ -144,9 +204,12 @@ func TestDagEngineCancelIsNoOpOnAlreadyTerminalRunAndNode(t *testing.T) {
 
 // TestDagEngineNodeLevelRetryLoop exercises the failNode -> errNodeRetry ->
 // new-attempt loop (RunE's for-loop in executor.go), which no existing test
-// ran end-to-end: no test previously set RetryPolicy.MaxAttempts > 0. The
-// backend fails every WaitNode call, so with MaxAttempts=1 the node must
-// make exactly two attempts (the original plus one retry) before finally
+// ran end-to-end: no test previously set RetryPolicy.MaxAttempts > 0.
+// MaxAttempts is a total-attempt cap, not a retry count
+// (docs/JUMI_EXECUTABLE_RUN_SPEC_DRAFT.ko.md 9.3: "maxAttempts = 1은 실행
+// 1회, 재시도 없음이다"), so MaxAttempts=2 is required to exercise exactly
+// one retry. The backend fails every WaitNode call, so the node must make
+// exactly two attempts (the original plus one retry) before finally
 // failing.
 func TestDagEngineNodeLevelRetryLoop(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
@@ -157,7 +220,7 @@ func TestDagEngineNodeLevelRetryLoop(t *testing.T) {
 		Run: spec.RunMetadata{RunID: "run-retry", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
 		Graph: spec.Graph{Nodes: []spec.Node{{
 			NodeID: "a", Image: "busybox:1.36",
-			RetryPolicy: spec.RetryPolicy{MaxAttempts: 1},
+			RetryPolicy: spec.RetryPolicy{MaxAttempts: 2},
 		}}},
 	}
 	record := spec.RunRecord{RunID: specInput.Run.RunID, Status: spec.RunStatusAccepted, AcceptedAt: time.Now().UTC(), Spec: specInput}
@@ -176,7 +239,7 @@ func TestDagEngineNodeLevelRetryLoop(t *testing.T) {
 		t.Fatalf("GetNode() error = %v", err)
 	}
 	if gotNode.AttemptCount != 2 {
-		t.Fatalf("attemptCount = %d, want 2 (1 original + 1 retry from MaxAttempts=1)", gotNode.AttemptCount)
+		t.Fatalf("attemptCount = %d, want 2 (1 original + 1 retry from MaxAttempts=2)", gotNode.AttemptCount)
 	}
 	if gotNode.Status != spec.NodeStatusFailed {
 		t.Fatalf("final node status = %q, want %q", gotNode.Status, spec.NodeStatusFailed)
