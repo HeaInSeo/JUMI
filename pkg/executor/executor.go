@@ -554,7 +554,13 @@ func (r *nodeRunner) RunE(ctx context.Context, a interface{}) error {
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(r.node.TimeoutPolicy.Seconds)*time.Second)
 		defer cancel()
 	}
-	r.retriesRemaining = r.node.RetryPolicy.MaxAttempts
+	// RetryPolicy.MaxAttempts is a total-attempt cap, not a retry count
+	// (docs/JUMI_EXECUTABLE_RUN_SPEC_DRAFT.ko.md 9.3: "maxAttempts = 1은
+	// 실행 1회, 재시도 없음이다"), so the first attempt consumes one of
+	// the budget before any retry happens. MaxAttempts==0 (unset) still
+	// yields a negative retriesRemaining, which the > 0 check below
+	// correctly treats the same as "no retry".
+	r.retriesRemaining = r.node.RetryPolicy.MaxAttempts - 1
 	for {
 		err := r.runAttemptBody(ctx, a)
 		if err == nil || !errors.Is(err, errNodeRetry) {
