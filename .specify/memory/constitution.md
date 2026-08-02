@@ -9,14 +9,17 @@
   (`.semgrep/rules/`, Makefile gates, tests) — not this prose.
 -->
 
-## Cross-repo invariants live in the Platform Spec Wiki (canonical)
+## Cross-repo invariants live in the platform canonical (NodeVault §4)
 
 Cross-repo invariants — reproducibility, `casHash`, `stableRef`, the artifact
-dual-axis (`lifecycle_phase` / `integrity_health`), the sori boundary, and
-"do not record what you did not observe" (§1.10) — are owned solely by the
-**Platform Spec Wiki `1. constitution`**. This document does not restate or
-fork them; on any conflict, the wiki §1 wins. JUMI code that touches those
-concerns defers to the wiki, not to this file.
+dual-axis (`lifecycle_phase` / `integrity_health`), the sori boundary, and the
+image-build / ResolveRecipe rules — are owned solely by the platform canonical:
+
+> **`github.com/HeaInSeo/NodeVault` — `docs/PLATFORM_MASTER_DESIGN.md` §4**
+> (immutable architecture decisions)
+
+This document does not restate or fork them; on any conflict, §4 wins. JUMI
+code that touches those concerns defers to §4, not to this file.
 
 ## Process discipline (repo-operational — owned by this repo)
 
@@ -71,8 +74,9 @@ manifest lint (`make kube-linter`), CodeQL. All blocking in CI.
 
 ## §1.10 — "do not record what you did not observe"
 
-**Status: PROPOSED (not enforced in JUMI).** §1.10 is a cross-repo invariant
-owned by the wiki; JUMI currently has **no deterministic rule** enforcing it.
+**Status: PROPOSED (not enforced in JUMI).** §1.10 is a platform-level rule
+(not yet part of NodeVault §4); JUMI currently has **no deterministic rule**
+enforcing it.
 A live example of the gap: JUMI emits a hardcoded `cleanup_backlog_objects`
 constant of `0` without observing actual backlog (`SetCleanupBacklogObjects(0)`,
 addressed by E-22). Until a rule exists, this is PROPOSED, not IMPLEMENTED.
@@ -86,4 +90,15 @@ addressed by E-22). Until a rule exists, this is PROPOSED, not IMPLEMENTED.
   repo constitution. Editing the canonical to record it is out of scope here.
 -->
 
-**Version**: 1.1.0 | **Ratified**: 2026-08-02 | **Last Amended**: 2026-08-02
+## Governance
+
+This constitution is versioned and amendable. Changes to the process discipline
+or the local-rules index land by PR with a rationale. **Amendment procedure:**
+(1) state the rationale; (2) when a local rule's status changes, update the
+enforcing gate in the same change; (3) bump the version below — **major** =
+a principle/rule removed or redefined, or the source of authority changed;
+**minor** = rule added; **patch** = clarification. A rule is `IMPLEMENTED` only
+if a deterministic gate enforces it; otherwise `PROPOSED`. Cross-repo invariants
+are governed by NodeVault §4, not here — this document cannot amend them.
+
+**Version**: 2.0.0 | **Ratified**: 2026-08-02 | **Last Amended**: 2026-08-02
