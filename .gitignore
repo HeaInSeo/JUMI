@@ -6,3 +6,6 @@ coverage.out
 /jumi-lifecycle
 artifacts/
 reports/
+
+# spec-kit per-developer session state (current-feature pointer)
+.specify/feature.json
