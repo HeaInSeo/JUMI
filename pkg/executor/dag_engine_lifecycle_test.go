@@ -285,7 +285,7 @@ func (o *orphanedAfterRunningRegistry) UpdateNode(ctx context.Context, runID, no
 		if err != nil {
 			return err
 		}
-		rec, getErr := o.Registry.GetNode(ctx, runID, nodeID)
+		rec, getErr := o.GetNode(ctx, runID, nodeID)
 		if getErr == nil && rec.Status == spec.NodeStatusRunning {
 			o.arm()
 			return nil
