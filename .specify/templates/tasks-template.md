@@ -9,7 +9,7 @@ description: "Task list template for feature implementation"
 
 **Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
 
-**Tests**: The examples below include test tasks. Tests are OPTIONAL - only include them if explicitly requested in the feature specification.
+**Tests**: [JUMI local — overrides the upstream opt-in default] Per the JUMI Constitution (Principle IV, `.specify/memory/constitution.md`), every behavioral change MUST ship with tests that fail before the change and pass after. `/speckit-tasks` MUST generate test tasks (unit + regression as appropriate) for any task that changes runtime behavior. Test tasks are omittable only for non-behavioral work (docs, config, pure refactors already covered). This is enforced regardless by the deterministic gate (`make coverage-check`, CI test/regression), which fails untested behavioral changes — the template default is aligned here so the front-half does not silently propose untested implementation.
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
