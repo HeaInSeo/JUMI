@@ -126,6 +126,11 @@ func (m *Metrics) IncLocalityFallbackOK()    { m.localityFallbackOK.Add(context.
 func (m *Metrics) IncLocalityFallbackFail()  { m.localityFallbackFail.Add(context.Background(), 1) }
 func (m *Metrics) IncSampleRunsFinalized()   { m.sampleRunsFinalized.Add(context.Background(), 1) }
 func (m *Metrics) IncGCEvaluateRequests()    { m.gcEvaluateRequests.Add(context.Background(), 1) }
+
+// SetCleanupBacklogObjects records the number of cleanup-backlog objects.
+// This metric is not recorded in production until a path that counts the actual
+// number of residual objects exists. Feeding a value without observation
+// violates canonical §21.27.3 O2. Related: gap-register #23-1 · #23-2.
 func (m *Metrics) SetCleanupBacklogObjects(v float64) {
 	m.cleanupBacklogObjects.Record(context.Background(), v)
 }
