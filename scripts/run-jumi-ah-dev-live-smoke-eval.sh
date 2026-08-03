@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REMOTE_SSH_TARGET="${REMOTE_SSH_TARGET:-seoy@100.123.80.48}"
-REMOTE_KUBECONFIG="${REMOTE_KUBECONFIG:-/opt/go/src/github.com/HeaInSeo/infra-lab/kubeconfig}"
+REMOTE_KUBECONFIG="${REMOTE_KUBECONFIG:?REMOTE_KUBECONFIG is required (path to the remote cluster kubeconfig)}"
 REMOTE_JUMI_REPO_ROOT="${REMOTE_JUMI_REPO_ROOT:-/opt/go/src/github.com/HeaInSeo/JUMI}"
 REMOTE_TMP_DIR="${REMOTE_TMP_DIR:-/tmp/jumi-ah-dev-live-smoke}"
 VM_NAMESPACE="${VM_NAMESPACE:-jumi-ah-dev}"
