@@ -720,7 +720,6 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 		return r.failNode(err, attemptID, "failed", "backend_start_error")
 	}
 	r.metrics.IncJobsCreated()
-	r.metrics.SetCleanupBacklogObjects(0)
 	r.registerHandle(handle)
 	defer r.unregisterHandle()
 	r.persistHandle(handle)
