@@ -26,18 +26,6 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 )
 
-const outputManifestModeMetadataKey = "jumi.outputManifestMode"
-
-// outputManifestModeWrappedShell is an obsolete compatibility mode kept only so
-// older smoke/dev fixtures continue to run during the nan transition. It is a
-// final removal target once JUMI switches fully to nan runtime execution.
-const outputManifestModeWrappedShell = "wrapped-shell"
-
-// outputManifestModeRuntimeHelper is an obsolete compatibility mode that still
-// wraps the node command with the legacy helper path. New runtime integration
-// should move to `nan run`. This mode is a final removal target.
-const outputManifestModeRuntimeHelper = "runtime-helper"
-
 // ArtifactHelperPath is the intended runtime binary path after node runtime
 // images migrate to nan.
 const ArtifactHelperPath = "/usr/local/bin/nan"
@@ -586,9 +574,9 @@ func injectOutputContractEnv(env map[string]string, run spec.RunRecord, node spe
 	if contractJSON, err := buildNodeContractJSON(run, node, outputs); err == nil {
 		setEnvDefault(env, "JUMI_NODE_CONTRACT_PATH", defaultNodeContractPath)
 		setEnvDefault(env, "JUMI_NODE_CONTRACT_JSON", contractJSON)
-		if manifestExportMode(node) == outputManifestModeRuntimeHelper {
-			stripContractInputEnv(env)
-		}
+		// nan reads inputs from the node contract and materializes them itself,
+		// so the raw JUMI_INPUT_* env is removed from the child command.
+		stripContractInputEnv(env)
 	}
 }
 
@@ -614,19 +602,15 @@ func setEnvDefault(env map[string]string, key string, value string) {
 }
 
 func wrapCommandForManifestExport(command []string, node spec.Node) []string {
-	mode := manifestExportMode(node)
-	if mode == "" || len(command) == 0 {
+	if len(command) == 0 || !nodeHasOutput(node) {
 		return command
 	}
-	if mode == outputManifestModeRuntimeHelper {
-		// Compatibility note:
-		// The runtime-side artifact helper belongs to the DAG node runtime image,
-		// not to the JUMI service image. Use the canonical nan path by default and
-		// keep the legacy helper name only as a transitional runtime image alias.
-		//
-		// TODO(runtime-contract): remove this obsolete compatibility path after
-		// the node runtime images no longer carry the legacy helper alias.
-		script := fmt.Sprintf(`
+	// The runtime-side artifact helper (`nan`) belongs to the DAG node runtime
+	// image, not to the JUMI service image. JUMI writes the node contract and
+	// hands execution to `nan run --contract`, which materializes inputs, runs
+	// the user command, and emits the artifacts manifest. This is the default
+	// (and only) execution path for output-producing nodes.
+	script := fmt.Sprintf(`
 contract_path="${JUMI_NODE_CONTRACT_PATH:-%s}"
 contract_dir="${contract_path%%/*}"
 if [ "$contract_dir" = "$contract_path" ]; then
@@ -636,53 +620,21 @@ mkdir -p "${contract_path%%/*}"
 printf '%%s' "${JUMI_NODE_CONTRACT_JSON:?missing JUMI_NODE_CONTRACT_JSON}" > "$contract_path"
 exec "%s" run --contract "$contract_path" -- "$@"
 `, defaultNodeContractPath, artifactHelperCommandPath())
-		wrapped := []string{"/bin/sh", "-ceu", script, "jumi-node-contract"}
-		wrapped = append(wrapped, command...)
-		return wrapped
-	}
-	// wrapped-shell is obsolete compatibility only. Keep it available for older
-	// fixtures until nan command injection fully replaces shell wrapping.
-	script := `
-"$@"
-status=$?
-if [ "$status" -ne 0 ]; then
-  exit "$status"
-fi
-manifest_path="${JUMI_OUTPUT_MANIFEST_PATH}"
-manifest_dir="${manifest_path%/*}"
-mkdir -p "$manifest_dir"
-tmp_path="${manifest_path}.tmp"
-printf '{"artifacts":[' > "$tmp_path"
-first=1
-OLDIFS="$IFS"
-IFS=','
-for output in ${JUMI_OUTPUT_NAMES}; do
-  path="/out/${output}"
-  if [ ! -f "$path" ]; then
-    continue
-  fi
-  uri="jumi://runs/${JUMI_RUN_ID}/nodes/${JUMI_NODE_ID}/outputs/${output}"
-  size="$(wc -c < "$path" | tr -d '[:space:]')"
-  digest=""
-  if command -v sha256sum >/dev/null 2>&1; then
-    digest="sha256:$(sha256sum "$path" | awk '{print $1}')"
-  fi
-  if [ "$first" -eq 0 ]; then
-    printf ',' >> "$tmp_path"
-  fi
-  first=0
-  printf '{"outputName":"%s","uri":"%s","digest":"%s","sizeBytes":%s}' "$output" "$uri" "$digest" "$size" >> "$tmp_path"
-done
-IFS="$OLDIFS"
-printf ']}\n' >> "$tmp_path"
-		mv "$tmp_path" "$manifest_path"
-		if [ -w /dev/termination-log ]; then
-		  cat "$manifest_path" > /dev/termination-log 2>/dev/null || true
-		fi
-	`
-	wrapped := []string{"/bin/sh", "-ceu", script, "jumi-output-manifest"}
+	wrapped := []string{"/bin/sh", "-ceu", script, "jumi-node-contract"}
 	wrapped = append(wrapped, command...)
 	return wrapped
+}
+
+// nodeHasOutput reports whether the node declares at least one non-empty output
+// name. It mirrors the effective-output check in injectOutputContractEnv so the
+// command is wrapped exactly when the node contract env is injected.
+func nodeHasOutput(node spec.Node) bool {
+	for _, output := range node.Outputs {
+		if output != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func artifactHelperCommandPath() string {
@@ -867,18 +819,6 @@ func contractFirstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func manifestExportMode(node spec.Node) string {
-	if len(node.Outputs) == 0 || node.Metadata == nil {
-		return ""
-	}
-	switch node.Metadata[outputManifestModeMetadataKey] {
-	case outputManifestModeWrappedShell, outputManifestModeRuntimeHelper:
-		return node.Metadata[outputManifestModeMetadataKey]
-	default:
-		return ""
-	}
 }
 
 // ── HandlePersister ───────────────────────────────────────────────────────────

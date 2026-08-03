@@ -28,32 +28,17 @@ func TestManifestPathForNode(t *testing.T) {
 	}
 }
 
-// --- manifestExportMode ---
+// --- nodeHasOutput ---
 
-func TestManifestExportMode(t *testing.T) {
-	if got := manifestExportMode(spec.Node{}); got != "" {
-		t.Fatalf("manifestExportMode(no outputs) = %q, want empty", got)
+func TestNodeHasOutput(t *testing.T) {
+	if nodeHasOutput(spec.Node{}) {
+		t.Fatal("nodeHasOutput(no outputs) = true, want false")
 	}
-	if got := manifestExportMode(spec.Node{Outputs: []string{"out"}}); got != "" {
-		t.Fatalf("manifestExportMode(no metadata) = %q, want empty", got)
+	if nodeHasOutput(spec.Node{Outputs: []string{"", ""}}) {
+		t.Fatal("nodeHasOutput(empty output names) = true, want false")
 	}
-	if got := manifestExportMode(spec.Node{
-		Outputs:  []string{"out"},
-		Metadata: map[string]string{"jumi.outputManifestMode": "wrapped-shell"},
-	}); got != "wrapped-shell" {
-		t.Fatalf("manifestExportMode(wrapped-shell) = %q, want wrapped-shell", got)
-	}
-	if got := manifestExportMode(spec.Node{
-		Outputs:  []string{"out"},
-		Metadata: map[string]string{"jumi.outputManifestMode": "runtime-helper"},
-	}); got != "runtime-helper" {
-		t.Fatalf("manifestExportMode(runtime-helper) = %q, want runtime-helper", got)
-	}
-	if got := manifestExportMode(spec.Node{
-		Outputs:  []string{"out"},
-		Metadata: map[string]string{"jumi.outputManifestMode": "unknown"},
-	}); got != "" {
-		t.Fatalf("manifestExportMode(unknown) = %q, want empty", got)
+	if !nodeHasOutput(spec.Node{Outputs: []string{"", "report"}}) {
+		t.Fatal("nodeHasOutput(one non-empty) = false, want true")
 	}
 }
 
@@ -458,38 +443,38 @@ func TestWrapCommandForManifestExport_NoOutputs(t *testing.T) {
 	}
 }
 
-func TestWrapCommandForManifestExport_WrappedShell(t *testing.T) {
-	node := spec.Node{
-		Outputs:  []string{"out.txt"},
-		Metadata: map[string]string{"jumi.outputManifestMode": "wrapped-shell"},
-	}
+func TestWrapCommandForManifestExport_EmptyOutputNamesNotWrapped(t *testing.T) {
+	node := spec.Node{Outputs: []string{"", ""}} // no effective outputs => no wrapping
 	cmd := []string{"python", "app.py"}
 	got := wrapCommandForManifestExport(cmd, node)
-	if len(got) < 4 {
+	if len(got) != 2 || got[0] != "python" {
+		t.Fatalf("wrapCommandForManifestExport(empty output names) = %v, want unchanged", got)
+	}
+}
+
+// nan run --contract is the default (and only) execution path for
+// output-producing nodes: no mode metadata is required to opt in.
+func TestWrapCommandForManifestExport_DefaultUsesNanContract(t *testing.T) {
+	node := spec.Node{Outputs: []string{"report"}} // no jumi.outputManifestMode metadata
+	cmd := []string{"sh", "-c", "echo hi"}
+	got := wrapCommandForManifestExport(cmd, node)
+	if len(got) < 5 {
 		t.Fatalf("wrapped command too short: %v", got)
 	}
 	if got[0] != "/bin/sh" || got[1] != "-ceu" {
 		t.Fatalf("wrapped prefix = %v, want [/bin/sh -ceu ...]", got[:2])
 	}
-	if !strings.Contains(got[2], "JUMI_OUTPUT_MANIFEST_PATH") {
-		t.Fatalf("wrapper script missing JUMI_OUTPUT_MANIFEST_PATH reference: %q", got[2])
-	}
-}
-
-func TestWrapCommandForManifestExport_RuntimeHelper(t *testing.T) {
-	node := spec.Node{
-		Outputs:  []string{"report"},
-		Metadata: map[string]string{"jumi.outputManifestMode": "runtime-helper"},
-	}
-	cmd := []string{"sh", "-c", "echo hi"}
-	got := wrapCommandForManifestExport(cmd, node)
-	if len(got) < 4 {
-		t.Fatalf("runtime-helper command too short: %v", got)
-	}
-	if got[0] != "/bin/sh" || got[1] != "-ceu" {
-		t.Fatalf("runtime-helper prefix = %v, want [/bin/sh -ceu ...]", got[:2])
-	}
 	if !strings.Contains(got[2], "node-contract.json") {
-		t.Fatalf("runtime-helper wrapper missing contract path: %q", got[2])
+		t.Fatalf("default wrapper missing contract path: %q", got[2])
+	}
+	if !strings.Contains(got[2], "run --contract") {
+		t.Fatalf("default wrapper does not invoke `nan run --contract`: %q", got[2])
+	}
+	if !strings.Contains(got[2], ArtifactHelperPath) {
+		t.Fatalf("default wrapper does not reference nan path %q: %q", ArtifactHelperPath, got[2])
+	}
+	// Original user command is preserved after the wrapper argv0.
+	if got[4] != "sh" || got[len(got)-1] != "echo hi" {
+		t.Fatalf("original command not preserved: %v", got)
 	}
 }
