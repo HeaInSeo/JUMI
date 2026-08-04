@@ -45,26 +45,37 @@ invariants.
 - **Branch protection.** `main` lands via PR with required status checks and
   resolved review threads; no direct pushes.
 
-## Repo-local enforced constraints (derived index — NOT canonical)
+## Repo-local constraints (derived index — NOT canonical)
 
-> This section is a derived index of constraints enforced by THIS repo's own
-> gates. It is **not** canonical: the SoT is the rule itself (cited per line).
-> These are local because no other repo's code can violate them — they concern
-> JUMI's own Kubernetes-orchestration internals.
+> This section is a derived index of THIS repo's own local constraints. It is
+> **not** canonical: the SoT is the rule itself (cited per line). These are
+> local because no other repo's code can violate them — they concern JUMI's own
+> Kubernetes-orchestration internals.
+>
+> **Current state (charter 2-axis notation).** Each rule below runs today via
+> the Semgrep workflow (`.github/workflows/semgrep.yml`, check `Run JUMI custom
+> rules`), but that check is **not yet in the branch ruleset's required list**,
+> so a violation does not block merge. Per the charter's gate-index standard a
+> gate is `IMPLEMENTED` only when a required status check backs it; until the
+> Semgrep check is promoted to required these rules are
+> **`PROPOSED · target=Required`** — they run, but are not merge-enforced.
+> Promoting the check to a required status check is a separate ruleset change
+> (owned by the central guardrail track); on promotion these transition to
+> `IMPLEMENTED`.
 
-- **SCHED-001** (IMPLEMENTED — `.semgrep/rules/…no-direct-podspec-nodename`):
+- **SCHED-001** (PROPOSED · target=Required — `.semgrep/rules/…no-direct-podspec-nodename`):
   never set `PodSpec.NodeName` directly; use `RequiredNodeName` → hostname
   `nodeSelector`. Rationale doc: `docs/JUMI_SCHEDULER_BOUNDARY.ko.md`.
-- **K8S-001** (IMPLEMENTED — `.semgrep/rules/…no-job-name-only-pod-watch`):
+- **K8S-001** (PROPOSED · target=Required — `.semgrep/rules/…no-job-name-only-pod-watch`):
   Pod watches filter on `jumi.io/run-key`+`node-key`+`attempt-id`, not job-name
   alone. Contract doc: `docs/JUMI_K8S_JOB_LABEL_CONTRACT.md`.
-- **K8S-002** (IMPLEMENTED — `.semgrep/rules/…no-job-delete-without-uid-preconditions`):
+- **K8S-002** (PROPOSED · target=Required — `.semgrep/rules/…no-job-delete-without-uid-preconditions`):
   Job delete-by-name uses UID `DeleteOptions.Preconditions`.
-- **DATA-001** (IMPLEMENTED — `.semgrep/rules/…no-adhoc-materialization-env-key`):
+- **DATA-001** (PROPOSED · target=Required — `.semgrep/rules/…no-adhoc-materialization-env-key`):
   `JUMI_INPUT_*` env keys only via the `materializationEnvKey` helper.
-- **EXEC-001** (IMPLEMENTED — `.semgrep/rules/…no-failed-execution-result-without-reason`):
+- **EXEC-001** (PROPOSED · target=Required — `.semgrep/rules/…no-failed-execution-result-without-reason`):
   a failed `backend.ExecutionResult` must set `TerminalFailureReason`.
-- **EXEC-002** (IMPLEMENTED — `.semgrep/rules/…waitnode-must-check-succeeded`):
+- **EXEC-002** (PROPOSED · target=Required — `.semgrep/rules/…waitnode-must-check-succeeded`):
   `waitAndFinalize` branches on `!result.Succeeded` even on nil error.
 
 Security/supply-chain local gates (SoT = the make targets / CI): `gosec`
@@ -74,9 +85,11 @@ manifest lint (`make kube-linter`), CodeQL. All blocking in CI.
 
 ## §1.10 — "do not record what you did not observe"
 
-**Status: PROPOSED (not enforced in JUMI).** §1.10 is a platform-level rule
-(not yet part of NodeVault §4); JUMI currently has **no deterministic rule**
-enforcing it.
+**Status: PROPOSED (not enforced in JUMI).** §1.10 is a platform-level
+invariant **owned by the Platform Spec Wiki (§1.10)** — not by this repo and not
+by NodeVault §4. JUMI records only the reference and its local enforcement
+status here, and does **not** assign it a `target` (the wiki owns that). JUMI
+currently has **no deterministic rule** enforcing it.
 A live example of the gap: JUMI emits a hardcoded `cleanup_backlog_objects`
 constant of `0` without observing actual backlog (`SetCleanupBacklogObjects(0)`,
 addressed by E-22). Until a rule exists, this is PROPOSED, not IMPLEMENTED.
@@ -98,7 +111,9 @@ or the local-rules index land by PR with a rationale. **Amendment procedure:**
 enforcing gate in the same change; (3) bump the version below — **major** =
 a principle/rule removed or redefined, or the source of authority changed;
 **minor** = rule added; **patch** = clarification. A rule is `IMPLEMENTED` only
-if a deterministic gate enforces it; otherwise `PROPOSED`. Cross-repo invariants
-are governed by NodeVault §4, not here — this document cannot amend them.
+if a required status check backs it (blocks merge on violation); otherwise it is
+`PROPOSED · target=<grade>`, where the `target` grade is owned by the charter,
+not judged here. Cross-repo invariants are governed by NodeVault §4, not here —
+this document cannot amend them.
 
-**Version**: 2.0.0 | **Ratified**: 2026-08-02 | **Last Amended**: 2026-08-02
+**Version**: 3.0.0 | **Ratified**: 2026-08-02 | **Last Amended**: 2026-08-05
