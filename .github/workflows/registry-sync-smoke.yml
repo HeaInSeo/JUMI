@@ -33,6 +33,11 @@ on:
         required: true
         default: ghcr.io
         type: string
+      remote_kubeconfig:
+        description: Path to the cluster kubeconfig on the remote host
+        required: true
+        default: /opt/go/src/github.com/HeaInSeo/infra-lab/kubeconfig
+        type: string
 
 permissions:
   contents: read
@@ -67,6 +72,7 @@ jobs:
       - name: Run selected remote gate
         env:
           REMOTE_SSH_TARGET: ${{ inputs.remote_ssh_target }}
+          REMOTE_KUBECONFIG: ${{ inputs.remote_kubeconfig }}
           REGISTRY_HOST: ${{ inputs.registry_host }}
           BACKUP_REGISTRY_HOST: ${{ inputs.backup_registry_host }}
           SYNC_BACKUP_REGISTRY: ${{ inputs.sync_backup_registry }}

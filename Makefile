@@ -35,13 +35,16 @@ AH_GRPC_TARGET ?=
 AH_HTTP_URL ?=
 SAMPLE_RUN_ID ?=
 
-.PHONY: test test-regression coverage coverage-check fmt vet lint lint-depguard lint-security lint-security-check license-check semgrep semgrep-test kube-linter quality-guardrails update-spawner-fixtures vuln vuln-check vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-align-check runtime-smoke-remote ko-publish-remote ko-smoke-remote verify-sprint-3d-baseline verify-sprint-3d-remote lifecycle-check
+.PHONY: test test-regression coverage coverage-check fmt vet lint lint-depguard lint-security lint-security-check license-check semgrep semgrep-test kube-linter quality-guardrails update-spawner-fixtures vuln vuln-check vuln-all golangci-lint govulncheck handoff-proto-sync-check smoke-tool-build preflight-publish-local preflight-publish-remote preflight-ko-remote runtime-build-local runtime-check-local runtime-align-check runtime-smoke-remote ko-publish-remote ko-smoke-remote verify-sprint-3d-baseline verify-sprint-3d-remote lifecycle-check require-ah-repo-root require-nan-repo-root
 
 REMOTE_SSH_TARGET ?= seoy@100.123.80.48
 REGISTRY_HOST ?= harbor.10.113.24.96.nip.io
 RUNTIME_IMAGE_LOCAL_TAG ?= jumi-runtime:dev
-AH_REPO_ROOT ?= /opt/go/src/github.com/HeaInSeo/artifact-handoff
-NAN_REPO_ROOT ?= /opt/go/src/github.com/HeaInSeo/node-artifact-runtime
+# AH_REPO_ROOT / NAN_REPO_ROOT have no machine-specific default. Targets that
+# need a local artifact-handoff / node-artifact-runtime checkout require the
+# caller to set them (guarded by require-ah-repo-root / require-nan-repo-root).
+AH_REPO_ROOT ?=
+NAN_REPO_ROOT ?=
 PREFLIGHT_PUBLISH_ENV_SCRIPT := $(CURDIR)/scripts/preflight-publish-env.sh
 PREFLIGHT_KO_REMOTE_SCRIPT := $(CURDIR)/scripts/preflight-ko-remote.sh
 PUBLISH_JUMI_SERVICE_KO_REMOTE_SCRIPT := $(CURDIR)/scripts/publish-jumi-service-ko-remote.sh
@@ -177,7 +180,13 @@ vuln-all: govulncheck
 	$(GOENV) $(GOVULNCHECK) ./... 2>&1 | tee "$(REPORT_DIR)/govulncheck-all.txt"; \
 	echo "govulncheck_all_exit=$$?" | tee "$(REPORT_DIR)/govulncheck-all.summary"
 
-handoff-proto-sync-check:
+require-ah-repo-root:
+	@test -n "$(AH_REPO_ROOT)" || { echo "ERROR: AH_REPO_ROOT is required; set it to your artifact-handoff checkout (e.g. make $(MAKECMDGOALS) AH_REPO_ROOT=/path/to/artifact-handoff)"; exit 1; }
+
+require-nan-repo-root:
+	@test -n "$(NAN_REPO_ROOT)" || { echo "ERROR: NAN_REPO_ROOT is required; set it to your node-artifact-runtime checkout (e.g. make $(MAKECMDGOALS) NAN_REPO_ROOT=/path/to/node-artifact-runtime)"; exit 1; }
+
+handoff-proto-sync-check: require-ah-repo-root
 	test -f "$(AH_REPO_ROOT)/api/proto/ahv1/ah_v1.pb.go"
 	test -f "$(AH_REPO_ROOT)/api/proto/ahv1/ah_v1_grpc.pb.go"
 	diff -u "$(AH_REPO_ROOT)/api/proto/ahv1/ah_v1.pb.go" "$(JUMI_AH_PROTO_DIR)/ah_v1.pb.go"
@@ -214,7 +223,7 @@ ko-publish-remote: preflight-ko-remote
 ko-smoke-remote: ko-publish-remote
 	REMOTE_JUMI_REPO_ROOT="/tmp/jumi-runtime-refresh" ALLOW_LOCAL_CHECKOUT_FALLBACK=true ./scripts/run-jumi-ah-dev-live-smoke-eval.sh
 
-verify-sprint-3d-baseline: runtime-align-check handoff-proto-sync-check
+verify-sprint-3d-baseline: require-ah-repo-root require-nan-repo-root runtime-align-check handoff-proto-sync-check
 	@mkdir -p "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)" /tmp/ah-addsource-tmp /tmp/ah-addsource-cache /tmp/nan-node-contract-tmp /tmp/nan-node-contract-cache
 	$(GOENV) go test ./pkg/backend ./pkg/executor ./pkg/handoff
 	test -d "$(AH_REPO_ROOT)"
