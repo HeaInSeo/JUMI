@@ -44,12 +44,14 @@ jobs:
             echo "base commit unavailable — running full checks"
             exit 0
           fi
-          changed="$(git diff --name-only "$base" "$head")"
+          # --no-renames so a code→*.md rename is not misread as docs-only
+          # (see .github/actions/detect-docs-only; NodeVault#87).
+          changed="$(git diff --no-renames --name-only "$base" "$head")"
           if [ -z "$changed" ]; then
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if printf '%s\n' "$changed" | grep -qvE '(\.md$|^LICENSE|^\.github/.*\.md$)'; then
+          if printf '%s\n' "$changed" | grep -qvE '(\.md$|^LICENSE(\.[^/]*)?$)'; then
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
             echo "non-doc files changed — running checks"
           else
