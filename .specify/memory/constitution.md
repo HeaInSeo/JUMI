@@ -10,7 +10,7 @@
   prose.
 -->
 
-## Cross-repo authority — revision-pinned repository mirror
+## Cross-repo authority — verified revision-pinned repository mirror
 
 Cross-repo platform meaning is selected by the external Authority Router. For
 `AR-2026-08-17.1` the scoped authority chain is:
@@ -18,14 +18,32 @@ Cross-repo platform meaning is selected by the external Authority Router. For
 - platform invariants: `Platform Spec Wiki — CURRENT / 1. constitution`
 - platform structure / responsibility / call direction:
   `Platform Spec Wiki — CURRENT / 2. architecture`
-- repository-portable mirror: `HeaInSeo/NodeVault` —
-  `docs/PLATFORM_MASTER_DESIGN.md` at the same authority revision
+- repository-portable invariant mirror: `HeaInSeo/NodeVault` —
+  `docs/PLATFORM_MASTER_DESIGN.md §4.1–§4.10`
+- mirror verification record: `HeaInSeo/NodeVault` —
+  `docs/AUTHORITY_MIRROR_VERIFICATION.md`
 
 JUMI does **not** treat NodeVault §4 as an independent platform canonical. A task
-may consume that repository mirror only when its `Authority Snapshot` declares
-`AR-2026-08-17.1`. If the snapshot is missing, names another revision, or
-conflicts with the mirror, stop with `AUTHORITY_CONFLICT`; do not choose a source
-by timestamp, filename, or search rank.
+may consume the repository mirror for cross-repo invariant meaning only when
+**all** of the following are true:
+
+1. the task `Authority Snapshot` declares `AR-2026-08-17.1`;
+2. the NodeVault verification record says `SYNC STATUS: VERIFIED`;
+3. the mirror blob SHA matches the blob SHA recorded by that verification record;
+4. every scoped/domain/component authority required by the JUMI task is
+   explicitly present in the task `Authority Snapshot`;
+5. no semantic conflict with the current Authority Router/upstream authority has
+   been detected.
+
+If any condition is missing, `STALE`, `UNKNOWN`, mismatched, or conflicting, stop
+with `AUTHORITY_CONFLICT`; do not choose a source by timestamp, filename, or
+search rank. **Revision equality alone is not sufficient.**
+
+The current repository verification record covers platform invariants only. JUMI
+work that depends on platform structure/ownership/call-direction or a specific
+execution/materialization/retry contract must carry the exact CURRENT
+architecture and relevant scoped/component contract directly in the task
+`Authority Snapshot`.
 
 ## Process discipline (repo-operational — owned by this repo)
 
@@ -107,9 +125,9 @@ a principle/rule removed or redefined, or the source of authority changed;
 **minor** = rule added; **patch** = clarification. A rule is `IMPLEMENTED` only
 if a deterministic gate enforces it; otherwise `PROPOSED`.
 
-Cross-repo semantics cannot be amended by editing this constitution or a
-repository mirror alone. They follow the task's current Authority Snapshot; a
-new platform authority revision must be accepted before repository mirrors are
-synchronized.
+Cross-repo semantics cannot be amended by editing this constitution, a
+repository mirror, or its verification record alone. They follow the task's
+current Authority Snapshot; a new platform authority revision must be accepted
+before repository mirrors are synchronized and independently re-verified.
 
-**Version**: 3.0.0 | **Ratified**: 2026-08-02 | **Last Amended**: 2026-08-17
+**Version**: 3.1.0 | **Ratified**: 2026-08-02 | **Last Amended**: 2026-08-17
