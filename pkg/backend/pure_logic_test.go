@@ -37,11 +37,13 @@ func TestManifestExportMode(t *testing.T) {
 	if got := manifestExportMode(spec.Node{Outputs: []string{"out"}}); got != "" {
 		t.Fatalf("manifestExportMode(no metadata) = %q, want empty", got)
 	}
+	// wrapped-shell is no longer a recognized mode; it must fall through to the
+	// no-wrap gate exactly like an unknown value.
 	if got := manifestExportMode(spec.Node{
 		Outputs:  []string{"out"},
 		Metadata: map[string]string{"jumi.outputManifestMode": "wrapped-shell"},
-	}); got != "wrapped-shell" {
-		t.Fatalf("manifestExportMode(wrapped-shell) = %q, want wrapped-shell", got)
+	}); got != "" {
+		t.Fatalf("manifestExportMode(wrapped-shell) = %q, want empty (mode removed)", got)
 	}
 	if got := manifestExportMode(spec.Node{
 		Outputs:  []string{"out"},
@@ -458,21 +460,17 @@ func TestWrapCommandForManifestExport_NoOutputs(t *testing.T) {
 	}
 }
 
-func TestWrapCommandForManifestExport_WrappedShell(t *testing.T) {
+func TestWrapCommandForManifestExport_WrappedShellRemoved(t *testing.T) {
+	// wrapped-shell is no longer a recognized mode, so the command must be left
+	// unwrapped just like a node with no manifest-export metadata.
 	node := spec.Node{
 		Outputs:  []string{"out.txt"},
 		Metadata: map[string]string{"jumi.outputManifestMode": "wrapped-shell"},
 	}
 	cmd := []string{"python", "app.py"}
 	got := wrapCommandForManifestExport(cmd, node)
-	if len(got) < 4 {
-		t.Fatalf("wrapped command too short: %v", got)
-	}
-	if got[0] != "/bin/sh" || got[1] != "-ceu" {
-		t.Fatalf("wrapped prefix = %v, want [/bin/sh -ceu ...]", got[:2])
-	}
-	if !strings.Contains(got[2], "JUMI_OUTPUT_MANIFEST_PATH") {
-		t.Fatalf("wrapper script missing JUMI_OUTPUT_MANIFEST_PATH reference: %q", got[2])
+	if len(got) != 2 || got[0] != "python" || got[1] != "app.py" {
+		t.Fatalf("wrapCommandForManifestExport(wrapped-shell) = %v, want unchanged (mode removed)", got)
 	}
 }
 

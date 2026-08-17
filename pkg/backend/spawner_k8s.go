@@ -28,11 +28,6 @@ import (
 
 const outputManifestModeMetadataKey = "jumi.outputManifestMode"
 
-// outputManifestModeWrappedShell is an obsolete compatibility mode kept only so
-// older smoke/dev fixtures continue to run during the nan transition. It is a
-// final removal target once JUMI switches fully to nan runtime execution.
-const outputManifestModeWrappedShell = "wrapped-shell"
-
 // outputManifestModeRuntimeHelper is an obsolete compatibility mode that still
 // wraps the node command with the legacy helper path. New runtime integration
 // should move to `nan run`. This mode is a final removal target.
@@ -618,15 +613,14 @@ func wrapCommandForManifestExport(command []string, node spec.Node) []string {
 	if mode == "" || len(command) == 0 {
 		return command
 	}
-	if mode == outputManifestModeRuntimeHelper {
-		// Compatibility note:
-		// The runtime-side artifact helper belongs to the DAG node runtime image,
-		// not to the JUMI service image. Use the canonical nan path by default and
-		// keep the legacy helper name only as a transitional runtime image alias.
-		//
-		// TODO(runtime-contract): remove this obsolete compatibility path after
-		// the node runtime images no longer carry the legacy helper alias.
-		script := fmt.Sprintf(`
+	// Only the runtime-helper (nan run) wrap survives. Compatibility note:
+	// The runtime-side artifact helper belongs to the DAG node runtime image,
+	// not to the JUMI service image. Use the canonical nan path by default and
+	// keep the legacy helper name only as a transitional runtime image alias.
+	//
+	// TODO(runtime-contract): remove this obsolete compatibility path after
+	// the node runtime images no longer carry the legacy helper alias.
+	script := fmt.Sprintf(`
 contract_path="${JUMI_NODE_CONTRACT_PATH:-%s}"
 contract_dir="${contract_path%%/*}"
 if [ "$contract_dir" = "$contract_path" ]; then
@@ -636,51 +630,7 @@ mkdir -p "${contract_path%%/*}"
 printf '%%s' "${JUMI_NODE_CONTRACT_JSON:?missing JUMI_NODE_CONTRACT_JSON}" > "$contract_path"
 exec "%s" run --contract "$contract_path" -- "$@"
 `, defaultNodeContractPath, artifactHelperCommandPath())
-		wrapped := []string{"/bin/sh", "-ceu", script, "jumi-node-contract"}
-		wrapped = append(wrapped, command...)
-		return wrapped
-	}
-	// wrapped-shell is obsolete compatibility only. Keep it available for older
-	// fixtures until nan command injection fully replaces shell wrapping.
-	script := `
-"$@"
-status=$?
-if [ "$status" -ne 0 ]; then
-  exit "$status"
-fi
-manifest_path="${JUMI_OUTPUT_MANIFEST_PATH}"
-manifest_dir="${manifest_path%/*}"
-mkdir -p "$manifest_dir"
-tmp_path="${manifest_path}.tmp"
-printf '{"artifacts":[' > "$tmp_path"
-first=1
-OLDIFS="$IFS"
-IFS=','
-for output in ${JUMI_OUTPUT_NAMES}; do
-  path="/out/${output}"
-  if [ ! -f "$path" ]; then
-    continue
-  fi
-  uri="jumi://runs/${JUMI_RUN_ID}/nodes/${JUMI_NODE_ID}/outputs/${output}"
-  size="$(wc -c < "$path" | tr -d '[:space:]')"
-  digest=""
-  if command -v sha256sum >/dev/null 2>&1; then
-    digest="sha256:$(sha256sum "$path" | awk '{print $1}')"
-  fi
-  if [ "$first" -eq 0 ]; then
-    printf ',' >> "$tmp_path"
-  fi
-  first=0
-  printf '{"outputName":"%s","uri":"%s","digest":"%s","sizeBytes":%s}' "$output" "$uri" "$digest" "$size" >> "$tmp_path"
-done
-IFS="$OLDIFS"
-printf ']}\n' >> "$tmp_path"
-		mv "$tmp_path" "$manifest_path"
-		if [ -w /dev/termination-log ]; then
-		  cat "$manifest_path" > /dev/termination-log 2>/dev/null || true
-		fi
-	`
-	wrapped := []string{"/bin/sh", "-ceu", script, "jumi-output-manifest"}
+	wrapped := []string{"/bin/sh", "-ceu", script, "jumi-node-contract"}
 	wrapped = append(wrapped, command...)
 	return wrapped
 }
@@ -874,7 +824,7 @@ func manifestExportMode(node spec.Node) string {
 		return ""
 	}
 	switch node.Metadata[outputManifestModeMetadataKey] {
-	case outputManifestModeWrappedShell, outputManifestModeRuntimeHelper:
+	case outputManifestModeRuntimeHelper:
 		return node.Metadata[outputManifestModeMetadataKey]
 	default:
 		return ""
