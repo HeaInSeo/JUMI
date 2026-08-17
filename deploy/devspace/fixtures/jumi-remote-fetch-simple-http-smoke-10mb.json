@@ -11,7 +11,10 @@
   },
   "metadata": {
     "jumi.testShortcut": "This fixture is a Sprint 3A consumer materialization smoke for 10MiB. The producer does not publish to the HTTP source at runtime; a pre-seeded simple_http artifact source is used instead.",
-    "jumi.obsoleteCompatibility": "The consumer uses nan via the runtime shortcut image only to validate remote_fetch materialization. This is a VM happy-path profile, not the final artifact source design."
+    "jumi.obsoleteCompatibility": "The consumer uses nan via the runtime shortcut image only to validate remote_fetch materialization. This is a VM happy-path profile, not the final artifact source design.",
+    "jumi.sec110Debt": "This fixture hand-writes the produced output's artifact manifest inline via a heredoc (nanVersion: \"manual-vm-profile\") instead of letting nan observe the actual output. That records data that was never observed, which is a known debt against constitution §1.10 (do not record what was not observed).",
+    "jumi.demoScopeExclusion": "2026-08-17 decision: the September demo treats only the same-node local-reuse path as the canonical path. This remote-fetch smoke is OUT of the demo scope.",
+    "jumi.resolutionPrecondition": "Resolving the §1.10 debt requires standing up a real HTTP artifact source first. Until that exists the heredoc manifest MUST NOT be deleted: deleting it flips the consumer's materialization from remote_fetch to local reuse and thereby guts what this smoke validates."
   },
   "graph": {
     "nodes": [
