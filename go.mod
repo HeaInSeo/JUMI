@@ -1,6 +1,6 @@
 module github.com/HeaInSeo/JUMI
 
-go 1.26.5
+go 1.26.6
 
 require (
 	github.com/HeaInSeo/dag-go v1.2.1
