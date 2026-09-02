@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/HeaInSeo/JUMI/pkg/spec"
 )
@@ -13,6 +14,13 @@ import (
 var ErrRunNotFound = errors.New("run not found")
 var ErrNodeNotFound = errors.New("node not found")
 var ErrRunAlreadyExists = errors.New("run already exists")
+var ErrAttemptNotFound = errors.New("attempt not found")
+
+// ErrAttemptNonTerminal is returned by AllocateCurrentAttempt when the node's
+// current Attempt exists and has not reached terminal truth. It enforces the
+// F3 invariant that no replacement (semantic) Attempt is created while the
+// current Attempt's backend truth is unresolved.
+var ErrAttemptNonTerminal = errors.New("current attempt is non-terminal")
 
 type MemoryRegistry struct {
 	mu       sync.RWMutex
@@ -188,5 +196,125 @@ func (r *MemoryRegistry) AppendEvent(_ context.Context, event spec.EventRecord) 
 		return ErrRunNotFound
 	}
 	r.events[event.RunID] = append(r.events[event.RunID], event)
+	return nil
+}
+
+// --- F3 durable execution-truth operations ---
+
+func (r *MemoryRegistry) GetCurrentAttempt(_ context.Context, runID, nodeID string) (spec.AttemptRecord, bool, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	node, err := r.lockedGetNode(runID, nodeID)
+	if err != nil {
+		return spec.AttemptRecord{}, false, err
+	}
+	if node.CurrentAttemptID == "" {
+		return spec.AttemptRecord{}, false, nil
+	}
+	attempt, ok := r.attempts[runID][nodeID][node.CurrentAttemptID]
+	if !ok {
+		return spec.AttemptRecord{}, false, nil
+	}
+	return attempt, true, nil
+}
+
+func (r *MemoryRegistry) AllocateCurrentAttempt(_ context.Context, runID, nodeID string) (spec.AttemptRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	node, err := r.lockedGetNode(runID, nodeID)
+	if err != nil {
+		return spec.AttemptRecord{}, err
+	}
+	// Reject if the current Attempt exists and is non-terminal: no replacement
+	// Attempt may be created while the current one is unresolved.
+	if node.CurrentAttemptID != "" {
+		if cur, ok := r.attempts[runID][nodeID][node.CurrentAttemptID]; ok && !cur.Status.IsTerminal() {
+			return spec.AttemptRecord{}, ErrAttemptNonTerminal
+		}
+	}
+	next := node.AttemptCount + 1
+	attemptID := spec.DeterministicAttemptID(runID, nodeID, next)
+	now := time.Now().UTC()
+	attempt := spec.AttemptRecord{
+		RunID:     runID,
+		NodeID:    nodeID,
+		AttemptID: attemptID,
+		Status:    spec.AttemptStatusPrepared,
+		StartedAt: &now,
+	}
+	// All-or-nothing: mutate the in-memory maps only after all checks pass.
+	r.attempts[runID][nodeID][attemptID] = attempt
+	node.AttemptCount = next
+	node.CurrentAttemptID = attemptID
+	node.Status = spec.NodeStatusReady
+	node.CurrentBottleneckLocation = "release_wait"
+	node.StartedAt = &now
+	r.nodes[runID][nodeID] = node
+	return attempt, nil
+}
+
+func (r *MemoryRegistry) PersistSubmissionFence(_ context.Context, runID, nodeID, attemptID string, openedAt time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lockedMutateAttempt(runID, nodeID, attemptID, func(a *spec.AttemptRecord) {
+		t := openedAt.UTC()
+		a.SubmissionWindowOpenedAt = &t
+	})
+}
+
+func (r *MemoryRegistry) PersistBackendHandle(_ context.Context, runID, nodeID, attemptID, handleJSON string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.lockedMutateAttempt(runID, nodeID, attemptID, func(a *spec.AttemptRecord) {
+		a.BackendHandleJSON = handleJSON
+	}); err != nil {
+		return err
+	}
+	// Compat projection: mirror the current Attempt's handle onto the node.
+	node := r.nodes[runID][nodeID]
+	if node.CurrentAttemptID == attemptID {
+		node.CurrentAttemptHandleJSON = handleJSON
+		r.nodes[runID][nodeID] = node
+	}
+	return nil
+}
+
+func (r *MemoryRegistry) PersistCancellationIntent(_ context.Context, runID, nodeID, attemptID string, requestedAt time.Time, reason string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lockedMutateAttempt(runID, nodeID, attemptID, func(a *spec.AttemptRecord) {
+		t := requestedAt.UTC()
+		a.CancellationRequestedAt = &t
+		a.CancellationReason = reason
+	})
+}
+
+func (r *MemoryRegistry) lockedGetNode(runID, nodeID string) (spec.NodeRecord, error) {
+	runNodes, ok := r.nodes[runID]
+	if !ok {
+		return spec.NodeRecord{}, ErrRunNotFound
+	}
+	node, ok := runNodes[nodeID]
+	if !ok {
+		return spec.NodeRecord{}, ErrNodeNotFound
+	}
+	return node, nil
+}
+
+func (r *MemoryRegistry) lockedMutateAttempt(runID, nodeID, attemptID string, mutate func(*spec.AttemptRecord)) error {
+	runAttempts, ok := r.attempts[runID]
+	if !ok {
+		return ErrRunNotFound
+	}
+	nodeAttempts, ok := runAttempts[nodeID]
+	if !ok {
+		return ErrNodeNotFound
+	}
+	attempt, ok := nodeAttempts[attemptID]
+	if !ok {
+		return ErrAttemptNotFound
+	}
+	mutate(&attempt)
+	nodeAttempts[attemptID] = attempt
 	return nil
 }

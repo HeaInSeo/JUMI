@@ -44,8 +44,10 @@ func main() {
 }
 
 func runServe() {
-	reg := registry.NewMemoryRegistry()
-	log.Printf("jumi using in-memory registry: all run state will be lost on restart")
+	reg, closeReg := buildRegistry()
+	if closeReg != nil {
+		defer closeReg()
+	}
 
 	namespace := envOrDefault("JUMI_NAMESPACE", "default")
 	kubeconfigPath := os.Getenv("JUMI_KUBECONFIG")
@@ -88,6 +90,12 @@ func runServe() {
 	adapter.SetMetrics(engine.Metrics())
 	if gc, ok := handoffClient.(*handoff.GRPCClient); ok {
 		gc.SetMetrics(engine.Metrics())
+	}
+	// Reconcile-first on startup: recover non-terminal runs from durable truth
+	// before serving. Terminal Attempts are repaired (not re-executed); in-flight
+	// Attempts are reattached; unresolved Attempts are never blindly replaced.
+	if err := engine.Recover(context.Background()); err != nil {
+		log.Printf("jumi: startup reconcile sweep failed: %v", err)
 	}
 	service := api.NewService(reg, engine)
 
@@ -137,6 +145,24 @@ func runServe() {
 	defer cancel()
 	_ = httpServer.Shutdown(ctx)
 	grpcServer.GracefulStop()
+}
+
+// buildRegistry selects the registry backend. By default JUMI uses the durable
+// SQLite registry so accepted Run/Node/Attempt truth survives a restart. Set
+// JUMI_REGISTRY_PATH=memory to opt into the volatile in-memory registry (state
+// is lost on restart). The returned closer is nil for the in-memory registry.
+func buildRegistry() (registry.Registry, func()) {
+	path := envOrDefault("JUMI_REGISTRY_PATH", "jumi-registry.db")
+	if path == "memory" || path == ":memory:in-process" {
+		log.Printf("jumi using in-memory registry: all run state will be lost on restart")
+		return registry.NewMemoryRegistry(), nil
+	}
+	sqliteReg, err := registry.NewSQLiteRegistry(path)
+	if err != nil {
+		log.Fatalf("jumi: open durable registry at %s: %v", path, err)
+	}
+	log.Printf("jumi using durable sqlite registry at %s", path)
+	return sqliteReg, func() { _ = sqliteReg.Close() }
 }
 
 func newHandoffClientFromEnv() (handoff.Client, error) {
