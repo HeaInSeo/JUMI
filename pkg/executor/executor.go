@@ -653,9 +653,10 @@ func (r *nodeRunner) reconcileBeforeAllocation(ctx context.Context) (decision Re
 		return decision, node, true, r.reconcileUnresolved(node.CurrentAttemptID)
 	case ReconcileResolveByIdentity:
 		// Fence crossed, no restorable handle: the backend submit outcome is
-		// unknown-but-possibly-effected. Backend identity resolution is deferred
-		// (JUMI #44/#46). Guard: do NOT allocate a replacement Attempt.
-		return decision, node, true, r.reconcileUnresolved(node.CurrentAttemptID)
+		// unknown-but-possibly-effected. Resolve it by deterministic Attempt
+		// identity via a READ-ONLY backend find (F3-B1) — never a replacement
+		// Attempt, never a create-or-get.
+		return decision, node, true, r.reconcileByIdentity(ctx, node, currentAttempt)
 	}
 	return decision, node, false, nil
 }
@@ -1171,9 +1172,11 @@ func (r *nodeRunner) driveCancellation(ctx context.Context) {
 		// Handle recorded but unrestorable: leave unresolved (deferred #44/#46).
 		_ = r.reconcileUnresolved(node.CurrentAttemptID)
 	case ReconcileResolveByIdentity:
-		// Fence crossed, no restorable handle: cannot cancel what cannot be found.
-		// Leave unresolved (deferred #44/#46); never terminalize or replace.
-		_ = r.reconcileUnresolved(node.CurrentAttemptID)
+		// Fence crossed, no restorable handle: resolve the SAME Job read-only
+		// (F3-B1) before canceling. reconcileByIdentity's FOUND arm cancels the
+		// found Job and observes terminal truth because the run is Canceled; a
+		// non-FOUND outcome is left unresolved (never terminalized or replaced).
+		_ = r.reconcileByIdentity(ctx, node, currentAttempt)
 	default:
 		// ReconcileResumePreFence / ReconcileFresh: no backend Job exists, so the
 		// accepted cancellation can be finalized directly.
@@ -1300,6 +1303,77 @@ func (r *nodeRunner) reconcileUnresolved(attemptID string) error {
 		r.active.markUnresolved()
 	}
 	return errReconcileUnresolved
+}
+
+// reconcileByIdentity resolves the backend truth of a fence-crossed, handle-less
+// Attempt by a READ-ONLY find-by-identity (F3-B1). It never allocates a
+// replacement Attempt and never creates a Job to discover whether one exists:
+//   - FOUND     -> persist the recovered durable handle on the SAME Attempt and
+//     reattach (canceling the same Job first when a cancellation
+//     intent is durable); found-but-terminal is observed to the same
+//     Attempt's terminal truth by reattach (no replay).
+//   - CONFLICT  -> emit a distinct operator-visible event, then leave unresolved
+//     (no attach / create / replacement).
+//   - ABSENT_NOW / UNKNOWN -> leave unresolved (fail-closed, recoverable).
+//
+// An adapter without the AttemptResolver capability keeps the pre-B1 behavior
+// (unresolved), so the read-only resolve is a strict, opt-in refinement.
+func (r *nodeRunner) reconcileByIdentity(ctx context.Context, node spec.NodeRecord, currentAttempt spec.AttemptRecord) error {
+	attemptID := node.CurrentAttemptID
+	resolver, ok := r.adapter.(backend.AttemptResolver)
+	if !ok {
+		return r.reconcileUnresolved(attemptID)
+	}
+	run, err := r.registry.GetRun(context.Background(), r.runID)
+	if err != nil {
+		return err
+	}
+	handle, outcome, resErr := resolver.ResolveByIdentity(ctx, run, r.node, attemptID)
+	switch outcome {
+	case backend.ResolveFound:
+		return r.attachResolvedHandle(ctx, handle, attemptID, currentAttempt)
+	case backend.ResolveConflict:
+		appendEvent(context.Background(), r.registry, spec.EventRecord{
+			RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID,
+			Type: "node.recovery.identity_conflict", OccurredAt: time.Now().UTC(), Level: "error",
+			FailureReason: "identity_conflict",
+			Message:       "backend job at deterministic identity has a mismatched jumi.io/attempt-marker annotation; not this attempt (no attach/replace)",
+		})
+		return r.reconcileUnresolved(attemptID)
+	default:
+		// ResolveAbsentNow / ResolveUnknown: fail-closed, recoverable. ABSENT_NOW is
+		// NOT proof the attempt never ran; whether it may be re-executed is #46.
+		if resErr != nil {
+			appendEvent(context.Background(), r.registry, spec.EventRecord{
+				RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID,
+				Type: "node.recovery.identity_unknown", OccurredAt: time.Now().UTC(), Level: "warn",
+				FailureReason: "identity_resolve_error",
+				Message:       resErr.Error(),
+			})
+		}
+		return r.reconcileUnresolved(attemptID)
+	}
+}
+
+// attachResolvedHandle persists a read-only-resolved backend handle onto the SAME
+// Attempt and reattaches to it. When a durable cancellation intent exists on the
+// Attempt (or the Run is Canceled), it cancels THAT SAME Job and observes terminal
+// truth, mirroring driveCancellation's reattach arm. It never allocates a
+// replacement Attempt.
+func (r *nodeRunner) attachResolvedHandle(ctx context.Context, handle backend.Handle, attemptID string, currentAttempt spec.AttemptRecord) error {
+	r.persistHandle(handle, attemptID)
+	appendEvent(context.Background(), r.registry, spec.EventRecord{
+		RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID,
+		Type: "node.recovery.identity_resolved", OccurredAt: time.Now().UTC(), Level: "info",
+		Message: "resolved backend job by deterministic identity (read-only); reattaching same attempt",
+	})
+	if currentAttempt.CancellationRequestedAt != nil || r.isRunCanceled() {
+		_ = r.adapter.CancelNode(context.Background(), handle)
+		cancelCtx, cancelFn := context.WithCancel(ctx)
+		cancelFn()
+		return r.runFromHandle(cancelCtx, handle, attemptID)
+	}
+	return r.runFromHandle(ctx, handle, attemptID)
 }
 
 func nodeStatusFromAttempt(attempt spec.AttemptRecord) spec.NodeStatus {
