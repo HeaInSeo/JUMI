@@ -1,6 +1,9 @@
 package spec
 
-import "time"
+import (
+	"strconv"
+	"time"
+)
 
 type RunStatus string
 
@@ -37,6 +40,46 @@ const (
 	AttemptStatusCompleted AttemptStatus = "Completed"
 	AttemptStatusErrored   AttemptStatus = "Errored"
 )
+
+// IsTerminal reports whether an Attempt has reached authoritative terminal
+// truth. Attempt terminal truth is the execution authority for F3 durable
+// execution; Node/Run status and counters are projections of it.
+func (s AttemptStatus) IsTerminal() bool {
+	switch s {
+	case AttemptStatusCompleted, AttemptStatusErrored:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsTerminal reports whether a Node has reached a terminal projection state.
+func (s NodeStatus) IsTerminal() bool {
+	switch s {
+	case NodeStatusSucceeded, NodeStatusFailed, NodeStatusCanceled, NodeStatusSkipped:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsTerminal reports whether a Run has reached a terminal projection state.
+func (s RunStatus) IsTerminal() bool {
+	switch s {
+	case RunStatusSucceeded, RunStatusFailed, RunStatusCanceled:
+		return true
+	default:
+		return false
+	}
+}
+
+// DeterministicAttemptID derives the canonical Attempt identity from
+// (runID, nodeID, attempt-number). The identity is deterministic so that a
+// crashed submission can be reconciled by re-deriving the same Attempt id
+// rather than allocating a replacement Attempt (F3 reconcile-first).
+func DeterministicAttemptID(runID, nodeID string, attempt int) string {
+	return runID + "-" + nodeID + "-attempt-" + strconv.Itoa(attempt)
+}
 
 type ExecutableRunSpec struct {
 	Run      RunMetadata       `json:"run"`
@@ -208,6 +251,25 @@ type AttemptRecord struct {
 	FinishedAt            *time.Time    `json:"finishedAt,omitempty"`
 	TerminalStopCause     string        `json:"terminalStopCause,omitempty"`
 	TerminalFailureReason string        `json:"terminalFailureReason,omitempty"`
+
+	// Durable F3 execution-truth facts (Closure Sprint B Packet A). These are
+	// the authoritative, restart-surviving facts from which reconcile derives
+	// its decision; do NOT introduce broad canonical enums for them.
+
+	// BackendHandleJSON is the authoritative serialized backend handle for this
+	// Attempt's execution. The node-level CurrentAttemptHandleJSON remains as a
+	// compatibility projection of the current Attempt's handle.
+	BackendHandleJSON string `json:"backendHandleJson,omitempty"`
+	// SubmissionWindowOpenedAt records that the submission fence was crossed for
+	// this Attempt BEFORE the backend side-effect boundary (StartNode). If set,
+	// the backend submit outcome is unknown-but-possibly-effected and MUST be
+	// reconciled by deterministic Attempt identity, never by blind replacement.
+	SubmissionWindowOpenedAt *time.Time `json:"submissionWindowOpenedAt,omitempty"`
+	// CancellationRequestedAt records an accepted cancellation intent as a
+	// restart-surviving durable fact until terminal truth is confirmed.
+	CancellationRequestedAt *time.Time `json:"cancellationRequestedAt,omitempty"`
+	// CancellationReason is the reason carried with the accepted cancel intent.
+	CancellationReason string `json:"cancellationReason,omitempty"`
 }
 
 type EventRecord struct {

@@ -417,6 +417,62 @@ func TestMemoryRegistry_ListEvents_RunNotFound(t *testing.T) {
 	}
 }
 
+func TestMemoryRegistry_AllocateCurrentAttempt(t *testing.T) {
+	reg := NewMemoryRegistry()
+	ctx := context.Background()
+	_ = reg.CreateRun(ctx, makeRun("run-1"), []spec.NodeRecord{makeNode("run-1", "a")})
+
+	a1, err := reg.AllocateCurrentAttempt(ctx, "run-1", "a")
+	if err != nil {
+		t.Fatalf("AllocateCurrentAttempt() error = %v", err)
+	}
+	if a1.AttemptID != spec.DeterministicAttemptID("run-1", "a", 1) || a1.Status != spec.AttemptStatusPrepared {
+		t.Fatalf("a1 = %+v", a1)
+	}
+	// Non-terminal current attempt blocks a second allocation.
+	if _, err := reg.AllocateCurrentAttempt(ctx, "run-1", "a"); !errors.Is(err, ErrAttemptNonTerminal) {
+		t.Fatalf("expected ErrAttemptNonTerminal, got %v", err)
+	}
+	node, _ := reg.GetNode(ctx, "run-1", "a")
+	if node.AttemptCount != 1 || node.CurrentAttemptID != a1.AttemptID || node.Status != spec.NodeStatusReady {
+		t.Fatalf("node = %+v", node)
+	}
+}
+
+func TestMemoryRegistry_DurableAttemptFacts(t *testing.T) {
+	reg := NewMemoryRegistry()
+	ctx := context.Background()
+	_ = reg.CreateRun(ctx, makeRun("run-1"), []spec.NodeRecord{makeNode("run-1", "a")})
+	att, _ := reg.AllocateCurrentAttempt(ctx, "run-1", "a")
+
+	now := time.Now().UTC()
+	if err := reg.PersistSubmissionFence(ctx, "run-1", "a", att.AttemptID, now); err != nil {
+		t.Fatalf("PersistSubmissionFence() error = %v", err)
+	}
+	if err := reg.PersistBackendHandle(ctx, "run-1", "a", att.AttemptID, `{"j":1}`); err != nil {
+		t.Fatalf("PersistBackendHandle() error = %v", err)
+	}
+	if err := reg.PersistCancellationIntent(ctx, "run-1", "a", att.AttemptID, now, "why"); err != nil {
+		t.Fatalf("PersistCancellationIntent() error = %v", err)
+	}
+	cur, ok, err := reg.GetCurrentAttempt(ctx, "run-1", "a")
+	if err != nil || !ok {
+		t.Fatalf("GetCurrentAttempt ok = %v err = %v", ok, err)
+	}
+	if cur.SubmissionWindowOpenedAt == nil || cur.BackendHandleJSON != `{"j":1}` || cur.CancellationRequestedAt == nil || cur.CancellationReason != "why" {
+		t.Fatalf("durable facts not persisted: %+v", cur)
+	}
+	// Node-level handle compat projection.
+	node, _ := reg.GetNode(ctx, "run-1", "a")
+	if node.CurrentAttemptHandleJSON != `{"j":1}` {
+		t.Fatalf("node handle projection = %q", node.CurrentAttemptHandleJSON)
+	}
+	// Unknown attempt id.
+	if err := reg.PersistSubmissionFence(ctx, "run-1", "a", "nope", now); !errors.Is(err, ErrAttemptNotFound) {
+		t.Fatalf("expected ErrAttemptNotFound, got %v", err)
+	}
+}
+
 func TestMemoryRegistry_ListEvents_NegativeLimit(t *testing.T) {
 	reg := NewMemoryRegistry()
 	ctx := context.Background()

@@ -40,6 +40,25 @@ func (s *statusRecordingRegistry) UpdateNode(ctx context.Context, runID, nodeID 
 	return s.Registry.UpdateNode(ctx, runID, nodeID, wrapped)
 }
 
+// AllocateCurrentAttempt sets the node to Ready atomically as part of allocation
+// (rather than via a separate UpdateNode), so record that transition here to
+// keep the observed lifecycle sequence complete.
+func (s *statusRecordingRegistry) AllocateCurrentAttempt(ctx context.Context, runID, nodeID string) (spec.AttemptRecord, error) {
+	att, err := s.Registry.AllocateCurrentAttempt(ctx, runID, nodeID)
+	if err != nil {
+		return att, err
+	}
+	if nodeID == s.nodeID {
+		node, gerr := s.GetNode(ctx, runID, nodeID)
+		if gerr == nil {
+			s.mu.Lock()
+			s.statuses = append(s.statuses, node.Status)
+			s.mu.Unlock()
+		}
+	}
+	return att, nil
+}
+
 func (s *statusRecordingRegistry) recordedStatuses() []spec.NodeStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
