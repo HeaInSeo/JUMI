@@ -60,6 +60,23 @@ type activeRun struct {
 	cancel  context.CancelFunc
 	mu      sync.Mutex
 	handles map[string]backend.Handle
+	// unresolved is set when a node runner crossed the submission fence but could
+	// not resolve its backend truth (see reconcileUnresolved). It signals that the
+	// run must be left NON-terminal and recoverable rather than finalized Failed
+	// (F4), so the startup reconcile sweep re-picks it up.
+	unresolved bool
+}
+
+func (a *activeRun) markUnresolved() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.unresolved = true
+}
+
+func (a *activeRun) isUnresolved() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.unresolved
 }
 
 type DagEngine struct {
@@ -205,6 +222,20 @@ func (e *DagEngine) executeRun(ctx context.Context, runID string) {
 		e.unregisterActiveRun(runID)
 	}()
 	if err := e.runGraph(runCtx, run, active); err != nil {
+		if errors.Is(err, errRunUnresolved) {
+			// Unresolved-but-recoverable: leave the Run NON-terminal so the startup
+			// reconcile sweep revisits it. Do NOT finalize as Failed (F4). The
+			// possibly-live backend Job is never replaced because the current
+			// Attempt stays non-terminal.
+			_ = e.registry.UpdateRun(ctx, runID, func(current *spec.RunRecord) error {
+				if !current.Status.IsTerminal() {
+					current.CurrentBottleneckLocation = "reconcile_unresolved"
+				}
+				return nil
+			})
+			appendEvent(ctx, e.registry, spec.EventRecord{RunID: runID, Type: "run.recovery.unresolved", OccurredAt: time.Now().UTC(), Level: "warn", FailureReason: "reconcile_unresolved", Message: "run left non-terminal: backend truth unresolved (recoverable on next reconcile)"})
+			return
+		}
 		if ferr := e.finalizeRun(ctx, runID, false, err.Error()); ferr != nil {
 			log.Printf("executor: finalizeRun failed for run %s: %v (graph error: %v)", runID, ferr, err)
 			_ = e.registry.UpdateRun(ctx, runID, func(current *spec.RunRecord) error {
@@ -320,6 +351,13 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 	}
 	ok := d.Wait(ctx)
 	if !ok {
+		// An unresolved node crossed the submission fence but could not resolve its
+		// backend truth. Do NOT skip downstream Pending nodes to a terminal state
+		// (that would permanently strand them) and do NOT let this become a Failed
+		// run: leave everything recoverable for the next reconcile sweep (F4).
+		if active.isUnresolved() {
+			return errRunUnresolved
+		}
 		runErr := "dag execution failed"
 		select {
 		case err := <-firstErr:
@@ -479,6 +517,12 @@ var errNodeRetry = errors.New("node will retry")
 // RunE returns it without allocating a replacement Attempt.
 var errReconcileUnresolved = errors.New("attempt backend truth unresolved")
 
+// errRunUnresolved is returned by runGraph when at least one node ended in the
+// unresolved-but-recoverable state (see reconcileUnresolved). executeRun treats
+// it distinctly from a genuine terminal failure: the Run is left NON-terminal so
+// the startup reconcile sweep can revisit it, never finalized as Failed (F4).
+var errRunUnresolved = errors.New("run has unresolved backend truth")
+
 type nodeRunner struct {
 	registry registry.Registry
 	adapter  backend.Adapter
@@ -488,7 +532,6 @@ type nodeRunner struct {
 	node     spec.Node
 	active   *activeRun
 
-	retriesRemaining        int
 	localityHints           []bindingLocalityHint
 	postSchedulingResolves  []postSchedulingResolve
 	localityFallbackStarted bool
@@ -570,11 +613,9 @@ func (r *nodeRunner) RunE(ctx context.Context, a interface{}) error {
 	}
 	// RetryPolicy.MaxAttempts is a total-attempt cap, not a retry count
 	// (docs/JUMI_EXECUTABLE_RUN_SPEC_DRAFT.ko.md 9.3: "maxAttempts = 1은
-	// 실행 1회, 재시도 없음이다"), so the first attempt consumes one of
-	// the budget before any retry happens. MaxAttempts==0 (unset) still
-	// yields a negative retriesRemaining, which the > 0 check below
-	// correctly treats the same as "no retry".
-	r.retriesRemaining = r.node.RetryPolicy.MaxAttempts - 1
+	// 실행 1회, 재시도 없음이다"). The remaining budget is derived from the
+	// durable AttemptCount inside failNode (see mayRetry), NOT reset per RunE
+	// entry, so the cap holds across executor restarts (F6).
 	for {
 		err := r.runAttemptBody(ctx, a)
 		if err == nil || !errors.Is(err, errNodeRetry) {
@@ -792,8 +833,16 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 	handle, err := r.adapter.StartNode(ctx, prepared)
 	releaseDelay := time.Since(releaseStartedAt)
 	if err != nil {
-		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &now, FinishedAt: timePtr(time.Now().UTC()), TerminalStopCause: "failed", TerminalFailureReason: "backend_start_error"})
-		return r.failNode(err, attemptID, "failed", "backend_start_error")
+		// The submission fence was already durably crossed above, so a StartNode
+		// error is an UNKNOWN outcome: the backend may have accepted the Job while
+		// the response was lost (timeout/reset). It must NOT be treated as a
+		// definitive non-submission — terminalizing the Attempt here would let
+		// failNode clear it and allocate a differently-identified replacement,
+		// risking the original Job plus a replacement Job running concurrently.
+		// Route it through the same no-replacement "unresolved" handling used on
+		// restart: leave the Attempt non-terminal and recoverable (full backend
+		// re-resolution stays deferred to #44/#46).
+		return r.reconcileUnresolved(attemptID)
 	}
 	r.metrics.IncJobsCreated()
 	r.registerHandle(handle)
@@ -850,19 +899,36 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 	return r.waitAndFinalize(ctx, handle, attemptID, startedAt, executionNode)
 }
 
+// retriesRemaining derives the remaining retry budget from the durable
+// AttemptCount rather than a per-entry in-memory counter, so the total-attempt
+// cap (RetryPolicy.MaxAttempts) holds across executor restarts (F6). At the
+// point failNode calls this, AttemptCount already includes the just-failed
+// attempt, so a retry is permitted only while strictly fewer than MaxAttempts
+// attempts have been made. Returns (remaining, true) when a retry is allowed.
+func (r *nodeRunner) retriesRemaining() (int, bool) {
+	node, err := r.registry.GetNode(context.Background(), r.runID, r.node.NodeID)
+	if err != nil {
+		return 0, false
+	}
+	remaining := r.node.RetryPolicy.MaxAttempts - node.AttemptCount
+	if remaining <= 0 {
+		return 0, false
+	}
+	return remaining, true
+}
+
 func (r *nodeRunner) failNode(cause error, attemptID string, terminalStopCause string, failureReason string) error {
 	r.recordLocalityFallbackFailure(attemptID)
 	if r.isRunCanceled() {
 		return r.cancelNode(attemptID, "cancellation_requested")
 	}
-	if r.retriesRemaining > 0 {
-		r.retriesRemaining--
+	if remaining, ok := r.retriesRemaining(); ok {
 		finishedAt := time.Now().UTC()
 		appendEvent(context.Background(), r.registry, spec.EventRecord{
 			RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID,
 			Type: "node.attempt_failed", OccurredAt: finishedAt, Level: "warn",
 			StopCause: terminalStopCause, FailureReason: failureReason,
-			Message: fmt.Sprintf("attempt failed, will retry (%d retries remaining)", r.retriesRemaining),
+			Message: fmt.Sprintf("attempt failed, will retry (%d retries remaining)", remaining),
 		})
 		_ = r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 			current.Status = spec.NodeStatusPending
@@ -1039,9 +1105,111 @@ func (r *nodeRunner) runFromHandle(ctx context.Context, handle backend.Handle, a
 	return r.waitAndFinalize(ctx, handle, attemptID, startedAt, r.node)
 }
 
+// recoverCanceledRun drives a terminal Run (typically Canceled) that still holds
+// non-terminal nodes to terminal truth on restart, WITHOUT resetting the Run
+// status. Each in-flight node is reattached and its backend Job canceled/observed
+// (consuming the persisted cancellation intent — the missing consumer of
+// CancellationRequestedAt/Reason). No replacement Attempt is ever allocated; a
+// node whose backend truth cannot be resolved is left non-terminal so a later
+// reconcile sweep revisits it (F5). This is the minimal restart-driven consumer;
+// the full periodic orphan sweep stays deferred.
+func (e *DagEngine) recoverCanceledRun(ctx context.Context, run spec.RunRecord) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	active := &activeRun{cancel: cancel, handles: make(map[string]backend.Handle)}
+	e.registerActiveRun(run.RunID, active)
+	defer func() {
+		cancel()
+		e.unregisterActiveRun(run.RunID)
+	}()
+
+	var wg sync.WaitGroup
+	for _, node := range run.Spec.Graph.Nodes {
+		runner := &nodeRunner{registry: e.registry, adapter: e.adapter, handoff: e.handoff, metrics: e.metrics, runID: run.RunID, active: active, node: node}
+		wg.Add(1)
+		go func(nr *nodeRunner) {
+			defer wg.Done()
+			nr.driveCancellation(runCtx)
+		}(runner)
+	}
+	wg.Wait()
+
+	if !e.runHasNonTerminalNode(ctx, run.RunID) {
+		appendEvent(ctx, e.registry, spec.EventRecord{RunID: run.RunID, Type: "run.recovery.cancel_completed", OccurredAt: time.Now().UTC(), Level: "info", StopCause: "canceled", Message: "all nodes driven to terminal truth after cancellation recovery"})
+	}
+}
+
+// driveCancellation re-drives a single non-terminal node of an already-terminal
+// run to terminal truth. It reattaches the backend Job and cancels/observes it;
+// it never allocates a replacement Attempt. A node whose backend truth cannot be
+// resolved is left non-terminal (recoverable), never replaced.
+func (r *nodeRunner) driveCancellation(ctx context.Context) {
+	node, err := r.registry.GetNode(context.Background(), r.runID, r.node.NodeID)
+	if err != nil || node.Status.IsTerminal() {
+		return
+	}
+	currentAttempt, hasAttempt, err := r.registry.GetCurrentAttempt(context.Background(), r.runID, r.node.NodeID)
+	if err != nil {
+		return
+	}
+	switch ClassifyReconcile(node, currentAttempt, hasAttempt) {
+	case ReconcileTerminalRepair:
+		_ = r.repairTerminalProjection(node, currentAttempt, hasAttempt)
+	case ReconcileReattach:
+		if h, id, ok := r.tryRestoreHandle(ctx); ok {
+			// Request backend cancellation, then observe terminal truth via a
+			// pre-canceled context so waitAndFinalize finalizes the node as Canceled
+			// (mirrors the live Cancel path: CancelNode + context cancellation).
+			_ = r.adapter.CancelNode(context.Background(), h)
+			cancelCtx, cancelFn := context.WithCancel(ctx)
+			cancelFn()
+			_ = r.runFromHandle(cancelCtx, h, id)
+			return
+		}
+		// Handle recorded but unrestorable: leave unresolved (deferred #44/#46).
+		_ = r.reconcileUnresolved(node.CurrentAttemptID)
+	case ReconcileResolveByIdentity:
+		// Fence crossed, no restorable handle: cannot cancel what cannot be found.
+		// Leave unresolved (deferred #44/#46); never terminalize or replace.
+		_ = r.reconcileUnresolved(node.CurrentAttemptID)
+	default:
+		// ReconcileResumePreFence / ReconcileFresh: no backend Job exists, so the
+		// accepted cancellation can be finalized directly.
+		attemptID := util.FirstNonEmpty(node.CurrentAttemptID, currentAttempt.AttemptID)
+		if attemptID == "" {
+			r.markNodeCanceledNoAttempt()
+			return
+		}
+		_ = r.cancelNode(attemptID, "cancellation_requested")
+	}
+}
+
+// markNodeCanceledNoAttempt finalizes a non-terminal node that has no Attempt
+// (and therefore no backend Job) as Canceled. Used only by the cancellation
+// recovery drive for the defensive no-Attempt case.
+func (r *nodeRunner) markNodeCanceledNoAttempt() {
+	finishedAt := time.Now().UTC()
+	reason := r.effectiveCancellationReason("cancellation_requested")
+	_ = r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
+		if current.Status.IsTerminal() {
+			return nil
+		}
+		current.Status = spec.NodeStatusCanceled
+		current.TerminalStopCause = "canceled"
+		current.TerminalFailureReason = reason
+		current.CurrentBottleneckLocation = ""
+		current.FinishedAt = &finishedAt
+		return nil
+	})
+	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, Type: "node.canceled", OccurredAt: finishedAt, Level: "warn", StopCause: "canceled", FailureReason: reason})
+}
+
 // tryRestoreHandle checks whether this node has a persisted AttemptHandle from a previous
-// executor instance. Returns the handle and existing attemptID when the node is in
-// Running or Starting state and the adapter implements HandlePersister.
+// executor instance. Returns the handle and existing attemptID when the node durably
+// carries a handle (Running, Starting, or the post-submit Releasing state) and the
+// adapter implements HandlePersister.
 func (r *nodeRunner) tryRestoreHandle(ctx context.Context) (backend.Handle, string, bool) {
 	p, ok := r.adapter.(backend.HandlePersister)
 	if !ok {
@@ -1052,7 +1220,13 @@ func (r *nodeRunner) tryRestoreHandle(ctx context.Context) (backend.Handle, stri
 		return nil, "", false
 	}
 	switch node.Status {
-	case spec.NodeStatusRunning, spec.NodeStatusStarting:
+	// A durable handle is only persisted after StartNode returns (post-submit).
+	// The node flips Releasing -> Running only after the handle is persisted, so a
+	// crash in that window leaves a genuinely-submitted Job with status Releasing;
+	// it MUST be reattached, never abandoned. Terminal states never reach here
+	// (ClassifyReconcile routes them to terminal-repair), so accepting any state
+	// that durably carries a handle is safe.
+	case spec.NodeStatusRunning, spec.NodeStatusStarting, spec.NodeStatusReleasing:
 	default:
 		return nil, "", false
 	}
@@ -1118,6 +1292,13 @@ func (r *nodeRunner) reconcileUnresolved(attemptID string) error {
 		current.CurrentBottleneckLocation = "reconcile_unresolved"
 		return nil
 	})
+	// Signal the run graph that this outcome is unresolved-but-recoverable, so the
+	// run is left NON-terminal (never finalized Failed) and the startup reconcile
+	// sweep re-picks it up (F4). The Attempt is left non-terminal so no replacement
+	// is ever allocated for a possibly-live backend Job.
+	if r.active != nil {
+		r.active.markUnresolved()
+	}
 	return errReconcileUnresolved
 }
 

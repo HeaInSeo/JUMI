@@ -78,6 +78,17 @@ spec:
               value: "http://artifact-handoff.jumi-ah-dev.svc.cluster.local:8080"
             - name: JUMI_AH_GRPC_TARGET
               value: "artifact-handoff.jumi-ah-dev.svc.cluster.local:9090"
+            # JUMI_REGISTRY_PATH points the durable SQLite registry at the
+            # writable /data mount below. readOnlyRootFilesystem: true makes the
+            # container CWD read-only, so the default (jumi-registry.db in CWD)
+            # would fail at SQLite init; this path lives on the mounted volume.
+            - name: JUMI_REGISTRY_PATH
+              value: "/data/jumi-registry.db"
+          volumeMounts:
+            # Writable durable-registry mount. Required because the root
+            # filesystem is read-only (readOnlyRootFilesystem: true).
+            - name: jumi-data
+              mountPath: /data
           readinessProbe:
             httpGet:
               path: /readyz
@@ -93,6 +104,13 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+      volumes:
+        - name: jumi-data
+          # emptyDir: the durable registry survives container restarts within the
+          # same Pod, but is lost when the Pod is rescheduled. Replace with a
+          # PersistentVolumeClaim (operator-provisioned) for durability across
+          # Pod rescheduling in production.
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

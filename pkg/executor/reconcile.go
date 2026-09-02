@@ -108,6 +108,25 @@ func (e *DagEngine) Recover(ctx context.Context) error {
 	resumed := 0
 	for _, run := range runs {
 		if run.Status.IsTerminal() {
+			// A terminal Run (typically Canceled) may still contain a NON-terminal
+			// current Attempt whose backend Job could be live — e.g. an accepted
+			// cancellation whose CancelNode failed or whose process exited before
+			// terminal truth was confirmed. Skipping these would leave the backend
+			// Job running forever. Re-drive them via the cancellation path using the
+			// persisted cancellation intent (F5), without un-terminalizing the Run.
+			if e.runHasNonTerminalNode(ctx, run.RunID) {
+				appendEvent(ctx, e.registry, spec.EventRecord{
+					RunID:      run.RunID,
+					Type:       "run.recovery.cancel_resumed",
+					OccurredAt: time.Now().UTC(),
+					Level:      "warn",
+					Message:    "terminal run with non-terminal node re-driven to terminal truth by startup reconcile sweep",
+				})
+				runCtx := context.WithoutCancel(ctx)
+				// #nosec G118 -- recovered cancellation drive must outlive the startup context.
+				go e.recoverCanceledRun(runCtx, run)
+				resumed++
+			}
 			continue
 		}
 		appendEvent(ctx, e.registry, spec.EventRecord{
@@ -123,7 +142,22 @@ func (e *DagEngine) Recover(ctx context.Context) error {
 		resumed++
 	}
 	if resumed > 0 {
-		log.Printf("jumi: startup reconcile resumed %d non-terminal run(s)", resumed)
+		log.Printf("jumi: startup reconcile resumed %d run(s)", resumed)
 	}
 	return nil
+}
+
+// runHasNonTerminalNode reports whether any node of the run is still in a
+// non-terminal state (a possibly-live backend Attempt).
+func (e *DagEngine) runHasNonTerminalNode(ctx context.Context, runID string) bool {
+	nodes, err := e.registry.ListNodes(ctx, runID)
+	if err != nil {
+		return false
+	}
+	for _, node := range nodes {
+		if !node.Status.IsTerminal() {
+			return true
+		}
+	}
+	return false
 }
