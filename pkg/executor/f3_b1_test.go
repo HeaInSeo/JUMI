@@ -339,6 +339,107 @@ func TestB1T07_FoundAlreadyTerminalNoReplay(t *testing.T) {
 	}
 }
 
+// cancelFailingResolverAdapter is a resolverAdapter whose CancelNode always
+// fails, modeling a transient API error / missing delete permission during
+// recovery. It shadows the promoted (always-succeeding) fakeAdapter.CancelNode.
+type cancelFailingResolverAdapter struct {
+	*resolverAdapter
+	cancelErr error
+}
+
+func (a *cancelFailingResolverAdapter) CancelNode(_ context.Context, _ backend.Handle) error {
+	return a.cancelErr
+}
+
+// B1-FT1 (F-T1): FOUND + durable cancel intent, but CancelNode fails. Recovery
+// must stay UNRESOLVED — never observe-on-canceled-ctx (which would read the ctx
+// cancellation as CONFIRMED cancellation and terminalize a possibly-live Job),
+// never reattach, never replace — so a later restart retries.
+func TestB1FT1_FailedCancelDuringRecoveryStaysUnresolved(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	inner := &fakeAdapter{failOn: map[string]bool{}}
+	base := newResolverAdapter(inner, backend.ResolveFound, fakeHandle{nodeID: "a"}, nil)
+	adapter := &cancelFailingResolverAdapter{resolverAdapter: base, cancelErr: errors.New("forbidden: cannot delete job")}
+	engine := NewDagEngine(reg, adapter)
+
+	runID := "run-b1-ft1"
+	seedFenceCrossedRun(t, reg, runID, spec.RunStatusCanceled, spec.NodeStatusRunning, true)
+
+	if err := engine.Recover(context.Background()); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	waitForEventType(t, reg, runID, "node.recovery.unresolved", 3*time.Second)
+	time.Sleep(80 * time.Millisecond)
+
+	if got := adapter.creates(); got != 0 {
+		t.Fatalf("Create count = %d, want 0 (failed cancel must not replace)", got)
+	}
+	assertEventTypePresent(t, reg, runID, "node.recovery.unresolved")
+	assertEventAbsent(t, reg, runID, "node.recovery.reattached")
+	node, _ := reg.GetNode(context.Background(), runID, "a")
+	if node.Status.IsTerminal() {
+		t.Fatalf("node status = %q, want non-terminal (failed cancel must not terminalize)", node.Status)
+	}
+	if node.AttemptCount != 1 {
+		t.Fatalf("AttemptCount = %d, want 1 (no replacement)", node.AttemptCount)
+	}
+	run, _ := reg.GetRun(context.Background(), runID)
+	if run.Status != spec.RunStatusCanceled {
+		t.Fatalf("run status = %q, want Canceled (recovery must not un-terminalize)", run.Status)
+	}
+}
+
+// persistFailRegistry is a registry whose PersistBackendHandle always fails,
+// modeling a transient store error while durably persisting a resolved handle.
+type persistFailRegistry struct {
+	registry.Registry
+	err error
+}
+
+func (r *persistFailRegistry) PersistBackendHandle(_ context.Context, _, _, _, _ string) error {
+	return r.err
+}
+
+// B1-FT2 (F-T2): FOUND but the durable PersistBackendHandle fails. Recovery must
+// NOT reattach on the in-memory-only handle (a crash mid-wait could lose it and,
+// after TTL, resolve ABSENT_NOW forever). It must stay UNRESOLVED (non-terminal,
+// recoverable) so the next restart re-resolves and re-persists.
+func TestB1FT2_PersistFailureDoesNotReattach(t *testing.T) {
+	mem := registry.NewMemoryRegistry()
+	reg := &persistFailRegistry{Registry: mem, err: errors.New("sqlite: database is locked")}
+	inner := &fakeAdapter{failOn: map[string]bool{}}
+	adapter := newResolverAdapter(inner, backend.ResolveFound, fakeHandle{nodeID: "a"}, nil)
+	engine := NewDagEngine(reg, adapter)
+
+	runID := "run-b1-ft2"
+	seedFenceCrossedRun(t, reg, runID, spec.RunStatusRunning, spec.NodeStatusStarting, false)
+
+	record, _ := reg.GetRun(context.Background(), runID)
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit: %v", err)
+	}
+	waitForEventType(t, reg, runID, "run.recovery.unresolved", 3*time.Second)
+	time.Sleep(80 * time.Millisecond)
+
+	if got := adapter.creates(); got != 0 {
+		t.Fatalf("Create count = %d, want 0 (persist failure must not replace)", got)
+	}
+	assertEventTypePresent(t, reg, runID, "node.recovery.unresolved")
+	assertEventAbsent(t, reg, runID, "node.recovery.identity_resolved")
+	assertEventAbsent(t, reg, runID, "node.recovery.reattached")
+	run, _ := reg.GetRun(context.Background(), runID)
+	if run.Status.IsTerminal() {
+		t.Fatalf("run status = %q, want non-terminal (recoverable)", run.Status)
+	}
+	node, _ := reg.GetNode(context.Background(), runID, "a")
+	if node.Status.IsTerminal() {
+		t.Fatalf("node status = %q, want non-terminal", node.Status)
+	}
+	if node.CurrentAttemptHandleJSON != "" {
+		t.Fatalf("handle JSON = %q, want empty (persist failed, nothing durable)", node.CurrentAttemptHandleJSON)
+	}
+}
+
 // B1-T08: stale node projection but the Attempt-scoped durable facts require a
 // resolve -> the Attempt facts win (resolve fires and reattaches), not the node
 // projection. The node claims Running with no handle, yet the Attempt's fence

@@ -97,6 +97,12 @@ func (a *SpawnerK8sAdapter) ResolveByIdentity(ctx context.Context, _ spec.RunRec
 		// timeout / forbidden / other → fail-closed.
 		return nil, ResolveUnknown, fmt.Errorf("read-only get job %s/%s: %w", id.Namespace, id.JobName, err)
 	}
+	// F-N2: defense in depth. An empty AttemptMarker cannot prove ownership of any
+	// Job (an unset annotation would spuriously compare equal to ""), so fail
+	// closed regardless of the runtime naming contract rather than depend on it.
+	if id.AttemptMarker == "" {
+		return nil, ResolveUnknown, fmt.Errorf("resolve identity for attempt %s: empty attempt marker", attemptID)
+	}
 	// Ownership equality is decided ONLY by the authoritative full-marker
 	// annotation. A missing or differing annotation is a conflict; never attach to
 	// a Job we cannot prove is this attempt's.

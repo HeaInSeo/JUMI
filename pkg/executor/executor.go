@@ -848,7 +848,10 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 	r.metrics.IncJobsCreated()
 	r.registerHandle(handle)
 	defer r.unregisterHandle()
-	r.persistHandle(handle, attemptID)
+	// Best-effort on the live start path: the in-memory handle is already
+	// registered and observed here, so a persist error only weakens restart
+	// durability (recovered later by reconcile-by-identity), never this run.
+	_ = r.persistHandle(handle, attemptID)
 	startedAt := time.Now().UTC()
 	if releaseDelay >= 200*time.Millisecond {
 		appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.release.waited", OccurredAt: startedAt, Level: "info", Message: fmt.Sprintf("bounded release delayed start by %s", releaseDelay.Truncate(10*time.Millisecond))})
@@ -1242,18 +1245,20 @@ func (r *nodeRunner) tryRestoreHandle(ctx context.Context) (backend.Handle, stri
 
 // persistHandle serializes handle and stores it authoritatively on the Attempt
 // (PersistBackendHandle also mirrors it onto the NodeRecord as a compatibility
-// projection) for restart recovery. No-op if the adapter does not implement
-// HandlePersister or the handle type is not serializable.
-func (r *nodeRunner) persistHandle(handle backend.Handle, attemptID string) {
+// projection) for restart recovery. It returns nil (no durability was promised)
+// when the adapter does not implement HandlePersister or the handle type is not
+// serializable; it returns the store error when PersistBackendHandle fails, so
+// callers that must not proceed on a non-durable handle can react.
+func (r *nodeRunner) persistHandle(handle backend.Handle, attemptID string) error {
 	p, ok := r.adapter.(backend.HandlePersister)
 	if !ok {
-		return
+		return nil
 	}
 	data, err := p.MarshalHandle(handle)
 	if err != nil || data == nil {
-		return
+		return nil
 	}
-	_ = r.registry.PersistBackendHandle(context.Background(), r.runID, r.node.NodeID, attemptID, string(data))
+	return r.registry.PersistBackendHandle(context.Background(), r.runID, r.node.NodeID, attemptID, string(data))
 }
 
 // repairTerminalProjection handles the reconcile case where the current Attempt
@@ -1361,14 +1366,32 @@ func (r *nodeRunner) reconcileByIdentity(ctx context.Context, node spec.NodeReco
 // truth, mirroring driveCancellation's reattach arm. It never allocates a
 // replacement Attempt.
 func (r *nodeRunner) attachResolvedHandle(ctx context.Context, handle backend.Handle, attemptID string, currentAttempt spec.AttemptRecord) error {
-	r.persistHandle(handle, attemptID)
+	// F-T2: reattach ONLY after the handle is durably persisted. If the persist
+	// fails (e.g. a transient store error), reattaching would observe the Job
+	// against an in-memory-only handle; a crash during that wait would leave the
+	// Attempt with no durable handle and, once the Job's TTL removes it, resolve
+	// ABSENT_NOW permanently despite having observed the Job. Leave it unresolved
+	// (non-terminal, recoverable) so the next restart re-resolves and re-persists.
+	if err := r.persistHandle(handle, attemptID); err != nil {
+		return r.reconcileUnresolved(attemptID)
+	}
 	appendEvent(context.Background(), r.registry, spec.EventRecord{
 		RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID,
 		Type: "node.recovery.identity_resolved", OccurredAt: time.Now().UTC(), Level: "info",
 		Message: "resolved backend job by deterministic identity (read-only); reattaching same attempt",
 	})
 	if currentAttempt.CancellationRequestedAt != nil || r.isRunCanceled() {
-		_ = r.adapter.CancelNode(context.Background(), handle)
+		// F-T1: a failed cancel during recovery must stay UNRESOLVED, not falsely
+		// terminalize. If CancelNode errors (transient API error / missing delete
+		// permission) the Job may still be running; reattaching on a pre-canceled
+		// context would make waitAndFinalize read the ctx cancellation as a
+		// CONFIRMED cancellation and terminalize the Attempt, after which recovery
+		// skips a possibly-live Job. Only observe-on-canceled-ctx once the backend
+		// cancellation actually succeeded (CancelNode returns nil, which a backend
+		// also returns for an already-terminal Job).
+		if err := r.adapter.CancelNode(context.Background(), handle); err != nil {
+			return r.reconcileUnresolved(attemptID)
+		}
 		cancelCtx, cancelFn := context.WithCancel(ctx)
 		cancelFn()
 		return r.runFromHandle(cancelCtx, handle, attemptID)
