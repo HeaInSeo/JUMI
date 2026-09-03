@@ -132,9 +132,11 @@ func TestB2T04_BackendReportedFailureNoNewExecution(t *testing.T) {
 
 // B2-T05: authoritative E0 (pre-submission prepare failure) + bounded budget -> a
 // re-realization attempt remains possible; the safety gate does not prohibit all
-// retries, only ungated post-start re-execution.
+// retries, only ungated post-start re-execution. Under F3-B3 the E0 retry consumes
+// the INDEPENDENT realization budget, never the user-code opportunity budget.
 func TestB2T05_PreStartE0RetryStillAllowed(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
+	withRealizationCeiling(t, 2)
 	adapter := &fakeAdapter{failOn: map[string]bool{}, failPrepareOn: map[string]bool{"a": true}}
 	engine := NewDagEngine(reg, adapter)
 
@@ -143,8 +145,11 @@ func TestB2T05_PreStartE0RetryStillAllowed(t *testing.T) {
 	waitForRunStatusWithin(t, reg, runID, spec.RunStatusFailed, 3*time.Second)
 
 	node, _ := reg.GetNode(context.Background(), runID, "a")
-	if node.AttemptCount != 2 {
-		t.Fatalf("AttemptCount = %d, want 2 (E0 pre-submission failures remain retry-eligible)", node.AttemptCount)
+	if node.RealizationAttemptCount != 2 {
+		t.Fatalf("RealizationAttemptCount = %d, want 2 (E0 realization retry, bounded by the independent ceiling)", node.RealizationAttemptCount)
+	}
+	if node.AttemptCount != 0 {
+		t.Fatalf("AttemptCount = %d, want 0 (pre-submission failures must not consume a user-code opportunity)", node.AttemptCount)
 	}
 	if got := adapter.startCount("a"); got != 0 {
 		t.Fatalf("StartNode calls = %d, want 0 (prepare failed before the submission boundary; user code never started)", got)
@@ -295,6 +300,7 @@ func TestB2T08b_ProcessCompletedSurvivesJobGCNoRerun(t *testing.T) {
 // opportunity (1 semantic Attempt : 1 Kubernetes Job).
 func TestB2T09_NewExecutionUsesNewSemanticAttempt(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
+	withRealizationCeiling(t, 2)
 	adapter := &fakeAdapter{failOn: map[string]bool{}, failPrepareOn: map[string]bool{"a": true}}
 	engine := NewDagEngine(reg, adapter)
 
@@ -319,6 +325,7 @@ func TestB2T09_NewExecutionUsesNewSemanticAttempt(t *testing.T) {
 // classify the Attempt as started/may-have-started (it does not block an E0 retry).
 func TestB2T10_StartedAtOnPreStartErrorIsNotStartProof(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
+	withRealizationCeiling(t, 2)
 	adapter := &fakeAdapter{failOn: map[string]bool{}, failPrepareOn: map[string]bool{"a": true}}
 	engine := NewDagEngine(reg, adapter)
 
@@ -343,13 +350,27 @@ func TestB2T10_StartedAtOnPreStartErrorIsNotStartProof(t *testing.T) {
 		t.Fatalf("expected a pre-start (backend_prepare_error) attempt with StartedAt set")
 	}
 	node, _ := reg.GetNode(context.Background(), runID, "a")
-	// The E0 retry still happened despite StartedAt being set on the first attempt.
-	if node.AttemptCount != 2 {
-		t.Fatalf("AttemptCount = %d, want 2 (StartedAt on a pre-start error must not suppress an E0 retry)", node.AttemptCount)
+	// The E0 realization retry still happened despite StartedAt being set on the first
+	// attempt, and no user-code opportunity was consumed.
+	if node.RealizationAttemptCount != 2 {
+		t.Fatalf("RealizationAttemptCount = %d, want 2 (StartedAt on a pre-start error must not suppress an E0 realization retry)", node.RealizationAttemptCount)
+	}
+	if node.AttemptCount != 0 {
+		t.Fatalf("AttemptCount = %d, want 0 (pre-start errors never consume a user-code opportunity)", node.AttemptCount)
 	}
 	if got := adapter.startCount("a"); got != 0 {
 		t.Fatalf("StartNode calls = %d, want 0 (user code never started)", got)
 	}
+}
+
+// withRealizationCeiling temporarily lowers the internal realization-attempt ceiling
+// so tests can prove bounded realization / exhaustion without spending the production
+// default number of cycles. The exact number carries no product meaning (F3-B3).
+func withRealizationCeiling(t *testing.T, n int) {
+	t.Helper()
+	prev := realizationAttemptCeiling
+	realizationAttemptCeiling = n
+	t.Cleanup(func() { realizationAttemptCeiling = prev })
 }
 
 // B2-T11: MaxAttempts>1 alone never turns a post-start (E3) failure into a retry;

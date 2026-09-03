@@ -394,7 +394,11 @@ func (r *SQLiteRegistry) AllocateCurrentAttempt(ctx context.Context, runID, node
 			return spec.AttemptRecord{}, ErrAttemptNonTerminal
 		}
 	}
-	next := node.AttemptCount + 1
+	// F3-B3: allocate a REALIZATION cycle (pre-user-code preparation), not a
+	// user-code execution opportunity. Increment the separate RealizationAttemptCount
+	// and derive the id from it; AttemptCount (the MaxAttempts opportunity budget) is
+	// consumed only when the semantic Attempt opens at the fence (OpenSemanticAttempt).
+	next := node.RealizationAttemptCount + 1
 	attemptID := spec.DeterministicAttemptID(runID, nodeID, next)
 	now := time.Now().UTC()
 	attempt := spec.AttemptRecord{
@@ -407,7 +411,7 @@ func (r *SQLiteRegistry) AllocateCurrentAttempt(ctx context.Context, runID, node
 	if err := writeAttemptTx(ctx, tx, attempt); err != nil {
 		return spec.AttemptRecord{}, err
 	}
-	node.AttemptCount = next
+	node.RealizationAttemptCount = next
 	node.CurrentAttemptID = attemptID
 	node.Status = spec.NodeStatusReady
 	node.CurrentBottleneckLocation = "release_wait"
@@ -419,6 +423,44 @@ func (r *SQLiteRegistry) AllocateCurrentAttempt(ctx context.Context, runID, node
 		return spec.AttemptRecord{}, err
 	}
 	return attempt, nil
+}
+
+// OpenSemanticAttempt records that the current reservation's submission fence was
+// crossed — the semantic Attempt opens and consumes one user-code execution
+// opportunity (AttemptCount++). Callers MUST verify a slot is available
+// (AttemptCount < RetryPolicy.MaxAttempts) BEFORE calling; this applies the atomic
+// AttemptCount increment + fence timestamp on the current attempt in one tx.
+func (r *SQLiteRegistry) OpenSemanticAttempt(ctx context.Context, runID, nodeID, attemptID string, openedAt time.Time) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	node, err := getNodeTx(ctx, tx, runID, nodeID)
+	if err != nil {
+		return err
+	}
+	if node.CurrentAttemptID != attemptID {
+		return ErrAttemptNotFound
+	}
+	attempt, ok, err := getAttemptTx(ctx, tx, runID, nodeID, attemptID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrAttemptNotFound
+	}
+	t := openedAt.UTC()
+	attempt.SubmissionWindowOpenedAt = &t
+	if err := writeAttemptTx(ctx, tx, attempt); err != nil {
+		return err
+	}
+	node.AttemptCount++
+	if err := writeNodeTx(ctx, tx, node); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *SQLiteRegistry) PersistSubmissionFence(ctx context.Context, runID, nodeID, attemptID string, openedAt time.Time) error {

@@ -36,6 +36,14 @@ type Registry interface {
 	// all of these facts exist, or none do (all-or-nothing).
 	AllocateCurrentAttempt(ctx context.Context, runID, nodeID string) (spec.AttemptRecord, error)
 
+	// OpenSemanticAttempt records the submission-fence crossing for the current
+	// reservation: the semantic Attempt opens here and consumes one user-code
+	// execution opportunity (AttemptCount++). Callers must verify an opportunity
+	// slot is available (AttemptCount < RetryPolicy.MaxAttempts) before calling
+	// (F3-B3). It applies the AttemptCount increment and the fence timestamp on the
+	// current attempt atomically.
+	OpenSemanticAttempt(ctx context.Context, runID, nodeID, attemptID string, openedAt time.Time) error
+
 	// PersistSubmissionFence durably records that the submission window was
 	// opened for an Attempt BEFORE crossing the backend side-effect boundary.
 	PersistSubmissionFence(ctx context.Context, runID, nodeID, attemptID string, openedAt time.Time) error

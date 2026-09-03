@@ -159,9 +159,11 @@ func TestSQLiteRegistry_F3T12_AllocateCurrentAttempt_ExactlyOnce(t *testing.T) {
 		t.Fatalf("attemptID = %q, want %q", successes[0].AttemptID, want)
 	}
 	// Node counter reflects exactly one allocation; only one attempt row exists.
+	// F3-B3: a realization allocation increments RealizationAttemptCount, not the
+	// user-code opportunity budget (AttemptCount, consumed only at fence open).
 	node, _ := reg.GetNode(ctx, "run-1", "a")
-	if node.AttemptCount != 1 || node.CurrentAttemptID != want {
-		t.Fatalf("node = {count:%d current:%q}, want {1 %q}", node.AttemptCount, node.CurrentAttemptID, want)
+	if node.RealizationAttemptCount != 1 || node.AttemptCount != 0 || node.CurrentAttemptID != want {
+		t.Fatalf("node = {realization:%d count:%d current:%q}, want {1 0 %q}", node.RealizationAttemptCount, node.AttemptCount, node.CurrentAttemptID, want)
 	}
 	attempts, _ := reg.ListAttempts(ctx, "run-1", "a")
 	if len(attempts) != 1 {
@@ -238,10 +240,12 @@ func TestSQLiteRegistry_F3T01_DurableAcrossRestart(t *testing.T) {
 	if cur.AttemptID != att.AttemptID {
 		t.Fatalf("recovered attempt = %q, want %q (same, no duplicate)", cur.AttemptID, att.AttemptID)
 	}
-	// No duplicate allocation happened: still exactly one attempt, count == 1.
+	// No duplicate allocation happened: still exactly one attempt.
+	// F3-B3: the durable realization counter is 1; the user-code opportunity budget
+	// (AttemptCount) is untouched until the fence opens.
 	node, _ := reg2.GetNode(ctx, "run-1", "a")
-	if node.AttemptCount != 1 {
-		t.Fatalf("recovered AttemptCount = %d, want 1", node.AttemptCount)
+	if node.RealizationAttemptCount != 1 {
+		t.Fatalf("recovered RealizationAttemptCount = %d, want 1", node.RealizationAttemptCount)
 	}
 	attempts, _ := reg2.ListAttempts(ctx, "run-1", "a")
 	if len(attempts) != 1 {

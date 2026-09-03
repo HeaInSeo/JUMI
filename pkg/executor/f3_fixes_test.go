@@ -279,14 +279,16 @@ func TestF5_CanceledNonterminalRecovery(t *testing.T) {
 	assertEventTypePresent(t, reg, runID, "run.recovery.cancel_resumed")
 }
 
-// TestF6_RetryBudgetHoldsAcrossRestart verifies the total-attempt cap is derived
-// from the durable AttemptCount, so attempts already made before a restart count
-// against MaxAttempts (the budget is NOT reset on each RunE entry).
+// TestF6_RetryBudgetHoldsAcrossRestart verifies the realization-attempt budget is
+// derived from the durable RealizationAttemptCount, so pre-submission realization
+// cycles already spent before a restart still count against the (independent)
+// realization ceiling — the budget is NOT reset on each RunE entry, and it does not
+// touch the user-code opportunity budget (MaxAttempts).
 func TestF6_RetryBudgetHoldsAcrossRestart(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
-	// A pre-submission (E0) prepare failure is the retryable case whose budget cap
-	// this test exercises across a restart (post-start failures are no longer
-	// budget-retried under F3-B2).
+	withRealizationCeiling(t, 2)
+	// A pre-submission (E0) prepare failure is the replay-safe realization case whose
+	// budget this test exercises across a restart.
 	adapter := &fakeAdapter{failOn: map[string]bool{}, failPrepareOn: map[string]bool{"a": true}}
 	engine := NewDagEngine(reg, adapter)
 
@@ -298,10 +300,11 @@ func TestF6_RetryBudgetHoldsAcrossRestart(t *testing.T) {
 			RetryPolicy: spec.RetryPolicy{MaxAttempts: 3},
 		}}},
 	}
-	// Restart state: 2 attempts already made (AttemptCount=2), node reset to
-	// Pending for the next retry. Only ONE more attempt is within the cap of 3.
+	// Restart state: 1 realization cycle already spent (RealizationAttemptCount=1),
+	// node reset to Pending. With the ceiling pinned to 2, only ONE more realization
+	// cycle is within budget across the restart.
 	record := spec.RunRecord{RunID: runID, Status: spec.RunStatusRunning, AcceptedAt: time.Now().UTC(), Spec: specInput}
-	nodes := []spec.NodeRecord{{RunID: runID, NodeID: "a", Status: spec.NodeStatusPending, AttemptCount: 2, CurrentAttemptID: ""}}
+	nodes := []spec.NodeRecord{{RunID: runID, NodeID: "a", Status: spec.NodeStatusPending, RealizationAttemptCount: 1, CurrentAttemptID: ""}}
 	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
 		t.Fatalf("CreateRun: %v", err)
 	}
@@ -314,8 +317,11 @@ func TestF6_RetryBudgetHoldsAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetNode: %v", err)
 	}
-	if node.AttemptCount != 3 {
-		t.Fatalf("AttemptCount = %d after restart, want 3 (cap of MaxAttempts=3 must hold across restart)", node.AttemptCount)
+	if node.RealizationAttemptCount != 2 {
+		t.Fatalf("RealizationAttemptCount = %d after restart, want 2 (realization ceiling=2 must hold across restart)", node.RealizationAttemptCount)
+	}
+	if node.AttemptCount != 0 {
+		t.Fatalf("AttemptCount = %d, want 0 (realization retries must not consume user-code opportunities)", node.AttemptCount)
 	}
 	if node.Status != spec.NodeStatusFailed {
 		t.Fatalf("node status = %q, want Failed", node.Status)
