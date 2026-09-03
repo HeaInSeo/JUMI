@@ -829,9 +829,9 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 	// opportunity budget is exhausted, fail closed WITHOUT opening a workload.
 	// (This is the sole fence authority — it absorbs the prior PersistSubmissionFence
 	// step rather than adding a second fence.)
-	if freshNode, gErr := r.registry.GetNode(context.Background(), r.runID, r.node.NodeID); gErr != nil {
+	if opened, gErr := r.openedOpportunityCount(); gErr != nil {
 		return gErr
-	} else if freshNode.AttemptCount >= effectiveMaxAttempts(r.node.RetryPolicy.MaxAttempts) {
+	} else if opened >= effectiveMaxAttempts(r.node.RetryPolicy.MaxAttempts) {
 		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &now, FinishedAt: timePtr(time.Now().UTC()), TerminalStopCause: "failed", TerminalFailureReason: "attempt_budget_exhausted"})
 		return r.terminalizeFailed(fmt.Errorf("user-code execution opportunity budget exhausted (MaxAttempts=%d)", effectiveMaxAttempts(r.node.RetryPolicy.MaxAttempts)), attemptID, "failed", "attempt_budget_exhausted")
 	}
@@ -933,6 +933,28 @@ func effectiveMaxAttempts(m int) int {
 		return 1
 	}
 	return m
+}
+
+// openedOpportunityCount returns how many of this node's attempts durably crossed the
+// submission fence — the authoritative number of user-code execution opportunities
+// actually opened. It is derived from durable attempt records (SubmissionWindowOpenedAt)
+// rather than the NodeRecord.AttemptCount counter, which makes the fence budget gate
+// migration-safe: a node persisted by a PRE-F3-B3 release incremented AttemptCount at
+// allocation (not at the fence), so trusting that stale counter could wrongly block a
+// legitimately in-flight reservation on a rolling upgrade. The current (not-yet-opened)
+// reservation has no fence timestamp and is therefore correctly excluded here.
+func (r *nodeRunner) openedOpportunityCount() (int, error) {
+	attempts, err := r.registry.ListAttempts(context.Background(), r.runID, r.node.NodeID)
+	if err != nil {
+		return 0, err
+	}
+	opened := 0
+	for i := range attempts {
+		if attempts[i].SubmissionWindowOpenedAt != nil {
+			opened++
+		}
+	}
+	return opened, nil
 }
 
 // realizationRetriesRemaining reports whether another pre-user-code realization

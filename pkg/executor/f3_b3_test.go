@@ -174,6 +174,53 @@ func TestB3V4_RestartReusesReservationNoExtraBudget(t *testing.T) {
 	}
 }
 
+// TestB3_LegacyPreFenceAttemptCountDoesNotBlockFence is a rolling-upgrade regression:
+// a node persisted by a PRE-F3-B3 release pre-incremented AttemptCount at allocation,
+// so an in-flight pre-fence reservation carries AttemptCount=1 even though no semantic
+// Attempt (fence) ever opened. The fence budget gate must derive the opened count from
+// the durable fence records (SubmissionWindowOpenedAt), not the stale counter, so this
+// legitimately in-flight reservation is not wrongly failed as budget-exhausted.
+func TestB3_LegacyPreFenceAttemptCountDoesNotBlockFence(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	adapter := &persistableAdapter{fakeAdapter: &fakeAdapter{failOn: map[string]bool{}}}
+	engine := NewDagEngine(reg, adapter)
+
+	runID := "b3-legacy"
+	specInput := spec.ExecutableRunSpec{
+		Run:   spec.RunMetadata{RunID: runID, SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
+		Graph: spec.Graph{Nodes: []spec.Node{{NodeID: "a", Image: "busybox:1.36", RetryPolicy: spec.RetryPolicy{MaxAttempts: 1}}}},
+	}
+	record := spec.RunRecord{RunID: runID, Status: spec.RunStatusRunning, AcceptedAt: time.Now().UTC(), Spec: specInput}
+	attemptID := spec.DeterministicAttemptID(runID, "a", 1)
+	// Old-format durable state: AttemptCount pre-incremented, no fence on the attempt.
+	nodes := []spec.NodeRecord{{
+		RunID: runID, NodeID: "a", Status: spec.NodeStatusReady,
+		AttemptCount: 1, CurrentAttemptID: attemptID, CurrentBottleneckLocation: "release_wait",
+	}}
+	if err := reg.CreateRun(context.Background(), record, nodes); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := reg.UpsertAttempt(context.Background(), spec.AttemptRecord{
+		RunID: runID, NodeID: "a", AttemptID: attemptID, Status: spec.AttemptStatusPrepared, StartedAt: &now,
+	}); err != nil {
+		t.Fatalf("UpsertAttempt: %v", err)
+	}
+
+	if err := engine.Recover(context.Background()); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	waitForRunStatusWithin(t, reg, runID, spec.RunStatusSucceeded, 3*time.Second)
+
+	node, _ := reg.GetNode(context.Background(), runID, "a")
+	if node.Status != spec.NodeStatusSucceeded {
+		t.Fatalf("node status = %q, want Succeeded (legacy pre-fence AttemptCount must not block the fence)", node.Status)
+	}
+	if got := adapter.startCount("a"); got != 1 {
+		t.Fatalf("StartNode calls = %d, want 1 (the reservation opened and ran once)", got)
+	}
+}
+
 // B3-V5 / B3-V7 / B3-V8: an opened Job's post-submission failure is may-have-started
 // (E3) unless authoritative E0 is proven; the realization budget must NOT authorize a
 // generic replacement execution after the fence has opened. (Authoritative E0 after
