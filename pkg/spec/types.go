@@ -228,18 +228,26 @@ type RunCounters struct {
 }
 
 type NodeRecord struct {
-	RunID                     string          `json:"runId"`
-	NodeID                    string          `json:"nodeId"`
-	Status                    NodeStatus      `json:"status"`
-	CurrentBottleneckLocation string          `json:"currentBottleneckLocation,omitempty"`
-	TerminalStopCause         string          `json:"terminalStopCause,omitempty"`
-	TerminalFailureReason     string          `json:"terminalFailureReason,omitempty"`
-	AttemptCount              int             `json:"attemptCount,omitempty"`
-	CurrentAttemptID          string          `json:"currentAttemptId,omitempty"`
-	CurrentAttemptHandleJSON  string          `json:"currentAttemptHandleJson,omitempty"`
-	StartedAt                 *time.Time      `json:"startedAt,omitempty"`
-	FinishedAt                *time.Time      `json:"finishedAt,omitempty"`
-	Observation               NodeObservation `json:"observation,omitempty"`
+	RunID                     string     `json:"runId"`
+	NodeID                    string     `json:"nodeId"`
+	Status                    NodeStatus `json:"status"`
+	CurrentBottleneckLocation string     `json:"currentBottleneckLocation,omitempty"`
+	TerminalStopCause         string     `json:"terminalStopCause,omitempty"`
+	TerminalFailureReason     string     `json:"terminalFailureReason,omitempty"`
+	AttemptCount              int        `json:"attemptCount,omitempty"`
+	// RealizationAttemptCount counts pre-user-code realization cycles (binding /
+	// placement / prepare / fence work, and new-workload-after-authoritative-E0).
+	// It is a SEPARATE finite budget from AttemptCount (the user-authored
+	// execution-opportunity budget capped by RetryPolicy.MaxAttempts): a
+	// realization-only failure before the submission fence must not consume a
+	// user-code execution opportunity (F3-B3). Its ceiling is an internal safety
+	// bound independent of MaxAttempts.
+	RealizationAttemptCount  int             `json:"realizationAttemptCount,omitempty"`
+	CurrentAttemptID         string          `json:"currentAttemptId,omitempty"`
+	CurrentAttemptHandleJSON string          `json:"currentAttemptHandleJson,omitempty"`
+	StartedAt                *time.Time      `json:"startedAt,omitempty"`
+	FinishedAt               *time.Time      `json:"finishedAt,omitempty"`
+	Observation              NodeObservation `json:"observation,omitempty"`
 }
 
 type AttemptRecord struct {

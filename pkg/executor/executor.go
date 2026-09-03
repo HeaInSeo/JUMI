@@ -716,7 +716,7 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 				TerminalStopCause:     "failed",
 				TerminalFailureReason: "input_env_key_collision",
 			})
-			return r.failNode(err, attemptID, "failed", "input_env_key_collision")
+			return r.failNode(err, attemptID, "failed", "input_env_key_collision", false)
 		}
 		if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 			current.Status = spec.NodeStatusBuildingBindings
@@ -764,7 +764,7 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 					TerminalStopCause:     "failed",
 					TerminalFailureReason: failureReason,
 				})
-				return r.failNode(err, attemptID, "failed", failureReason)
+				return r.failNode(err, attemptID, "failed", failureReason, false)
 			}
 			appendEvent(context.Background(), r.registry, spec.EventRecord{
 				RunID:      r.runID,
@@ -798,7 +798,7 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 			TerminalStopCause:     "failed",
 			TerminalFailureReason: "placement_conflict",
 		})
-		return r.failNode(err, attemptID, "failed", "placement_conflict")
+		return r.failNode(err, attemptID, "failed", "placement_conflict", false)
 	}
 	recordPlacementHintApplication(context.Background(), r.registry, r.runID, r.node.NodeID, attemptID, r.localityHints, executionNode.Placement)
 	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
@@ -812,7 +812,7 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 	prepared, err := r.adapter.PrepareNode(ctx, run, executionNode)
 	if err != nil {
 		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &now, FinishedAt: timePtr(time.Now().UTC()), TerminalStopCause: "failed", TerminalFailureReason: "backend_prepare_error"})
-		return r.failNode(err, attemptID, "failed", "backend_prepare_error")
+		return r.failNode(err, attemptID, "failed", "backend_prepare_error", true)
 	}
 	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusReleasing
@@ -822,13 +822,26 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 		return err
 	}
 	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.releasing", OccurredAt: time.Now().UTC(), Level: "info", Message: "bounded release waiting/start in progress"})
-	// Submission fence: durably record that the submission window opened for this
-	// Attempt BEFORE crossing the backend side-effect boundary (StartNode). If the
-	// fence cannot be persisted we must not cross the boundary, otherwise a crash
-	// could leave a backend job that no durable fact points to.
-	if err := r.registry.PersistSubmissionFence(context.Background(), r.runID, r.node.NodeID, attemptID, time.Now().UTC()); err != nil {
+	// Submission fence = semantic Attempt open (F3-B3). Crossing it BEFORE the
+	// backend side-effect boundary (StartNode) is the point where a user-code
+	// execution opportunity is actually provided, so it consumes one unit of the
+	// MaxAttempts opportunity budget. Verify a slot is available first; if the
+	// opportunity budget is exhausted, fail closed WITHOUT opening a workload.
+	// (This is the sole fence authority — it absorbs the prior PersistSubmissionFence
+	// step rather than adding a second fence.)
+	if opened, gErr := r.openedOpportunityCount(); gErr != nil {
+		return gErr
+	} else if opened >= effectiveMaxAttempts(r.node.RetryPolicy.MaxAttempts) {
+		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &now, FinishedAt: timePtr(time.Now().UTC()), TerminalStopCause: "failed", TerminalFailureReason: "attempt_budget_exhausted"})
+		return r.terminalizeFailed(fmt.Errorf("user-code execution opportunity budget exhausted (MaxAttempts=%d)", effectiveMaxAttempts(r.node.RetryPolicy.MaxAttempts)), attemptID, "failed", "attempt_budget_exhausted")
+	}
+	// The fence cannot be persisted before the boundary → do not cross it (a crash
+	// could otherwise leave a backend job no durable fact points to). A failure here
+	// is still pre-side-effect (E0): treat it as a realization failure, not a spent
+	// user-code opportunity.
+	if err := r.registry.OpenSemanticAttempt(context.Background(), r.runID, r.node.NodeID, attemptID, time.Now().UTC()); err != nil {
 		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &now, FinishedAt: timePtr(time.Now().UTC()), TerminalStopCause: "failed", TerminalFailureReason: "submission_fence_persist_error"})
-		return r.failNode(err, attemptID, "failed", "submission_fence_persist_error")
+		return r.failNode(err, attemptID, "failed", "submission_fence_persist_error", true)
 	}
 	releaseStartedAt := time.Now().UTC()
 	handle, err := r.adapter.StartNode(ctx, prepared)
@@ -903,36 +916,87 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 	return r.waitAndFinalize(ctx, handle, attemptID, startedAt, executionNode)
 }
 
-// retriesRemaining derives the remaining retry budget from the durable
-// AttemptCount rather than a per-entry in-memory counter, so the total-attempt
-// cap (RetryPolicy.MaxAttempts) holds across executor restarts (F6). At the
-// point failNode calls this, AttemptCount already includes the just-failed
-// attempt, so a retry is permitted only while strictly fewer than MaxAttempts
-// attempts have been made. Returns (remaining, true) when a retry is allowed.
-func (r *nodeRunner) retriesRemaining() (int, bool) {
+// realizationAttemptCeiling bounds pre-user-code realization cycles (F3-B3). It is
+// an INTERNAL safety bound, deliberately INDEPENDENT of RetryPolicy.MaxAttempts
+// (which is the user-authored execution-opportunity budget). It is NOT a
+// product/canonical contract: its exact value carries no external semantics and may
+// change without affecting the execution contract. It is a var (not const) only so
+// tests can prove exhaustion behavior at a small bound; production behavior depends
+// on boundedness, not on this specific number.
+var realizationAttemptCeiling = 32
+
+// effectiveMaxAttempts is the user-code execution-opportunity budget. A node always
+// gets at least one opportunity, so MaxAttempts < 1 is treated as 1 (one execution,
+// no additional opportunity), matching the documented maxAttempts semantics.
+func effectiveMaxAttempts(m int) int {
+	if m < 1 {
+		return 1
+	}
+	return m
+}
+
+// openedOpportunityCount returns how many of this node's attempts durably crossed the
+// submission fence — the authoritative number of user-code execution opportunities
+// actually opened. It is derived from durable attempt records (SubmissionWindowOpenedAt)
+// rather than the NodeRecord.AttemptCount counter, which makes the fence budget gate
+// migration-safe: a node persisted by a PRE-F3-B3 release incremented AttemptCount at
+// allocation (not at the fence), so trusting that stale counter could wrongly block a
+// legitimately in-flight reservation on a rolling upgrade. The current (not-yet-opened)
+// reservation has no fence timestamp and is therefore correctly excluded here.
+func (r *nodeRunner) openedOpportunityCount() (int, error) {
+	attempts, err := r.registry.ListAttempts(context.Background(), r.runID, r.node.NodeID)
+	if err != nil {
+		return 0, err
+	}
+	opened := 0
+	for i := range attempts {
+		if attempts[i].SubmissionWindowOpenedAt != nil {
+			opened++
+		}
+	}
+	return opened, nil
+}
+
+// realizationRetriesRemaining reports whether another pre-user-code realization
+// cycle is admissible. Under F3-B2/B3, failNode is reached only for pre-submission
+// (Q32 E0) failures, so the budget here is the INDEPENDENT realization ceiling —
+// never RetryPolicy.MaxAttempts, which is the user-code execution-opportunity budget
+// and must not be consumed by realization-only failures. The durable
+// RealizationAttemptCount already includes the just-failed cycle, so a further cycle
+// is permitted only while strictly fewer than the ceiling have been spent.
+func (r *nodeRunner) realizationRetriesRemaining() (int, bool) {
 	node, err := r.registry.GetNode(context.Background(), r.runID, r.node.NodeID)
 	if err != nil {
 		return 0, false
 	}
-	remaining := r.node.RetryPolicy.MaxAttempts - node.AttemptCount
+	remaining := realizationAttemptCeiling - node.RealizationAttemptCount
 	if remaining <= 0 {
 		return 0, false
 	}
 	return remaining, true
 }
 
-func (r *nodeRunner) failNode(cause error, attemptID string, terminalStopCause string, failureReason string) error {
+// failNode terminalizes (or, for a replay-safe pre-submission failure, re-realizes)
+// a pre-user-code (Q32 E0) failure. realizationRetryable is true only for transient,
+// replay-safe realization failures (e.g. backend prepare / submission-fence persist)
+// that a fresh realization cycle could plausibly clear; it is false for
+// deterministic pre-submission failures (input/env collision, placement conflict,
+// resolve-binding failures whose own transient retry the handoff layer already owns),
+// which must fail terminally without spending the realization budget on pointless
+// re-tries. Either way, a pre-submission failure never consumes the user-code
+// execution-opportunity budget (MaxAttempts) — that is the F3-B3 invariant.
+func (r *nodeRunner) failNode(cause error, attemptID string, terminalStopCause string, failureReason string, realizationRetryable bool) error {
 	r.recordLocalityFallbackFailure(attemptID)
 	if r.isRunCanceled() {
 		return r.cancelNode(attemptID, "cancellation_requested")
 	}
-	if remaining, ok := r.retriesRemaining(); ok {
+	if remaining, ok := r.realizationRetriesRemaining(); realizationRetryable && ok {
 		finishedAt := time.Now().UTC()
 		appendEvent(context.Background(), r.registry, spec.EventRecord{
 			RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID,
 			Type: "node.attempt_failed", OccurredAt: finishedAt, Level: "warn",
 			StopCause: terminalStopCause, FailureReason: failureReason,
-			Message: fmt.Sprintf("attempt failed, will retry (%d retries remaining)", remaining),
+			Message: fmt.Sprintf("pre-submission realization failed, will re-realize (%d realization cycles remaining)", remaining),
 		})
 		_ = r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 			current.Status = spec.NodeStatusPending

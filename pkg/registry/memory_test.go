@@ -434,7 +434,9 @@ func TestMemoryRegistry_AllocateCurrentAttempt(t *testing.T) {
 		t.Fatalf("expected ErrAttemptNonTerminal, got %v", err)
 	}
 	node, _ := reg.GetNode(ctx, "run-1", "a")
-	if node.AttemptCount != 1 || node.CurrentAttemptID != a1.AttemptID || node.Status != spec.NodeStatusReady {
+	// F3-B3: AllocateCurrentAttempt allocates a realization cycle (RealizationAttemptCount),
+	// not a user-code opportunity (AttemptCount), which is consumed only at fence open.
+	if node.RealizationAttemptCount != 1 || node.AttemptCount != 0 || node.CurrentAttemptID != a1.AttemptID || node.Status != spec.NodeStatusReady {
 		t.Fatalf("node = %+v", node)
 	}
 }

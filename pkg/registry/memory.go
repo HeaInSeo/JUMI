@@ -232,7 +232,12 @@ func (r *MemoryRegistry) AllocateCurrentAttempt(_ context.Context, runID, nodeID
 			return spec.AttemptRecord{}, ErrAttemptNonTerminal
 		}
 	}
-	next := node.AttemptCount + 1
+	// F3-B3: this allocates a REALIZATION cycle (pre-user-code preparation), NOT a
+	// user-code execution opportunity. It increments the separate
+	// RealizationAttemptCount and derives the attempt id from it; the user-code
+	// opportunity budget (AttemptCount vs MaxAttempts) is consumed only when the
+	// semantic Attempt opens at the submission fence (OpenSemanticAttempt).
+	next := node.RealizationAttemptCount + 1
 	attemptID := spec.DeterministicAttemptID(runID, nodeID, next)
 	now := time.Now().UTC()
 	attempt := spec.AttemptRecord{
@@ -244,13 +249,39 @@ func (r *MemoryRegistry) AllocateCurrentAttempt(_ context.Context, runID, nodeID
 	}
 	// All-or-nothing: mutate the in-memory maps only after all checks pass.
 	r.attempts[runID][nodeID][attemptID] = attempt
-	node.AttemptCount = next
+	node.RealizationAttemptCount = next
 	node.CurrentAttemptID = attemptID
 	node.Status = spec.NodeStatusReady
 	node.CurrentBottleneckLocation = "release_wait"
 	node.StartedAt = &now
 	r.nodes[runID][nodeID] = node
 	return attempt, nil
+}
+
+// OpenSemanticAttempt records that the current reservation's submission fence was
+// crossed — the semantic Attempt opens here and consumes one user-code execution
+// opportunity (AttemptCount++). Callers MUST verify an opportunity slot is available
+// (AttemptCount < RetryPolicy.MaxAttempts) BEFORE calling; the registry only applies
+// the atomic AttemptCount increment + fence timestamp on the current attempt.
+func (r *MemoryRegistry) OpenSemanticAttempt(_ context.Context, runID, nodeID, attemptID string, openedAt time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	node, err := r.lockedGetNode(runID, nodeID)
+	if err != nil {
+		return err
+	}
+	if node.CurrentAttemptID != attemptID {
+		return ErrAttemptNotFound
+	}
+	if err := r.lockedMutateAttempt(runID, nodeID, attemptID, func(a *spec.AttemptRecord) {
+		t := openedAt.UTC()
+		a.SubmissionWindowOpenedAt = &t
+	}); err != nil {
+		return err
+	}
+	node.AttemptCount++
+	r.nodes[runID][nodeID] = node
+	return nil
 }
 
 func (r *MemoryRegistry) PersistSubmissionFence(_ context.Context, runID, nodeID, attemptID string, openedAt time.Time) error {

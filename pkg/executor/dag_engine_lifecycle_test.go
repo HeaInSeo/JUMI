@@ -222,16 +222,17 @@ func TestDagEngineCancelIsNoOpOnAlreadyTerminalRunAndNode(t *testing.T) {
 }
 
 // TestDagEngineNodeLevelRetryLoop exercises the failNode -> errNodeRetry ->
-// new-attempt loop (RunE's for-loop in executor.go). MaxAttempts is a total-attempt
-// cap, not a retry count (docs/JUMI_EXECUTABLE_RUN_SPEC_DRAFT.ko.md 9.3:
-// "maxAttempts = 1은 실행 1회, 재시도 없음이다"), so MaxAttempts=2 exercises exactly
-// one retry. The failure injected here is a PREPARE failure: under F3-B2 the retry
-// loop is admissible only for pre-submission (Q32 E0) failures where user code
-// positively could not have started, so the backend fails every PrepareNode call
-// and the node makes exactly two E0 attempts before failing. (Post-start failures no
-// longer loop — see the F3-B2 tests.)
+// new-realization-cycle loop (RunE's for-loop in executor.go). Under F3-B2/B3 that
+// loop is admissible only for replay-safe pre-submission (Q32 E0) failures where user
+// code positively could not have started, and it is bounded by the INDEPENDENT
+// realization ceiling — NOT RetryPolicy.MaxAttempts (the user-code
+// execution-opportunity budget, which a pre-submission failure never consumes). The
+// backend fails every PrepareNode call, so with the ceiling pinned to 2 the node
+// makes exactly two realization cycles before failing, consuming zero user-code
+// opportunities. (Post-start failures no longer loop — see the F3-B2 tests.)
 func TestDagEngineNodeLevelRetryLoop(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
+	withRealizationCeiling(t, 2)
 	adapter := &fakeAdapter{failOn: map[string]bool{}, failPrepareOn: map[string]bool{"a": true}}
 	engine := NewDagEngine(reg, adapter)
 
@@ -257,8 +258,11 @@ func TestDagEngineNodeLevelRetryLoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetNode() error = %v", err)
 	}
-	if gotNode.AttemptCount != 2 {
-		t.Fatalf("attemptCount = %d, want 2 (1 original + 1 retry from MaxAttempts=2)", gotNode.AttemptCount)
+	if gotNode.RealizationAttemptCount != 2 {
+		t.Fatalf("realizationAttemptCount = %d, want 2 (bounded realization retry at ceiling=2)", gotNode.RealizationAttemptCount)
+	}
+	if gotNode.AttemptCount != 0 {
+		t.Fatalf("attemptCount = %d, want 0 (pre-submission realization failures consume no user-code opportunity)", gotNode.AttemptCount)
 	}
 	if gotNode.Status != spec.NodeStatusFailed {
 		t.Fatalf("final node status = %q, want %q", gotNode.Status, spec.NodeStatusFailed)

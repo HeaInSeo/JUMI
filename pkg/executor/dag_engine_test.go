@@ -31,6 +31,7 @@ type fakeAdapter struct {
 	order                    []string
 	failOn                   map[string]bool
 	failPrepareOn            map[string]bool
+	failPrepareTimes         map[string]int
 	waitCh                   map[string]chan struct{}
 	canceled                 map[string]bool
 	prepared                 map[string]spec.Node
@@ -142,6 +143,10 @@ func (f *fakeAdapter) PrepareNode(_ context.Context, _ spec.RunRecord, node spec
 	}
 	f.prepared[node.NodeID] = node
 	failPrepare := f.failPrepareOn[node.NodeID]
+	if f.failPrepareTimes != nil && f.failPrepareTimes[node.NodeID] > 0 {
+		f.failPrepareTimes[node.NodeID]--
+		failPrepare = true
+	}
 	f.mu.Unlock()
 	// A prepare failure is a pre-submission (Q32 E0) failure: user code could not
 	// have started, so it is a legitimately re-executable realization attempt.
