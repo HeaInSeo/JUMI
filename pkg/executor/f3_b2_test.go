@@ -82,18 +82,23 @@ func TestB2T02_NotifyErrorAfterSuccessNoNewExecution(t *testing.T) {
 	}
 }
 
-// B2-T03: backend wait uncertainty where user code may have started and no E0 proof
-// exists -> no generic new Attempt, even with a remaining budget.
+// B2-T03: backend wait uncertainty (WaitNode observation loss) where user code may
+// have started and no E0 proof exists -> no generic new Attempt, and the Attempt is
+// NOT terminalized (it is left recoverable so reconcile reattaches the same Job);
+// even with a remaining budget, no user-code rerun occurs.
 func TestB2T03_BackendWaitUncertaintyNoNewAttempt(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
-	adapter := &fakeAdapter{failOn: map[string]bool{"a": true}} // WaitNode returns an error
+	adapter := &fakeAdapter{failOn: map[string]bool{"a": true}} // WaitNode returns an error (observation loss)
 	engine := NewDagEngine(reg, adapter)
 
 	runID := "b2-t03"
 	b2Run(t, engine, reg, runID, spec.Node{NodeID: "a", Image: "busybox:1.36", RetryPolicy: spec.RetryPolicy{MaxAttempts: 3}})
-	waitForRunStatusWithin(t, reg, runID, spec.RunStatusFailed, 3*time.Second)
+	waitForEventType(t, reg, runID, "node.recovery.unresolved", 3*time.Second)
 
 	node, _ := reg.GetNode(context.Background(), runID, "a")
+	if node.Status.IsTerminal() {
+		t.Fatalf("observation loss terminalized the node (%s); it must stay recoverable, not Failed", node.Status)
+	}
 	if node.AttemptCount != 1 {
 		t.Fatalf("AttemptCount = %d, want 1 (may-have-started must not consume the retry budget)", node.AttemptCount)
 	}
@@ -218,6 +223,11 @@ func TestB2T08_RestartRedrivesFinalizationNoRerun(t *testing.T) {
 	if node.Status.IsTerminal() {
 		t.Fatalf("node terminalized before restart: %s", node.Status)
 	}
+	// The E4 success fact must be durably persisted (§4), so recovery never re-runs
+	// user code even if the backend Job is later garbage-collected.
+	if att, ok, _ := reg.GetCurrentAttempt(context.Background(), runID, "a"); !ok || att.ProcessCompletedAt == nil {
+		t.Fatalf("expected durable ProcessCompletedAt on the deferred attempt (ok=%v)", ok)
+	}
 	if got := adapter.startCount("a"); got != 1 {
 		t.Fatalf("StartNode calls before restart = %d, want 1", got)
 	}
@@ -241,6 +251,42 @@ func TestB2T08_RestartRedrivesFinalizationNoRerun(t *testing.T) {
 	}
 	if node.AttemptCount != 1 {
 		t.Fatalf("AttemptCount = %d, want 1 (no new attempt for finalization reconcile)", node.AttemptCount)
+	}
+}
+
+// B2-T08b: durable E4 evidence survives backend Job garbage-collection. A restart
+// where the process had completed (ProcessCompletedAt persisted) but the Job is now
+// gone (no handle; identity resolve -> ABSENT_NOW) must NEVER re-run user code and
+// must not be terminalized by a replacement execution.
+func TestB2T08b_ProcessCompletedSurvivesJobGCNoRerun(t *testing.T) {
+	reg := registry.NewMemoryRegistry()
+	inner := &fakeAdapter{failOn: map[string]bool{}}
+	adapter := newResolverAdapter(inner, backend.ResolveAbsentNow, nil, nil)
+	engine := NewDagEngine(reg, adapter)
+
+	runID := "b2-t08b"
+	// Seed: process completed (durable ProcessCompletedAt), fence crossed, but the
+	// backend handle/Job is gone (GC'd past TTL) — the E4-deferred-then-GC state.
+	attemptID := seedFenceCrossedRun(t, reg, runID, spec.RunStatusRunning, spec.NodeStatusStarting, false)
+	if err := reg.PersistProcessCompleted(context.Background(), runID, "a", attemptID, time.Now().UTC()); err != nil {
+		t.Fatalf("PersistProcessCompleted: %v", err)
+	}
+
+	record, _ := reg.GetRun(context.Background(), runID)
+	if err := engine.Admit(context.Background(), record); err != nil {
+		t.Fatalf("Admit: %v", err)
+	}
+	waitForEventType(t, reg, runID, "node.recovery.unresolved", 3*time.Second)
+
+	if got := adapter.creates(); got != 0 {
+		t.Fatalf("Create count = %d, want 0 (a GC'd Job after process success must not be re-executed)", got)
+	}
+	node, _ := reg.GetNode(context.Background(), runID, "a")
+	if node.Status == spec.NodeStatusFailed {
+		t.Fatalf("a successfully-executed run was marked Failed after Job GC; must stay recoverable")
+	}
+	if node.AttemptCount != 1 {
+		t.Fatalf("AttemptCount = %d, want 1 (no replacement attempt)", node.AttemptCount)
 	}
 }
 
@@ -310,7 +356,12 @@ func TestB2T10_StartedAtOnPreStartErrorIsNotStartProof(t *testing.T) {
 // a large budget does not manufacture re-execution authority.
 func TestB2T11_MaxAttemptsAloneNeverAuthorizesReexecution(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
-	adapter := &fakeAdapter{failOn: map[string]bool{"a": true}}
+	// Authoritative backend-reported failure (may-have-started, E3): a large budget
+	// must not manufacture a new user-code execution.
+	adapter := &fakeAdapter{
+		failOn:      map[string]bool{},
+		waitResults: map[string]backend.ExecutionResult{"a": {Succeeded: false, TerminalStopCause: "failed", TerminalFailureReason: "user_code_failed"}},
+	}
 	engine := NewDagEngine(reg, adapter)
 
 	runID := "b2-t11"

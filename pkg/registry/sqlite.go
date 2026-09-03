@@ -468,6 +468,13 @@ func (r *SQLiteRegistry) PersistCancellationIntent(ctx context.Context, runID, n
 	})
 }
 
+func (r *SQLiteRegistry) PersistProcessCompleted(ctx context.Context, runID, nodeID, attemptID string, completedAt time.Time) error {
+	return r.mutateAttempt(ctx, runID, nodeID, attemptID, func(a *spec.AttemptRecord) {
+		t := completedAt.UTC()
+		a.ProcessCompletedAt = &t
+	})
+}
+
 func (r *SQLiteRegistry) mutateAttempt(ctx context.Context, runID, nodeID, attemptID string, mutate func(*spec.AttemptRecord)) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {

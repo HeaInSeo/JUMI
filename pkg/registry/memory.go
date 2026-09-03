@@ -289,6 +289,15 @@ func (r *MemoryRegistry) PersistCancellationIntent(_ context.Context, runID, nod
 	})
 }
 
+func (r *MemoryRegistry) PersistProcessCompleted(_ context.Context, runID, nodeID, attemptID string, completedAt time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lockedMutateAttempt(runID, nodeID, attemptID, func(a *spec.AttemptRecord) {
+		t := completedAt.UTC()
+		a.ProcessCompletedAt = &t
+	})
+}
+
 func (r *MemoryRegistry) lockedGetNode(runID, nodeID string) (spec.NodeRecord, error) {
 	runNodes, ok := r.nodes[runID]
 	if !ok {

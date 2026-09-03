@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/HeaInSeo/JUMI/pkg/backend"
 	"github.com/HeaInSeo/JUMI/pkg/registry"
 	"github.com/HeaInSeo/JUMI/pkg/spec"
 )
@@ -12,8 +13,11 @@ import (
 func TestDagEngineFastFailCancelsRunningSiblingAndSkipsDownstream(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
 	adapter := &fakeAdapter{
-		failOn: map[string]bool{"b1": true},
-		waitCh: map[string]chan struct{}{"b2": make(chan struct{})},
+		// Authoritative backend-reported failure for b1 (a terminal failure that
+		// triggers fast-fail), not a WaitNode observation loss.
+		failOn:      map[string]bool{},
+		waitResults: map[string]backend.ExecutionResult{"b1": {Succeeded: false, TerminalStopCause: "failed", TerminalFailureReason: "user_code_failed"}},
+		waitCh:      map[string]chan struct{}{"b2": make(chan struct{})},
 	}
 	engine := NewDagEngine(reg, adapter)
 	specInput := spec.ExecutableRunSpec{

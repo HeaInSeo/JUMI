@@ -47,4 +47,10 @@ type Registry interface {
 	// PersistCancellationIntent durably records an accepted cancellation intent
 	// on the Attempt until terminal reconciliation confirms terminal truth.
 	PersistCancellationIntent(ctx context.Context, runID, nodeID, attemptID string, requestedAt time.Time, reason string) error
+
+	// PersistProcessCompleted durably records that the user process for an Attempt
+	// completed successfully and only platform finalization remains (F3-B2 / #46).
+	// Once set, recovery reconciles finalization on the same execution and never
+	// re-runs user code.
+	PersistProcessCompleted(ctx context.Context, runID, nodeID, attemptID string, completedAt time.Time) error
 }

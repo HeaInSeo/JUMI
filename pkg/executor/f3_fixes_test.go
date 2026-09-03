@@ -284,7 +284,10 @@ func TestF5_CanceledNonterminalRecovery(t *testing.T) {
 // against MaxAttempts (the budget is NOT reset on each RunE entry).
 func TestF6_RetryBudgetHoldsAcrossRestart(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
-	adapter := &fakeAdapter{failOn: map[string]bool{"a": true}}
+	// A pre-submission (E0) prepare failure is the retryable case whose budget cap
+	// this test exercises across a restart (post-start failures are no longer
+	// budget-retried under F3-B2).
+	adapter := &fakeAdapter{failOn: map[string]bool{}, failPrepareOn: map[string]bool{"a": true}}
 	engine := NewDagEngine(reg, adapter)
 
 	runID := "run-f6-budget"

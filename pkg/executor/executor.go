@@ -1008,6 +1008,23 @@ func (r *nodeRunner) terminalizeFailedNoRetry(cause error, attemptID string, ter
 // re-run). The run is left non-terminal/recoverable — never Failed — via the same
 // no-replacement unresolved signal used for other post-fence recovery.
 func (r *nodeRunner) deferFinalizationAfterSuccess(attemptID string, finalizationReason string, cause error) error {
+	// Durably record the E4 execution-success fact BEFORE deferring, so recovery
+	// knows user code completed even if the backend Job is later garbage-collected
+	// and can no longer be re-observed. This is the restart-safe evidence that
+	// guarantees finalization is reconciled and user code is never re-run (§4).
+	if err := r.registry.PersistProcessCompleted(context.Background(), r.runID, r.node.NodeID, attemptID, time.Now().UTC()); err != nil {
+		// If we cannot durably record success we must fail closed rather than risk a
+		// later re-execution: surface the error and leave the Attempt non-terminal.
+		appendEvent(context.Background(), r.registry, spec.EventRecord{
+			RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID,
+			Type: "node.finalization.evidence_persist_failed", OccurredAt: time.Now().UTC(), Level: "error",
+			FailureReason: finalizationReason, Message: err.Error(),
+		})
+		if r.active != nil {
+			r.active.markUnresolved()
+		}
+		return errReconcileUnresolved
+	}
 	appendEvent(context.Background(), r.registry, spec.EventRecord{
 		RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID,
 		Type: "node.finalization.deferred", OccurredAt: time.Now().UTC(), Level: "warn",
@@ -1067,13 +1084,16 @@ func (r *nodeRunner) waitAndFinalize(ctx context.Context, handle backend.Handle,
 		if r.isRunCanceled() || ctx.Err() != nil {
 			return r.cancelNode(attemptID, "cancellation_requested")
 		}
-		finishedAt := time.Now().UTC()
-		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &startedAt, FinishedAt: &finishedAt, TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"})
 		// WaitNode could not observe the outcome: this is observation loss, not proof
-		// of non-execution (Q32 — handle/timeout/observation loss do not prove no-start).
-		// User code may have started; with no authoritative E0 proof and unknown effect
-		// safety, MaxAttempts must NOT open a new user-code Attempt (Q30-R1).
-		return r.terminalizeFailedNoRetry(err, attemptID, "failed", "backend_wait_error")
+		// of non-execution (Q32 — handle/timeout/observation loss do not prove no-start,
+		// and do not prove failure either). The backend Job may still be running or may
+		// have already succeeded. Do NOT terminalize this Attempt as Failed and do NOT
+		// clear its handle — that would orphan a possibly-live Job and misreport a
+		// possibly-successful execution, and MaxAttempts must not open a replacement
+		// (Q30-R1). Leave the Attempt non-terminal with its handle so reconcile
+		// reattaches the SAME backend execution (or resolves it by identity); no new
+		// user-code Attempt is ever allocated.
+		return r.reconcileUnresolved(attemptID)
 	}
 	finishedAt := time.Now().UTC()
 	if !result.Succeeded {

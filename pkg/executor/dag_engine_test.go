@@ -1298,7 +1298,9 @@ func TestDagEngineExecutesLinearGraph(t *testing.T) {
 
 func TestDagEngineSkipsDownstreamOnFailure(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
-	adapter := &fakeAdapter{failOn: map[string]bool{"a": true}}
+	// Authoritative backend-reported failure (not observation loss): the node
+	// terminally fails, which is what drives downstream skipping.
+	adapter := &fakeAdapter{failOn: map[string]bool{}, waitResults: map[string]backend.ExecutionResult{"a": {Succeeded: false, TerminalStopCause: "failed", TerminalFailureReason: "user_code_failed"}}}
 	engine := NewDagEngine(reg, adapter)
 	specInput := spec.ExecutableRunSpec{
 		Run: spec.RunMetadata{RunID: "run-fail", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
@@ -1334,7 +1336,9 @@ func TestDagEngineSkipsDownstreamOnFailure(t *testing.T) {
 
 func TestDagEngineKeepsOriginalFailureReasonWhenNotifyNodeTerminalFailsOnFailedNode(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
-	adapter := &fakeAdapter{failOn: map[string]bool{"a": true}}
+	// An authoritative backend-reported failure terminalizes the node; the terminal
+	// notification then also fails and must not overwrite the original failure reason.
+	adapter := &fakeAdapter{failOn: map[string]bool{}, waitResults: map[string]backend.ExecutionResult{"a": {Succeeded: false, TerminalStopCause: "failed", TerminalFailureReason: "user_code_failed"}}}
 	handoffClient := &fakeHandoffClient{notifyErr: fmt.Errorf("notify down")}
 	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
 	specInput := spec.ExecutableRunSpec{
@@ -1355,16 +1359,16 @@ func TestDagEngineKeepsOriginalFailureReasonWhenNotifyNodeTerminalFailsOnFailedN
 	if err != nil {
 		t.Fatalf("GetRun() error = %v", err)
 	}
-	if run.TerminalFailureReason != "backend_wait_error" {
-		t.Fatalf("run failureReason = %q, want backend_wait_error", run.TerminalFailureReason)
+	if run.TerminalFailureReason != "user_code_failed" {
+		t.Fatalf("run failureReason = %q, want user_code_failed", run.TerminalFailureReason)
 	}
 	runNodes, err := reg.ListNodes(context.Background(), record.RunID)
 	if err != nil {
 		t.Fatalf("ListNodes() error = %v", err)
 	}
 	for _, node := range runNodes {
-		if node.NodeID == "a" && node.TerminalFailureReason != "backend_wait_error" {
-			t.Fatalf("node a failureReason = %q, want backend_wait_error", node.TerminalFailureReason)
+		if node.NodeID == "a" && node.TerminalFailureReason != "user_code_failed" {
+			t.Fatalf("node a failureReason = %q, want user_code_failed", node.TerminalFailureReason)
 		}
 	}
 	assertEventPresent(t, reg, record.RunID, "node.handoff.notify_failed", "notify_node_terminal_error")
