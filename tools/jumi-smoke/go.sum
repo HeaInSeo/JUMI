@@ -1,7 +1,7 @@
 github.com/HeaInSeo/dag-go v1.2.1 h1:e83BsRmSdcvqTK6exdqePi48NJokCO4M8vlbeicCAww=
 github.com/HeaInSeo/dag-go v1.2.1/go.mod h1:jJ20VHAglKZgOk/W46gXhI5QnuPLJdajNK7QOKaGxYg=
-github.com/HeaInSeo/spawner v0.3.1 h1:qD6OedEyIHR9SFwiuVKgP9JwhCJ9/YvYsyde+55/nbE=
-github.com/HeaInSeo/spawner v0.3.1/go.mod h1:tr1OgbRK+ItMB+tBDMrXPKvmW9lZgeCW4Ok7MnpvyvQ=
+github.com/HeaInSeo/spawner v0.3.2 h1:jux24ZG+ceZXq/c+ODUtJbMRe+/Vh0WFAlezdeNVjLs=
+github.com/HeaInSeo/spawner v0.3.2/go.mod h1:h28+MgG+8DfAHlgIxI/gYl3no1SbzFrW+1STuYirWvY=
 github.com/HeaInSeo/utils v0.0.0-20260504053318-1547f9bc140b h1:pOiuBODJGy24Nu0siyPFkVvHENYwvhGEJhkPKYsSSMg=
 github.com/HeaInSeo/utils v0.0.0-20260504053318-1547f9bc140b/go.mod h1:K2kPw+3g7hZvitjvwthDr6rcQl0nQptjKOd7EOlm6k8=
 github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5 h1:0CwZNZbxp69SHPdPJAN/hZIm0C4OItdklCFmMRWYpio=
