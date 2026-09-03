@@ -222,17 +222,17 @@ func TestDagEngineCancelIsNoOpOnAlreadyTerminalRunAndNode(t *testing.T) {
 }
 
 // TestDagEngineNodeLevelRetryLoop exercises the failNode -> errNodeRetry ->
-// new-attempt loop (RunE's for-loop in executor.go), which no existing test
-// ran end-to-end: no test previously set RetryPolicy.MaxAttempts > 0.
-// MaxAttempts is a total-attempt cap, not a retry count
-// (docs/JUMI_EXECUTABLE_RUN_SPEC_DRAFT.ko.md 9.3: "maxAttempts = 1은 실행
-// 1회, 재시도 없음이다"), so MaxAttempts=2 is required to exercise exactly
-// one retry. The backend fails every WaitNode call, so the node must make
-// exactly two attempts (the original plus one retry) before finally
-// failing.
+// new-attempt loop (RunE's for-loop in executor.go). MaxAttempts is a total-attempt
+// cap, not a retry count (docs/JUMI_EXECUTABLE_RUN_SPEC_DRAFT.ko.md 9.3:
+// "maxAttempts = 1은 실행 1회, 재시도 없음이다"), so MaxAttempts=2 exercises exactly
+// one retry. The failure injected here is a PREPARE failure: under F3-B2 the retry
+// loop is admissible only for pre-submission (Q32 E0) failures where user code
+// positively could not have started, so the backend fails every PrepareNode call
+// and the node makes exactly two E0 attempts before failing. (Post-start failures no
+// longer loop — see the F3-B2 tests.)
 func TestDagEngineNodeLevelRetryLoop(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
-	adapter := &fakeAdapter{failOn: map[string]bool{"a": true}}
+	adapter := &fakeAdapter{failOn: map[string]bool{}, failPrepareOn: map[string]bool{"a": true}}
 	engine := NewDagEngine(reg, adapter)
 
 	specInput := spec.ExecutableRunSpec{
