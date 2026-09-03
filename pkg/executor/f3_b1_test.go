@@ -314,9 +314,10 @@ func TestB1T06_RepeatedResolutionIsIdempotent(t *testing.T) {
 // terminal truth; no replay (no Create, no replacement Attempt).
 func TestB1T07_FoundAlreadyTerminalNoReplay(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
-	// failOn causes WaitNode on the reattached (already-terminal) Job to report the
-	// terminal failure truth; MaxAttempts default => no retry/replacement.
-	inner := &fakeAdapter{failOn: map[string]bool{"a": true}}
+	// The reattached Job is already terminal with an authoritative backend-reported
+	// failure result (not a WaitNode observation loss); MaxAttempts default => no
+	// retry/replacement, and the same attempt is repaired to that terminal truth.
+	inner := &fakeAdapter{failOn: map[string]bool{}, waitResults: map[string]backend.ExecutionResult{"a": {Succeeded: false, TerminalStopCause: "failed", TerminalFailureReason: "user_code_failed"}}}
 	adapter := newResolverAdapter(inner, backend.ResolveFound, fakeHandle{nodeID: "a"}, nil)
 	engine := NewDagEngine(reg, adapter)
 

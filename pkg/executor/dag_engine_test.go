@@ -30,6 +30,7 @@ type fakeAdapter struct {
 	mu                       sync.Mutex
 	order                    []string
 	failOn                   map[string]bool
+	failPrepareOn            map[string]bool
 	waitCh                   map[string]chan struct{}
 	canceled                 map[string]bool
 	prepared                 map[string]spec.Node
@@ -140,8 +141,29 @@ func (f *fakeAdapter) PrepareNode(_ context.Context, _ spec.RunRecord, node spec
 		f.prepared = make(map[string]spec.Node)
 	}
 	f.prepared[node.NodeID] = node
+	failPrepare := f.failPrepareOn[node.NodeID]
 	f.mu.Unlock()
+	// A prepare failure is a pre-submission (Q32 E0) failure: user code could not
+	// have started, so it is a legitimately re-executable realization attempt.
+	if failPrepare {
+		return nil, fmt.Errorf("forced prepare failure")
+	}
 	return fakePrepared{nodeID: node.NodeID}, nil
+}
+
+// startCount reports how many times StartNode was called for nodeID, i.e. how many
+// times the backend user-code workload was actually launched. Used by the F3-B2
+// tests to assert no user-code rerun occurred.
+func (f *fakeAdapter) startCount(nodeID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, id := range f.order {
+		if id == nodeID {
+			n++
+		}
+	}
+	return n
 }
 
 func TestDagEngineResolvesArtifactBindingsBeforeStart(t *testing.T) {
@@ -543,7 +565,12 @@ func TestDagEngineTreatsJumiOutputURIAsLogicalOnly(t *testing.T) {
 	}
 }
 
-func TestDagEngineFailsRunWhenArtifactRegistrationFails(t *testing.T) {
+// TestDagEngineDefersFinalizationWhenArtifactRegistrationFails asserts the F3-B2
+// (#46) contract: when the user process has already succeeded and only artifact
+// registration fails (Q32 E4), JUMI must NOT rerun user code and must NOT fail the
+// run merely because finalization failed. The Attempt is left non-terminal with its
+// handle so finalization is reconciled on the same completed execution.
+func TestDagEngineDefersFinalizationWhenArtifactRegistrationFails(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
 	adapter := &fakeAdapter{failOn: map[string]bool{}}
 	handoffClient := &fakeHandoffClient{registerErr: fmt.Errorf("register down")}
@@ -564,14 +591,27 @@ func TestDagEngineFailsRunWhenArtifactRegistrationFails(t *testing.T) {
 	if err := engine.Admit(context.Background(), record); err != nil {
 		t.Fatalf("Admit() error = %v", err)
 	}
-	waitForRunStatus(t, reg, record.RunID, spec.RunStatusFailed)
+	waitForEventType(t, reg, record.RunID, "node.finalization.deferred", 3*time.Second)
 
 	run, err := reg.GetRun(context.Background(), record.RunID)
 	if err != nil {
 		t.Fatalf("GetRun() error = %v", err)
 	}
-	if run.TerminalFailureReason != "register_artifact_error" {
-		t.Fatalf("TerminalFailureReason = %q, want register_artifact_error", run.TerminalFailureReason)
+	if run.Status.IsTerminal() {
+		t.Fatalf("run terminalized on finalization failure: status=%s reason=%s (must stay reconcilable)", run.Status, run.TerminalFailureReason)
+	}
+	node, err := reg.GetNode(context.Background(), record.RunID, "producer")
+	if err != nil {
+		t.Fatalf("GetNode() error = %v", err)
+	}
+	if node.Status.IsTerminal() {
+		t.Fatalf("node terminalized on finalization failure: %s (execution succeeded; finalization must be reconciled)", node.Status)
+	}
+	if node.AttemptCount != 1 {
+		t.Fatalf("AttemptCount = %d, want 1 (a finalization failure must not open a new attempt)", node.AttemptCount)
+	}
+	if got := adapter.startCount("producer"); got != 1 {
+		t.Fatalf("StartNode calls = %d, want 1 (user code must not be re-run after a finalization failure)", got)
 	}
 	if got := engine.Metrics().Render(); strings.Contains(got, "jumi_artifacts_registered_total 1") {
 		t.Fatalf("unexpected artifact register metric in render: %s", got)
@@ -788,7 +828,12 @@ func TestDagEngineFailsNodeWhenProducerFailedBindingIsMissing(t *testing.T) {
 	}
 }
 
-func TestDagEngineFailsSuccessfulNodeWhenNotifyNodeTerminalFails(t *testing.T) {
+// TestDagEngineDefersFinalizationWhenNotifyNodeTerminalFails asserts the F3-B2
+// (#46) contract for the terminal-notification finalization step: user process
+// succeeded and artifacts registered, only the terminal notification failed (Q32
+// E4). User code must not be re-run and the run must not be failed; finalization is
+// reconciled on the same completed execution.
+func TestDagEngineDefersFinalizationWhenNotifyNodeTerminalFails(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
 	adapter := &fakeAdapter{failOn: map[string]bool{}}
 	handoffClient := &fakeHandoffClient{notifyErr: fmt.Errorf("notify down")}
@@ -805,23 +850,27 @@ func TestDagEngineFailsSuccessfulNodeWhenNotifyNodeTerminalFails(t *testing.T) {
 	if err := engine.Admit(context.Background(), record); err != nil {
 		t.Fatalf("Admit() error = %v", err)
 	}
-	waitForRunStatus(t, reg, record.RunID, spec.RunStatusFailed)
+	waitForEventType(t, reg, record.RunID, "node.finalization.deferred", 3*time.Second)
 
 	run, err := reg.GetRun(context.Background(), record.RunID)
 	if err != nil {
 		t.Fatalf("GetRun() error = %v", err)
 	}
-	if run.TerminalFailureReason != "notify_node_terminal_error" {
-		t.Fatalf("run failureReason = %q, want notify_node_terminal_error", run.TerminalFailureReason)
+	if run.Status.IsTerminal() {
+		t.Fatalf("run terminalized on notify finalization failure: status=%s reason=%s", run.Status, run.TerminalFailureReason)
 	}
-	runNodes, err := reg.ListNodes(context.Background(), record.RunID)
+	node, err := reg.GetNode(context.Background(), record.RunID, "a")
 	if err != nil {
-		t.Fatalf("ListNodes() error = %v", err)
+		t.Fatalf("GetNode() error = %v", err)
 	}
-	for _, node := range runNodes {
-		if node.NodeID == "a" && node.TerminalFailureReason != "notify_node_terminal_error" {
-			t.Fatalf("node a failureReason = %q, want notify_node_terminal_error", node.TerminalFailureReason)
-		}
+	if node.Status.IsTerminal() {
+		t.Fatalf("node terminalized on notify finalization failure: %s", node.Status)
+	}
+	if node.AttemptCount != 1 {
+		t.Fatalf("AttemptCount = %d, want 1 (a finalization failure must not open a new attempt)", node.AttemptCount)
+	}
+	if got := adapter.startCount("a"); got != 1 {
+		t.Fatalf("StartNode calls = %d, want 1 (user code must not be re-run after a finalization failure)", got)
 	}
 }
 
@@ -1249,7 +1298,9 @@ func TestDagEngineExecutesLinearGraph(t *testing.T) {
 
 func TestDagEngineSkipsDownstreamOnFailure(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
-	adapter := &fakeAdapter{failOn: map[string]bool{"a": true}}
+	// Authoritative backend-reported failure (not observation loss): the node
+	// terminally fails, which is what drives downstream skipping.
+	adapter := &fakeAdapter{failOn: map[string]bool{}, waitResults: map[string]backend.ExecutionResult{"a": {Succeeded: false, TerminalStopCause: "failed", TerminalFailureReason: "user_code_failed"}}}
 	engine := NewDagEngine(reg, adapter)
 	specInput := spec.ExecutableRunSpec{
 		Run: spec.RunMetadata{RunID: "run-fail", SubmittedAt: time.Now().UTC(), FailurePolicy: spec.FailurePolicy{Mode: "fail-fast"}},
@@ -1285,7 +1336,9 @@ func TestDagEngineSkipsDownstreamOnFailure(t *testing.T) {
 
 func TestDagEngineKeepsOriginalFailureReasonWhenNotifyNodeTerminalFailsOnFailedNode(t *testing.T) {
 	reg := registry.NewMemoryRegistry()
-	adapter := &fakeAdapter{failOn: map[string]bool{"a": true}}
+	// An authoritative backend-reported failure terminalizes the node; the terminal
+	// notification then also fails and must not overwrite the original failure reason.
+	adapter := &fakeAdapter{failOn: map[string]bool{}, waitResults: map[string]backend.ExecutionResult{"a": {Succeeded: false, TerminalStopCause: "failed", TerminalFailureReason: "user_code_failed"}}}
 	handoffClient := &fakeHandoffClient{notifyErr: fmt.Errorf("notify down")}
 	engine := NewDagEngineWithHandoff(reg, adapter, handoffClient)
 	specInput := spec.ExecutableRunSpec{
@@ -1306,16 +1359,16 @@ func TestDagEngineKeepsOriginalFailureReasonWhenNotifyNodeTerminalFailsOnFailedN
 	if err != nil {
 		t.Fatalf("GetRun() error = %v", err)
 	}
-	if run.TerminalFailureReason != "backend_wait_error" {
-		t.Fatalf("run failureReason = %q, want backend_wait_error", run.TerminalFailureReason)
+	if run.TerminalFailureReason != "user_code_failed" {
+		t.Fatalf("run failureReason = %q, want user_code_failed", run.TerminalFailureReason)
 	}
 	runNodes, err := reg.ListNodes(context.Background(), record.RunID)
 	if err != nil {
 		t.Fatalf("ListNodes() error = %v", err)
 	}
 	for _, node := range runNodes {
-		if node.NodeID == "a" && node.TerminalFailureReason != "backend_wait_error" {
-			t.Fatalf("node a failureReason = %q, want backend_wait_error", node.TerminalFailureReason)
+		if node.NodeID == "a" && node.TerminalFailureReason != "user_code_failed" {
+			t.Fatalf("node a failureReason = %q, want user_code_failed", node.TerminalFailureReason)
 		}
 	}
 	assertEventPresent(t, reg, record.RunID, "node.handoff.notify_failed", "notify_node_terminal_error")

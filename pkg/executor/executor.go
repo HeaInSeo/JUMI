@@ -946,6 +946,16 @@ func (r *nodeRunner) failNode(cause error, attemptID string, terminalStopCause s
 		})
 		return errNodeRetry
 	}
+	return r.terminalizeFailed(cause, attemptID, terminalStopCause, failureReason)
+}
+
+// terminalizeFailed records the terminal Failed outcome for the node (event +
+// projection + terminal notification). It makes NO retry/re-execution decision;
+// callers decide admissibility. Extracted from failNode so the B2
+// execution-evidence paths can terminalize a may-have-started / backend-reported
+// failure without ever consulting the retry budget (Q30-R1: RetryPolicy.MaxAttempts
+// is a budget/cap, never standalone re-execution authority).
+func (r *nodeRunner) terminalizeFailed(cause error, attemptID string, terminalStopCause string, failureReason string) error {
 	finishedAt := time.Now().UTC()
 	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.failed", OccurredAt: finishedAt, Level: "error", StopCause: terminalStopCause, FailureReason: failureReason})
 	_ = r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
@@ -971,6 +981,64 @@ func (r *nodeRunner) failNode(cause error, attemptID string, terminalStopCause s
 		})
 	}
 	return cause
+}
+
+// terminalizeFailedNoRetry terminalizes a post-start failure whose execution
+// evidence does not authorize a new user-code execution (Q32 E3: user code may have
+// started, no authoritative E0 proof, effect safety unknown). Under Q30-R1 a
+// remaining MaxAttempts budget must NOT open another Attempt in this case. It
+// mirrors failNode's cancellation handling but never consults the retry budget.
+// A future explicit retry-safe/idempotent effect contract may additively widen what
+// is admissible here; this packet does not invent that schema.
+func (r *nodeRunner) terminalizeFailedNoRetry(cause error, attemptID string, terminalStopCause string, failureReason string) error {
+	r.recordLocalityFallbackFailure(attemptID)
+	if r.isRunCanceled() {
+		return r.cancelNode(attemptID, "cancellation_requested")
+	}
+	return r.terminalizeFailed(cause, attemptID, terminalStopCause, failureReason)
+}
+
+// deferFinalizationAfterSuccess handles Q32 E4: the user process completed
+// successfully but a platform finalization step (artifact registration / terminal
+// notification) failed. It MUST NOT rerun user code and MUST NOT allocate a new
+// Attempt merely because finalization failed or retry budget remains. The Attempt
+// is left non-terminal with its backend handle preserved, so the reconcile sweep
+// reattaches the SAME already-completed backend execution and re-drives only the
+// finalization steps (WaitNode re-observes the completed Job; user code is never
+// re-run). The run is left non-terminal/recoverable — never Failed — via the same
+// no-replacement unresolved signal used for other post-fence recovery.
+func (r *nodeRunner) deferFinalizationAfterSuccess(attemptID string, finalizationReason string, cause error) error {
+	// Durably record the E4 execution-success fact BEFORE deferring, so recovery
+	// knows user code completed even if the backend Job is later garbage-collected
+	// and can no longer be re-observed. This is the restart-safe evidence that
+	// guarantees finalization is reconciled and user code is never re-run (§4).
+	if err := r.registry.PersistProcessCompleted(context.Background(), r.runID, r.node.NodeID, attemptID, time.Now().UTC()); err != nil {
+		// If we cannot durably record success we must fail closed rather than risk a
+		// later re-execution: surface the error and leave the Attempt non-terminal.
+		appendEvent(context.Background(), r.registry, spec.EventRecord{
+			RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID,
+			Type: "node.finalization.evidence_persist_failed", OccurredAt: time.Now().UTC(), Level: "error",
+			FailureReason: finalizationReason, Message: err.Error(),
+		})
+		if r.active != nil {
+			r.active.markUnresolved()
+		}
+		return errReconcileUnresolved
+	}
+	appendEvent(context.Background(), r.registry, spec.EventRecord{
+		RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID,
+		Type: "node.finalization.deferred", OccurredAt: time.Now().UTC(), Level: "warn",
+		FailureReason: finalizationReason,
+		Message:       fmt.Sprintf("user process completed; platform finalization failed (%s); will reconcile finalization without rerunning user code: %v", finalizationReason, cause),
+	})
+	_ = r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
+		current.CurrentBottleneckLocation = "finalization_pending"
+		return nil
+	})
+	if r.active != nil {
+		r.active.markUnresolved()
+	}
+	return errReconcileUnresolved
 }
 
 func (r *nodeRunner) cancelNode(attemptID string, reason string) error {
@@ -1016,9 +1084,16 @@ func (r *nodeRunner) waitAndFinalize(ctx context.Context, handle backend.Handle,
 		if r.isRunCanceled() || ctx.Err() != nil {
 			return r.cancelNode(attemptID, "cancellation_requested")
 		}
-		finishedAt := time.Now().UTC()
-		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &startedAt, FinishedAt: &finishedAt, TerminalStopCause: "failed", TerminalFailureReason: "backend_wait_error"})
-		return r.failNode(err, attemptID, "failed", "backend_wait_error")
+		// WaitNode could not observe the outcome: this is observation loss, not proof
+		// of non-execution (Q32 — handle/timeout/observation loss do not prove no-start,
+		// and do not prove failure either). The backend Job may still be running or may
+		// have already succeeded. Do NOT terminalize this Attempt as Failed and do NOT
+		// clear its handle — that would orphan a possibly-live Job and misreport a
+		// possibly-successful execution, and MaxAttempts must not open a replacement
+		// (Q30-R1). Leave the Attempt non-terminal with its handle so reconcile
+		// reattaches the SAME backend execution (or resolves it by identity); no new
+		// user-code Attempt is ever allocated.
+		return r.reconcileUnresolved(attemptID)
 	}
 	finishedAt := time.Now().UTC()
 	if !result.Succeeded {
@@ -1035,36 +1110,23 @@ func (r *nodeRunner) waitAndFinalize(ctx context.Context, handle backend.Handle,
 			TerminalStopCause:     terminalStopCause,
 			TerminalFailureReason: failureReason,
 		})
-		return r.failNode(fmt.Errorf("%s", failureReason), attemptID, terminalStopCause, failureReason)
+		// The backend authoritatively reports the workload did not succeed: user code
+		// ran and failed (Q32 E3), which is not authoritative E0 proof of no-start.
+		// With unknown effect safety, a remaining MaxAttempts budget must NOT open a new
+		// user-code Attempt (Q30-R1); terminalize this Attempt without re-execution.
+		return r.terminalizeFailedNoRetry(fmt.Errorf("%s", failureReason), attemptID, terminalStopCause, failureReason)
 	}
 	r.recordLocalityFallbackSuccess(attemptID)
 	if err := r.registerNodeOutputs(context.Background(), handle, attemptID, execNode); err != nil {
-		r.recordLocalityFallbackFailure(attemptID)
-		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
-			RunID:                 r.runID,
-			NodeID:                r.node.NodeID,
-			AttemptID:             attemptID,
-			Status:                spec.AttemptStatusErrored,
-			StartedAt:             &startedAt,
-			FinishedAt:            &finishedAt,
-			TerminalStopCause:     "failed",
-			TerminalFailureReason: "register_artifact_error",
-		})
-		return r.failNode(err, attemptID, "failed", "register_artifact_error")
+		// E4: user process already succeeded; only artifact registration failed. Never
+		// rerun user code (Q30-R1). Keep the Attempt non-terminal with its handle so
+		// reconcile reattaches the same completed Job and re-drives finalization only.
+		return r.deferFinalizationAfterSuccess(attemptID, "register_artifact_error", err)
 	}
 	if err := r.notifyNodeTerminal(context.Background(), "Succeeded", attemptID); err != nil {
-		r.recordLocalityFallbackFailure(attemptID)
-		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
-			RunID:                 r.runID,
-			NodeID:                r.node.NodeID,
-			AttemptID:             attemptID,
-			Status:                spec.AttemptStatusErrored,
-			StartedAt:             &startedAt,
-			FinishedAt:            &finishedAt,
-			TerminalStopCause:     "failed",
-			TerminalFailureReason: "notify_node_terminal_error",
-		})
-		return r.failNode(err, attemptID, "failed", "notify_node_terminal_error")
+		// E4: user process succeeded and artifacts registered; only terminal
+		// notification failed. Never rerun user code; reconcile finalization only.
+		return r.deferFinalizationAfterSuccess(attemptID, "notify_node_terminal_error", err)
 	}
 	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
 		RunID:                 r.runID,

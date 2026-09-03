@@ -270,6 +270,13 @@ type AttemptRecord struct {
 	CancellationRequestedAt *time.Time `json:"cancellationRequestedAt,omitempty"`
 	// CancellationReason is the reason carried with the accepted cancel intent.
 	CancellationReason string `json:"cancellationReason,omitempty"`
+	// ProcessCompletedAt records that the user process for this Attempt completed
+	// successfully (Q32 E4) and only platform finalization (artifact registration /
+	// terminal notification) remains. It is a durable, restart-surviving execution
+	// outcome fact: once set, recovery must reconcile finalization on the SAME
+	// execution and MUST NEVER re-run user code, even if the backend Job has since
+	// been garbage-collected and can no longer be re-observed (F3-B2 / #46).
+	ProcessCompletedAt *time.Time `json:"processCompletedAt,omitempty"`
 }
 
 type EventRecord struct {
