@@ -377,7 +377,10 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 		}
 		// Root cause of the fast-fail decision, if any, so each downstream skip can
 		// durably link back to it (causal linkage; the downstream node's own terminal
-		// Status/reason semantics are unchanged).
+		// Status/reason semantics are unchanged). This is a BEST-EFFORT annotation: if
+		// the DAG returns before the watcher observed the failing node (so no root was
+		// published), the root is simply absent and the skip is recorded exactly as
+		// before — it never changes the terminal outcome, only enriches it when known.
 		var fastFailRootNodeID string
 		select {
 		case id := <-fastFailRoot:
