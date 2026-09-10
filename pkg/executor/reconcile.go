@@ -71,9 +71,21 @@ func ClassifyReconcile(node spec.NodeRecord, attempt spec.AttemptRecord, hasAtte
 	if node.Status.IsTerminal() {
 		return ReconcileTerminalRepair
 	}
-	// A terminal Attempt is the execution authority even if the Node projection
-	// is stale; repair rather than execute.
+	// A terminal Attempt is normally the execution authority even if the Node
+	// projection is stale; repair rather than execute. EXCEPTION: a pre-fence,
+	// replay-safe realization failure that durably recorded a re-attempt basis
+	// (RealizationReattemptableAt set AND the submission fence never crossed) is not a
+	// final execution outcome — it warrants another pre-fence realization cycle. Treat
+	// it as fresh allocation (the same next-Attempt path failNode's in-process
+	// re-realize takes), making the re-realization provable from durable Attempt truth
+	// across crash -> restart -> reconcile. This is gated on SubmissionWindowOpenedAt
+	// being nil, so it can never re-run a post-fence outcome (F3-B2 no-rerun preserved),
+	// and it never consumes the user-code opportunity budget (F3-B3); the independent
+	// RealizationAttemptCount ceiling still bounds it at the next failNode.
 	if hasAttempt && attempt.Status.IsTerminal() {
+		if attempt.RealizationReattemptableAt != nil && attempt.SubmissionWindowOpenedAt == nil {
+			return ReconcileFresh
+		}
 		return ReconcileTerminalRepair
 	}
 	// A persisted backend handle (authoritatively on the Attempt, or mirrored on

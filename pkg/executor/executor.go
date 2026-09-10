@@ -312,6 +312,11 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 	appendEvent(ctx, e.registry, spec.EventRecord{RunID: run.RunID, Type: "run.running", OccurredAt: now, Level: "info", Message: "run execution started"})
 	failFast := run.Spec.Run.FailurePolicy.Mode == "" || run.Spec.Run.FailurePolicy.Mode == "fail-fast"
 	firstErr := make(chan error, 1)
+	// fastFailRoot carries the ROOT node whose execution failure triggered the
+	// fast-fail control decision, so downstream cancellation/skip can durably record
+	// its causal cause (root execution failure -> fast-fail decision -> downstream
+	// cancellation) instead of a flat terminal that loses the root.
+	fastFailRoot := make(chan string, 1)
 	// #nosec G118 -- this watcher is intentionally bound to the run graph context, not a request context.
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
@@ -333,6 +338,10 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 						}
 						if failFast {
 							e.metrics.IncFastFailTrigger()
+							select {
+							case fastFailRoot <- node.NodeID:
+							default:
+							}
 							appendEvent(ctx, e.registry, spec.EventRecord{RunID: run.RunID, NodeID: node.NodeID, Type: "run.fast_fail.triggered", OccurredAt: time.Now().UTC(), Level: "warn", StopCause: "failed", FailureReason: util.FirstNonEmpty(node.TerminalFailureReason, "fast_fail")})
 							active.cancel()
 							for _, handle := range e.snapshotHandles(active) {
@@ -366,6 +375,18 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 			}
 		default:
 		}
+		// Root cause of the fast-fail decision, if any, so each downstream skip can
+		// durably link back to it (causal linkage; the downstream node's own terminal
+		// Status/reason semantics are unchanged). This is a BEST-EFFORT annotation: if
+		// the DAG returns before the watcher observed the failing node (so no root was
+		// published), the root is simply absent and the skip is recorded exactly as
+		// before — it never changes the terminal outcome, only enriches it when known.
+		var fastFailRootNodeID string
+		select {
+		case id := <-fastFailRoot:
+			fastFailRootNodeID = id
+		default:
+		}
 		for _, node := range run.Spec.Graph.Nodes {
 			nodeID := node.NodeID
 			skipped := false
@@ -375,12 +396,20 @@ func (e *DagEngine) runGraph(ctx context.Context, run spec.RunRecord, active *ac
 					current.Status = spec.NodeStatusSkipped
 					current.TerminalFailureReason = "dependency_failed"
 					current.TerminalStopCause = "failed"
+					// Preserve root execution failure -> fast-fail decision -> downstream
+					// cancellation: record the causal root rather than a flat terminal that
+					// loses it. Never overwrite the node's own cause with the root (this is a
+					// distinct dependency-skip, not the node's own failure). Guard against a
+					// node linking to itself.
+					if fastFailRootNodeID != "" && fastFailRootNodeID != nodeID {
+						current.CausedByNodeID = fastFailRootNodeID
+					}
 					skipped = true
 				}
 				return nil
 			})
 			if skipped {
-				appendEvent(context.Background(), e.registry, spec.EventRecord{RunID: run.RunID, NodeID: nodeID, Type: "node.skipped", OccurredAt: occurredAt, Level: "warn", StopCause: "failed", FailureReason: "dependency_failed"})
+				appendEvent(context.Background(), e.registry, spec.EventRecord{RunID: run.RunID, NodeID: nodeID, Type: "node.skipped", OccurredAt: occurredAt, Level: "warn", StopCause: "failed", FailureReason: "dependency_failed", Message: causedByMessage(fastFailRootNodeID)})
 			}
 		}
 		return errors.New(runErr)
@@ -925,6 +954,16 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 // on boundedness, not on this specific number.
 var realizationAttemptCeiling = 32
 
+// causedByMessage renders the causal-root annotation for a fast-fail downstream skip
+// event. Empty when there is no distinct root (keeps the event message unchanged in
+// the non-fast-fail path).
+func causedByMessage(rootNodeID string) string {
+	if rootNodeID == "" {
+		return ""
+	}
+	return fmt.Sprintf("caused_by=%s (fast-fail downstream cancellation)", rootNodeID)
+}
+
 // effectiveMaxAttempts is the user-code execution-opportunity budget. A node always
 // gets at least one opportunity, so MaxAttempts < 1 is treated as 1 (one execution,
 // no additional opportunity), matching the documented maxAttempts semantics.
@@ -992,6 +1031,17 @@ func (r *nodeRunner) failNode(cause error, attemptID string, terminalStopCause s
 	}
 	if remaining, ok := r.realizationRetriesRemaining(); realizationRetryable && ok {
 		finishedAt := time.Now().UTC()
+		// Durably record the pre-fence realization re-attempt basis on the just-failed
+		// Attempt BEFORE resetting the node. If a crash occurs between here and the
+		// node reset, reconcile can then PROVE from durable Attempt truth (a terminal
+		// Errored Attempt carrying RealizationReattemptableAt with the fence not
+		// crossed) that another pre-fence realization cycle is warranted, instead of
+		// terminalizing on the Errored Attempt. Guarded on SubmissionWindowOpenedAt
+		// being nil so a post-fence outcome can never be re-realized (F3-B2 no-rerun).
+		if cur, ok2, gerr := r.registry.GetCurrentAttempt(context.Background(), r.runID, r.node.NodeID); gerr == nil && ok2 && cur.AttemptID == attemptID && cur.SubmissionWindowOpenedAt == nil {
+			cur.RealizationReattemptableAt = &finishedAt
+			_ = r.registry.UpsertAttempt(context.Background(), cur)
+		}
 		appendEvent(context.Background(), r.registry, spec.EventRecord{
 			RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID,
 			Type: "node.attempt_failed", OccurredAt: finishedAt, Level: "warn",

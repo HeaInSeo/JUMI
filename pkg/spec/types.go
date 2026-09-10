@@ -248,6 +248,15 @@ type NodeRecord struct {
 	StartedAt                *time.Time      `json:"startedAt,omitempty"`
 	FinishedAt               *time.Time      `json:"finishedAt,omitempty"`
 	Observation              NodeObservation `json:"observation,omitempty"`
+	// CausedByNodeID records the ROOT node whose execution failure caused this node's
+	// NON-OWN terminal outcome through a fast-fail control decision, preserving the
+	// causal chain durably: root execution failure -> fast-fail decision -> downstream
+	// cancellation/skip. It is causal metadata only and does NOT change this node's
+	// terminal Status/StopCause/FailureReason semantics; it exists so a downstream
+	// cancellation is never recorded as this node's own failure and the root cause is
+	// never lost in a flat terminal state. Empty for a node that reached its own
+	// terminal outcome.
+	CausedByNodeID string `json:"causedByNodeId,omitempty"`
 }
 
 type AttemptRecord struct {
@@ -285,6 +294,17 @@ type AttemptRecord struct {
 	// execution and MUST NEVER re-run user code, even if the backend Job has since
 	// been garbage-collected and can no longer be re-observed (F3-B2 / #46).
 	ProcessCompletedAt *time.Time `json:"processCompletedAt,omitempty"`
+	// RealizationReattemptableAt records that this Attempt terminated in a PRE-FENCE
+	// (Q32 E0), replay-safe realization failure whose durable, restart-surviving basis
+	// warrants ANOTHER pre-fence realization cycle within the same semantic node
+	// (bounded by the independent RealizationAttemptCount ceiling, F3-B3). It is set
+	// ONLY while SubmissionWindowOpenedAt is nil (the submission fence was NOT
+	// crossed); it never opens a new user-code execution opportunity (MaxAttempts) and
+	// never applies post-fence — E1/E3/E4 keep no-rerun. It exists so that after
+	// crash -> restart -> reconcile the re-realization is PROVABLE from durable Attempt
+	// truth instead of the in-process errNodeRetry signal: a terminal Errored Attempt
+	// carrying this fact (fence not crossed) is re-realized rather than terminalized.
+	RealizationReattemptableAt *time.Time `json:"realizationReattemptableAt,omitempty"`
 }
 
 type EventRecord struct {
