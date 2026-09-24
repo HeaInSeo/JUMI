@@ -846,15 +846,8 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 	}
 	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.starting", OccurredAt: time.Now().UTC(), Level: "info", Message: "backend prepare starting"})
 	prepared, err := r.adapter.PrepareNode(ctx, run, executionNode)
-	if err != nil && errors.Is(err, backend.ErrInputMaterializationUnavailable) {
-		// Deterministic pre-submission failure: the inputs need materialization and the
-		// node runtime cannot provide it. Another realization cycle cannot clear it.
-		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &now, FinishedAt: timePtr(time.Now().UTC()), TerminalStopCause: "failed", TerminalFailureReason: materializationFailureRuntimeUnavailable})
-		return r.failNode(err, attemptID, "failed", materializationFailureRuntimeUnavailable, false)
-	}
 	if err != nil {
-		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &now, FinishedAt: timePtr(time.Now().UTC()), TerminalStopCause: "failed", TerminalFailureReason: "backend_prepare_error"})
-		return r.failNode(err, attemptID, "failed", "backend_prepare_error", true)
+		return r.failPrepare(err, attemptID, now)
 	}
 	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusReleasing
@@ -1198,6 +1191,19 @@ func (r *nodeRunner) cancelNode(attemptID string, reason string) error {
 		})
 	}
 	return nil
+}
+
+// failPrepare records a PrepareNode failure. Unavailable input materialization is a
+// deterministic pre-submission failure — another realization cycle cannot clear it — so
+// it terminalizes with its own reason and no realization re-attempt. Any other prepare
+// failure stays a replay-safe, realization-retryable backend_prepare_error.
+func (r *nodeRunner) failPrepare(err error, attemptID string, startedAt time.Time) error {
+	reason, retryable := "backend_prepare_error", true
+	if errors.Is(err, backend.ErrInputMaterializationUnavailable) {
+		reason, retryable = materializationFailureRuntimeUnavailable, false
+	}
+	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &startedAt, FinishedAt: timePtr(time.Now().UTC()), TerminalStopCause: "failed", TerminalFailureReason: reason})
+	return r.failNode(err, attemptID, "failed", reason, retryable)
 }
 
 // nodeTimeoutExpired reports whether ctx ended because this node's own TimeoutPolicy
