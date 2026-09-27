@@ -32,6 +32,8 @@ type fakeAdapter struct {
 	failOn                   map[string]bool
 	failPrepareOn            map[string]bool
 	failPrepareTimes         map[string]int
+	prepareErrOn             map[string]error
+	prepareCalls             map[string]int
 	waitCh                   map[string]chan struct{}
 	canceled                 map[string]bool
 	prepared                 map[string]spec.Node
@@ -142,6 +144,14 @@ func (f *fakeAdapter) PrepareNode(_ context.Context, _ spec.RunRecord, node spec
 		f.prepared = make(map[string]spec.Node)
 	}
 	f.prepared[node.NodeID] = node
+	if f.prepareCalls == nil {
+		f.prepareCalls = make(map[string]int)
+	}
+	f.prepareCalls[node.NodeID]++
+	if err := f.prepareErrOn[node.NodeID]; err != nil {
+		f.mu.Unlock()
+		return nil, err
+	}
 	failPrepare := f.failPrepareOn[node.NodeID]
 	if f.failPrepareTimes != nil && f.failPrepareTimes[node.NodeID] > 0 {
 		f.failPrepareTimes[node.NodeID]--

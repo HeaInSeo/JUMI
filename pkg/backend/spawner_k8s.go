@@ -104,6 +104,9 @@ func (a *SpawnerK8sAdapter) PrepareNode(ctx context.Context, run spec.RunRecord,
 	if a.metrics != nil {
 		a.metrics.IncK8sNodePrepare()
 	}
+	if err := checkInputMaterializationRuntime(node); err != nil {
+		return nil, err
+	}
 	return preparedRuntimeNode{
 		req:       toAttemptRequest(run, node),
 		queueName: kueueQueueName(node),
@@ -554,10 +557,11 @@ func cloneEnv(src map[string]string) map[string]string {
 	return out
 }
 
+// injectOutputContractEnv writes the node contract env that nan consumes. A node needs a
+// contract when it declares outputs (manifest export) OR when nan will wrap it to
+// materialize inputs: an input-only consumer still needs the contract so nan knows what
+// to materialize, even though it exports no manifest entries.
 func injectOutputContractEnv(env map[string]string, run spec.RunRecord, node spec.Node) {
-	if len(node.Outputs) == 0 {
-		return
-	}
 	outputs := make([]string, 0, len(node.Outputs))
 	for _, output := range node.Outputs {
 		if output == "" {
@@ -565,14 +569,17 @@ func injectOutputContractEnv(env map[string]string, run spec.RunRecord, node spe
 		}
 		outputs = append(outputs, output)
 	}
-	if len(outputs) == 0 {
+	wrapped := manifestExportMode(node) == outputManifestModeRuntimeHelper
+	if len(outputs) == 0 && !wrapped {
 		return
 	}
 	sort.Strings(outputs)
-	setEnvDefault(env, "JUMI_OUTPUT_MANIFEST_ENABLED", "true")
-	setEnvDefault(env, "JUMI_OUTPUT_ROOT", "/out")
-	setEnvDefault(env, "JUMI_OUTPUT_MANIFEST_PATH", provenance.DefaultArtifactsManifestPath)
-	setEnvDefault(env, "JUMI_OUTPUT_NAMES", strings.Join(outputs, ","))
+	if len(outputs) > 0 {
+		setEnvDefault(env, "JUMI_OUTPUT_MANIFEST_ENABLED", "true")
+		setEnvDefault(env, "JUMI_OUTPUT_ROOT", "/out")
+		setEnvDefault(env, "JUMI_OUTPUT_MANIFEST_PATH", provenance.DefaultArtifactsManifestPath)
+		setEnvDefault(env, "JUMI_OUTPUT_NAMES", strings.Join(outputs, ","))
+	}
 	setEnvDefault(env, "JUMI_RUN_ID", run.RunID)
 	setEnvDefault(env, "JUMI_NODE_ID", node.NodeID)
 	if sampleRunID := run.Spec.Run.SampleRunID; sampleRunID != "" {
@@ -581,7 +588,7 @@ func injectOutputContractEnv(env map[string]string, run spec.RunRecord, node spe
 	if contractJSON, err := buildNodeContractJSON(run, node, outputs); err == nil {
 		setEnvDefault(env, "JUMI_NODE_CONTRACT_PATH", defaultNodeContractPath)
 		setEnvDefault(env, "JUMI_NODE_CONTRACT_JSON", contractJSON)
-		if manifestExportMode(node) == outputManifestModeRuntimeHelper {
+		if wrapped {
 			stripContractInputEnv(env)
 		}
 	}
@@ -819,16 +826,55 @@ func contractFirstNonEmpty(values ...string) string {
 	return ""
 }
 
+// manifestExportMode reports whether nan wraps the node command. nan is needed when the
+// node exports outputs OR when any input requires materialization: nan is the only
+// component that materializes inputs and exports the real input paths, so gating the
+// wrap on outputs alone left input-only consumers reading planned paths nothing created.
+// The runtime-helper metadata remains required: it is the declaration that the node's
+// image carries nan.
 func manifestExportMode(node spec.Node) string {
-	if len(node.Outputs) == 0 || node.Metadata == nil {
+	if node.Metadata[outputManifestModeMetadataKey] != outputManifestModeRuntimeHelper {
 		return ""
 	}
-	switch node.Metadata[outputManifestModeMetadataKey] {
-	case outputManifestModeRuntimeHelper:
-		return node.Metadata[outputManifestModeMetadataKey]
-	default:
+	if !hasNonEmpty(node.Outputs) && !inputsRequireMaterialization(node.Env) {
 		return ""
 	}
+	return outputManifestModeRuntimeHelper
+}
+
+func hasNonEmpty(values []string) bool {
+	for _, v := range values {
+		if v != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// inputsRequireMaterialization reports whether the resolved input env asks for any input
+// to be materialized: an explicit JUMI_INPUT_<B>_REQUIRES_MATERIALIZATION=true, or a
+// contract input whose materialization mode is not none.
+func inputsRequireMaterialization(env map[string]string) bool {
+	for key, value := range env {
+		if strings.HasPrefix(key, "JUMI_INPUT_") && strings.HasSuffix(key, "_REQUIRES_MATERIALIZATION") &&
+			strings.EqualFold(strings.TrimSpace(value), "true") {
+			return true
+		}
+	}
+	return len(buildNodeContractInputs(env)) > 0
+}
+
+// checkInputMaterializationRuntime fails closed when a node's inputs require
+// materialization but nan will not wrap it (its image is not declared runtime-helper).
+// Launching it anyway would leave JUMI_INPUT_<B>_LOCAL_PATH /
+// JUMI_INPUT_<B>_REQUIRES_MATERIALIZATION claiming a materialized input that nothing
+// materializes.
+func checkInputMaterializationRuntime(node spec.Node) error {
+	if !inputsRequireMaterialization(node.Env) || manifestExportMode(node) == outputManifestModeRuntimeHelper {
+		return nil
+	}
+	return fmt.Errorf("%w: node %s has inputs that require materialization but %s is not %q",
+		ErrInputMaterializationUnavailable, node.NodeID, outputManifestModeMetadataKey, outputManifestModeRuntimeHelper)
 }
 
 // ── HandlePersister ───────────────────────────────────────────────────────────

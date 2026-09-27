@@ -14,6 +14,13 @@ type Handle any
 
 var ErrOutputMetadataUnavailable = errors.New("output metadata unavailable")
 
+// ErrInputMaterializationUnavailable reports a node whose resolved inputs require
+// materialization while its runtime does not run the materialization helper (nan).
+// Launching it would hand the user command a planned input path that nothing ever
+// creates, so adapters fail closed with this error before submission. It is
+// deterministic: another realization cycle cannot clear it.
+var ErrInputMaterializationUnavailable = errors.New("input materialization required but the node runtime does not run the materialization helper")
+
 type ExecutionResult struct {
 	Succeeded             bool               `json:"succeeded"`
 	TerminalStopCause     string             `json:"terminalStopCause,omitempty"`

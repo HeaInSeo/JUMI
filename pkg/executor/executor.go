@@ -617,7 +617,14 @@ const (
 	materializationFailureRemoteUnavailable  = "input_materialization_remote_unavailable"
 	materializationFailurePathRejected       = "input_materialization_path_rejected"
 	materializationFailureLocalSourceMissing = "input_materialization_local_source_missing"
+	materializationFailureRuntimeUnavailable = "input_materialization_runtime_unavailable"
 )
+
+// nodeTimeoutFailureReason is the terminal failure reason recorded when the node's
+// TimeoutPolicy expires. It deliberately matches the backend's own deadline mapping
+// (runtimeReasonToFailure: ReasonDeadlineExceeded → "deadline_exceeded") so a timeout
+// reads the same whichever clock observed it, and never as a user cancellation.
+const nodeTimeoutFailureReason = "deadline_exceeded"
 
 const (
 	materializationEnvPrefix                    = "JUMI_INPUT_"
@@ -840,8 +847,7 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 	appendEvent(context.Background(), r.registry, spec.EventRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Type: "node.starting", OccurredAt: time.Now().UTC(), Level: "info", Message: "backend prepare starting"})
 	prepared, err := r.adapter.PrepareNode(ctx, run, executionNode)
 	if err != nil {
-		_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &now, FinishedAt: timePtr(time.Now().UTC()), TerminalStopCause: "failed", TerminalFailureReason: "backend_prepare_error"})
-		return r.failNode(err, attemptID, "failed", "backend_prepare_error", true)
+		return r.failPrepare(err, attemptID, now)
 	}
 	if err := r.registry.UpdateNode(context.Background(), r.runID, r.node.NodeID, func(current *spec.NodeRecord) error {
 		current.Status = spec.NodeStatusReleasing
@@ -1187,6 +1193,53 @@ func (r *nodeRunner) cancelNode(attemptID string, reason string) error {
 	return nil
 }
 
+// failPrepare records a PrepareNode failure. Unavailable input materialization is a
+// deterministic pre-submission failure — another realization cycle cannot clear it — so
+// it terminalizes with its own reason and no realization re-attempt. Any other prepare
+// failure stays a replay-safe, realization-retryable backend_prepare_error.
+func (r *nodeRunner) failPrepare(err error, attemptID string, startedAt time.Time) error {
+	reason, retryable := "backend_prepare_error", true
+	if errors.Is(err, backend.ErrInputMaterializationUnavailable) {
+		reason, retryable = materializationFailureRuntimeUnavailable, false
+	}
+	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID, Status: spec.AttemptStatusErrored, StartedAt: &startedAt, FinishedAt: timePtr(time.Now().UTC()), TerminalStopCause: "failed", TerminalFailureReason: reason})
+	return r.failNode(err, attemptID, "failed", reason, retryable)
+}
+
+// nodeTimeoutExpired reports whether ctx ended because this node's own TimeoutPolicy
+// deadline passed (RunE wraps ctx with it), as opposed to a cancellation.
+func (r *nodeRunner) nodeTimeoutExpired(ctx context.Context) bool {
+	return r.node.TimeoutPolicy.Seconds > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded)
+}
+
+// timeoutNode terminalizes an Attempt whose node TimeoutPolicy expired while waiting.
+// It records a timeout — Failed / deadline_exceeded — never the user-cancel outcome.
+// The backend workload may still be running, so it is asked to stop (best effort)
+// before the handle is released. User code may have run, so no replacement Attempt
+// is opened (Q30-R1): terminalizeFailedNoRetry never consults the retry budget.
+func (r *nodeRunner) timeoutNode(handle backend.Handle, attemptID string, startedAt time.Time) error {
+	if err := r.adapter.CancelNode(context.Background(), handle); err != nil {
+		appendEvent(context.Background(), r.registry, spec.EventRecord{
+			RunID: r.runID, NodeID: r.node.NodeID, AttemptID: attemptID,
+			Type: "node.timeout.backend_stop_failed", OccurredAt: time.Now().UTC(), Level: "warn",
+			StopCause: "failed", FailureReason: nodeTimeoutFailureReason, Message: err.Error(),
+		})
+	}
+	finishedAt := time.Now().UTC()
+	_ = r.registry.UpsertAttempt(context.Background(), spec.AttemptRecord{
+		RunID:                 r.runID,
+		NodeID:                r.node.NodeID,
+		AttemptID:             attemptID,
+		Status:                spec.AttemptStatusErrored,
+		StartedAt:             &startedAt,
+		FinishedAt:            &finishedAt,
+		TerminalStopCause:     "failed",
+		TerminalFailureReason: nodeTimeoutFailureReason,
+	})
+	cause := fmt.Errorf("node timeout after %ds: %w", r.node.TimeoutPolicy.Seconds, context.DeadlineExceeded)
+	return r.terminalizeFailedNoRetry(cause, attemptID, "failed", nodeTimeoutFailureReason)
+}
+
 // waitAndFinalize runs WaitNode and handles all terminal outcomes.
 // Used by both the normal start path and the restart-recovery path.
 func (r *nodeRunner) waitAndFinalize(ctx context.Context, handle backend.Handle, attemptID string, startedAt time.Time, execNode spec.Node) error {
@@ -1195,6 +1248,12 @@ func (r *nodeRunner) waitAndFinalize(ctx context.Context, handle backend.Handle,
 		r.recordLocalityFallbackFailure(attemptID)
 		// Do not trust result fields when WaitNode returns an error — the result
 		// may be a zero-value struct. Use context state as the authoritative signal.
+		// An expired TimeoutPolicy is NOT a cancellation: ctx.Err() alone cannot tell
+		// the two apart, so a real run cancel is checked first and only then the node's
+		// own deadline.
+		if !r.isRunCanceled() && r.nodeTimeoutExpired(ctx) {
+			return r.timeoutNode(handle, attemptID, startedAt)
+		}
 		if r.isRunCanceled() || ctx.Err() != nil {
 			return r.cancelNode(attemptID, "cancellation_requested")
 		}
