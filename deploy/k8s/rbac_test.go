@@ -11,8 +11,8 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// The namespaced Role only covers the exec calls if JUMI runs as the bound
-// ServiceAccount and creates node Jobs (whose pods it execs into) in the same
+// The namespaced Role only covers the pod reads if JUMI runs as the bound
+// ServiceAccount and creates node Jobs (whose pods it looks up) in the same
 // namespace the Role is installed in.
 func TestJUMIRuntimeWiringMatchesRoleScope(t *testing.T) {
 	raw, err := os.ReadFile("kustomization.yaml")
@@ -58,10 +58,12 @@ func TestJUMIRuntimeWiringMatchesRoleScope(t *testing.T) {
 	}
 }
 
-// Both shipped JUMI manifests must grant exactly what the backend uses:
-// readArtifactsManifest POSTs to pods/exec (create), findJobPod lists pods.
-// The grant stays a namespaced Role bound to the jumi ServiceAccount, with no
-// wildcard and no cluster-scoped RBAC.
+// Both shipped JUMI manifests stay a namespaced Role bound to the jumi
+// ServiceAccount, with no wildcard and no cluster-scoped RBAC. findJobPod needs
+// pods get/list. pods/exec is deliberately NOT granted: the only exec caller,
+// readArtifactsManifest, runs after the node Job succeeded, and exec into a
+// completed pod fails ("container not found") even with the grant, while the
+// grant would allow exec into every running pod in the namespace (#58).
 var manifests = []string{"jumi.yaml", "../devspace/jumi-ah-dev/jumi.yaml"}
 
 type rbacDocs struct {
@@ -111,7 +113,7 @@ func allows(role rbacv1.Role, resource, verb string) bool {
 	return false
 }
 
-func TestJUMIRoleGrantsManifestExecOnly(t *testing.T) {
+func TestJUMIRoleGrantsPodReadsWithoutExec(t *testing.T) {
 	for _, path := range manifests {
 		t.Run(path, func(t *testing.T) {
 			d := load(t, path)
@@ -125,15 +127,15 @@ func TestJUMIRoleGrantsManifestExecOnly(t *testing.T) {
 			}
 			role := d.roles[0]
 
-			// Allowed: what the backend actually calls.
-			for _, want := range [][2]string{{"pods/exec", "create"}, {"pods", "list"}, {"pods", "get"}} {
+			// Allowed: the pod lookup the backend performs.
+			for _, want := range [][2]string{{"pods", "list"}, {"pods", "get"}} {
 				if !allows(role, want[0], want[1]) {
 					t.Errorf("Role does not allow %s %s", want[1], want[0])
 				}
 			}
-			// Denied: nothing broader than the exec POST.
+			// Denied: pod exec in any form, and anything broader.
 			for _, deny := range [][2]string{
-				{"pods/exec", "get"}, {"pods", "create"}, {"pods", "delete"},
+				{"pods/exec", "create"}, {"pods/exec", "get"}, {"pods", "create"}, {"pods", "delete"},
 				{"pods/attach", "create"}, {"pods/portforward", "create"}, {"secrets", "get"},
 			} {
 				if allows(role, deny[0], deny[1]) {

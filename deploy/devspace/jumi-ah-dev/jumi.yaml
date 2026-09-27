@@ -13,11 +13,10 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
-  # readArtifactsManifest reads each node's artifact manifest through the pod
-  # exec subresource (POST), which needs create on pods/exec.
-  - apiGroups: [""]
-    resources: ["pods/exec"]
-    verbs: ["create"]
+  # No pods/exec: readArtifactsManifest's exec fallback only runs after the node
+  # Job succeeded, and exec into a completed pod fails ("container not found")
+  # even when granted, while the grant would allow exec into every running pod in
+  # the namespace (#58, verified on a live cluster). Manifest transport is #58.
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["create", "get", "list", "watch", "delete"]
