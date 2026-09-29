@@ -238,11 +238,11 @@ verify-sprint-3d-remote:
 lifecycle-check:
 	@mkdir -p "$(LOCALBIN)" "$(GOCACHE_DIR)" "$(GOTMPDIR_DIR)"
 	$(GOENV) go build -o "$(JUMI_BIN)" ./cmd/jumi
-	@if [ -z "$(SAMPLE_RUN_ID)" ]; then echo "usage: make lifecycle-check SAMPLE_RUN_ID=<id> AH_GRPC_TARGET=<host:port>"; echo "       make lifecycle-check SAMPLE_RUN_ID=<id> AH_HTTP_URL=<url>"; exit 1; fi
+	@if [ -z "$(RUN_ID)" ]; then echo "usage: make lifecycle-check RUN_ID=<id> AH_GRPC_TARGET=<host:port>"; echo "       make lifecycle-check RUN_ID=<id> AH_HTTP_URL=<url>"; exit 1; fi
 	@if [ -n "$(AH_GRPC_TARGET)" ]; then \
-		"$(JUMI_BIN)" lifecycle-check --ah-grpc="$(AH_GRPC_TARGET)" --sample-run-id="$(SAMPLE_RUN_ID)"; \
+		"$(JUMI_BIN)" lifecycle-check --ah-grpc="$(AH_GRPC_TARGET)" --run-id="$(RUN_ID)"; \
 	elif [ -n "$(AH_HTTP_URL)" ]; then \
-		"$(JUMI_BIN)" lifecycle-check --ah-http="$(AH_HTTP_URL)" --sample-run-id="$(SAMPLE_RUN_ID)"; \
+		"$(JUMI_BIN)" lifecycle-check --ah-http="$(AH_HTTP_URL)" --run-id="$(RUN_ID)"; \
 	else \
 		echo "error: AH_GRPC_TARGET or AH_HTTP_URL required"; exit 1; \
 	fi

@@ -79,6 +79,9 @@ func (c *GRPCClient) Close() error {
 }
 
 func (c *GRPCClient) ResolveBinding(ctx context.Context, req ResolveBindingRequest) (ResolveBindingResponse, error) {
+	if err := requireRunID("resolve", req.RunID); err != nil {
+		return ResolveBindingResponse{}, err
+	}
 	ctx, cancel := withDefaultTimeout(ctx, defaultResolveBindingTimeout)
 	defer cancel()
 	if c.metrics != nil {
@@ -87,6 +90,7 @@ func (c *GRPCClient) ResolveBinding(ctx context.Context, req ResolveBindingReque
 	resp, err := c.client.ResolveHandoff(ctx, &ahv1.ResolveHandoffRequest{
 		Binding: &ahv1.ArtifactBinding{
 			BindingName:        req.BindingName,
+			RunId:              req.RunID,
 			SampleRunId:        req.SampleRunID,
 			ChildNodeId:        req.ChildNodeID,
 			ChildInputName:     req.ChildInputName,
@@ -129,6 +133,9 @@ func (c *GRPCClient) ResolveBinding(ctx context.Context, req ResolveBindingReque
 }
 
 func (c *GRPCClient) RegisterArtifact(ctx context.Context, req RegisterArtifactRequest) error {
+	if err := requireRunID("register artifact", req.RunID); err != nil {
+		return err
+	}
 	ctx, cancel := withDefaultTimeout(ctx, defaultCallTimeout)
 	defer cancel()
 	if c.metrics != nil {
@@ -136,6 +143,7 @@ func (c *GRPCClient) RegisterArtifact(ctx context.Context, req RegisterArtifactR
 	}
 	if _, err := c.client.RegisterArtifact(ctx, &ahv1.RegisterArtifactRequest{
 		Artifact: &ahv1.ArtifactRef{
+			RunId:             req.RunID,
 			SampleRunId:       req.SampleRunID,
 			ProducerNodeId:    req.ProducerNodeID,
 			ProducerAttemptId: req.ProducerAttemptID,
@@ -254,13 +262,16 @@ func grpcMaterializationCandidates(candidates []*ahv1.MaterializationCandidate) 
 }
 
 func (c *GRPCClient) NotifyNodeTerminal(ctx context.Context, req NotifyNodeTerminalRequest) error {
+	if err := requireRunID("notify node terminal", req.RunID); err != nil {
+		return err
+	}
 	ctx, cancel := withDefaultTimeout(ctx, defaultCallTimeout)
 	defer cancel()
 	if c.metrics != nil {
 		c.metrics.IncHandoffNotifyTerminal()
 	}
 	if _, err := c.client.NotifyNodeTerminal(ctx, &ahv1.NotifyNodeTerminalRequest{
-		SampleRunId:   req.SampleRunID,
+		RunId:         req.RunID,
 		NodeId:        req.NodeID,
 		AttemptId:     req.AttemptID,
 		TerminalState: req.TerminalState,
@@ -271,12 +282,16 @@ func (c *GRPCClient) NotifyNodeTerminal(ctx context.Context, req NotifyNodeTermi
 }
 
 func (c *GRPCClient) FinalizeSampleRun(ctx context.Context, req FinalizeSampleRunRequest) error {
+	if err := requireRunID("finalize run", req.RunID); err != nil {
+		return err
+	}
 	ctx, cancel := withDefaultTimeout(ctx, defaultCallTimeout)
 	defer cancel()
 	if c.metrics != nil {
 		c.metrics.IncHandoffFinalize()
 	}
 	if _, err := c.client.FinalizeSampleRun(ctx, &ahv1.FinalizeSampleRunRequest{
+		RunId:       req.RunID,
 		SampleRunId: req.SampleRunID,
 	}); err != nil {
 		return fmt.Errorf("handoff finalize sample run failed: %w", err)
@@ -285,13 +300,16 @@ func (c *GRPCClient) FinalizeSampleRun(ctx context.Context, req FinalizeSampleRu
 }
 
 func (c *GRPCClient) EvaluateGC(ctx context.Context, req EvaluateGCRequest) error {
+	if err := requireRunID("evaluate gc", req.RunID); err != nil {
+		return err
+	}
 	ctx, cancel := withDefaultTimeout(ctx, defaultCallTimeout)
 	defer cancel()
 	if c.metrics != nil {
 		c.metrics.IncHandoffGCEvaluate()
 	}
 	if _, err := c.client.EvaluateGC(ctx, &ahv1.EvaluateGCRequest{
-		SampleRunId: req.SampleRunID,
+		RunId: req.RunID,
 	}); err != nil {
 		return fmt.Errorf("handoff evaluate gc failed: %w", err)
 	}
@@ -299,15 +317,19 @@ func (c *GRPCClient) EvaluateGC(ctx context.Context, req EvaluateGCRequest) erro
 }
 
 func (c *GRPCClient) GetSampleRunLifecycle(ctx context.Context, req GetSampleRunLifecycleRequest) (SampleRunLifecycle, bool, error) {
+	if err := requireRunID("get run lifecycle", req.RunID); err != nil {
+		return SampleRunLifecycle{}, false, err
+	}
 	ctx, cancel := withDefaultTimeout(ctx, defaultCallTimeout)
 	defer cancel()
 	resp, err := c.client.GetSampleRunLifecycle(ctx, &ahv1.GetSampleRunLifecycleRequest{
-		SampleRunId: req.SampleRunID,
+		RunId: req.RunID,
 	})
 	if err != nil {
 		return SampleRunLifecycle{}, false, err
 	}
 	return SampleRunLifecycle{
+		RunID:                 resp.GetRunId(),
 		SampleRunID:           resp.GetSampleRunId(),
 		Finalized:             resp.GetFinalized(),
 		FinalizedAt:           resp.GetFinalizedAt(),

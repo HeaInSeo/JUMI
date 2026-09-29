@@ -110,6 +110,7 @@ func TestGRPCClient_NoCallerDeadline_BoundedByDefaultTimeout(t *testing.T) {
 
 	start := time.Now()
 	_, err := client.ResolveBinding(context.Background(), ResolveBindingRequest{
+		RunID:              "run-1",
 		BindingName:        "b",
 		ProducerNodeID:     "producer",
 		ProducerOutputName: "out",
@@ -126,7 +127,7 @@ func TestGRPCClient_NoCallerDeadline_BoundedByDefaultTimeout(t *testing.T) {
 
 	start = time.Now()
 	err = client.NotifyNodeTerminal(context.Background(), NotifyNodeTerminalRequest{
-		SampleRunID:   "s1",
+		RunID:         "s1",
 		NodeID:        "n1",
 		TerminalState: "Succeeded",
 	})
@@ -157,6 +158,7 @@ func TestGRPCClient_CallerDeadlineNotOverridden(t *testing.T) {
 
 	start := time.Now()
 	_, err := client.ResolveBinding(ctx, ResolveBindingRequest{
+		RunID:              "run-1",
 		BindingName:        "b",
 		ProducerNodeID:     "producer",
 		ProducerOutputName: "out",

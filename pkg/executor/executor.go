@@ -479,7 +479,8 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 		return err
 	}
 	if err := e.handoff.FinalizeSampleRun(ctx, handoff.FinalizeSampleRunRequest{
-		SampleRunID: util.FirstNonEmpty(run.Spec.Run.SampleRunID, runID),
+		RunID:       runID,
+		SampleRunID: run.Spec.Run.SampleRunID,
 	}); err != nil {
 		appendEvent(ctx, e.registry, spec.EventRecord{
 			RunID:         runID,
@@ -507,7 +508,7 @@ func (e *DagEngine) finalizeRun(ctx context.Context, runID string, succeeded boo
 		e.metrics.IncSampleRunsFinalized()
 	}
 	if err := e.handoff.EvaluateGC(ctx, handoff.EvaluateGCRequest{
-		SampleRunID: util.FirstNonEmpty(run.Spec.Run.SampleRunID, runID),
+		RunID: runID,
 	}); err != nil {
 		appendEvent(ctx, e.registry, spec.EventRecord{
 			RunID:         runID,
@@ -766,7 +767,7 @@ func (r *nodeRunner) runAttemptBody(ctx context.Context, _ interface{}) error {
 			r.metrics.IncInputResolveRequests()
 			req := handoff.ResolveBindingRequest{
 				RunID:              r.runID,
-				SampleRunID:        util.FirstNonEmpty(run.Spec.Run.SampleRunID, r.runID),
+				SampleRunID:        run.Spec.Run.SampleRunID,
 				ChildNodeID:        r.node.NodeID,
 				BindingName:        binding.BindingName,
 				ChildInputName:     binding.ChildInputName,
@@ -1782,7 +1783,7 @@ func (r *nodeRunner) unregisterHandle() {
 
 func (r *nodeRunner) notifyNodeTerminal(ctx context.Context, terminalState string, attemptID string) error {
 	return r.handoff.NotifyNodeTerminal(ctx, handoff.NotifyNodeTerminalRequest{
-		SampleRunID:   util.FirstNonEmpty(r.sampleRunID(ctx), r.runID),
+		RunID:         r.runID,
 		NodeID:        r.node.NodeID,
 		AttemptID:     attemptID,
 		TerminalState: terminalState,
@@ -1797,7 +1798,7 @@ func (r *nodeRunner) registerNodeOutputs(ctx context.Context, handle backend.Han
 	if err != nil {
 		return err
 	}
-	sampleRunID := util.FirstNonEmpty(r.sampleRunID(ctx), r.runID)
+	sampleRunID := r.sampleRunID(ctx)
 	for _, outputName := range node.Outputs {
 		if outputName == "" {
 			continue
@@ -1818,12 +1819,14 @@ func (r *nodeRunner) registerNodeOutputs(ctx context.Context, handle backend.Han
 		if strings.TrimSpace(metadata.URI) == "" && len(metadata.Locations) == 0 {
 			return fmt.Errorf("required output %s has neither uri nor locations for node %s", outputName, r.node.NodeID)
 		}
+		// ArtifactID is left empty: artifact-handoff derives the canonical
+		// Run-keyed ID from RunID, producer node/attempt and output name.
 		if err := r.handoff.RegisterArtifact(ctx, handoff.RegisterArtifactRequest{
+			RunID:             r.runID,
 			SampleRunID:       sampleRunID,
 			ProducerNodeID:    r.node.NodeID,
 			ProducerAttemptID: attemptID,
 			OutputName:        outputName,
-			ArtifactID:        fmt.Sprintf("%s/%s/%s/%s", sampleRunID, r.node.NodeID, attemptID, outputName),
 			Digest:            metadata.Digest,
 			NodeName:          metadata.NodeName,
 			URI:               metadata.URI,

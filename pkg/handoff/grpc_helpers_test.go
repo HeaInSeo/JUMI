@@ -38,7 +38,7 @@ func newTestGRPCClientConn(t *testing.T) *GRPCClient {
 func TestGRPCClient_NotifyNodeTerminal(t *testing.T) {
 	c := newTestGRPCClientConn(t)
 	if err := c.NotifyNodeTerminal(context.Background(), NotifyNodeTerminalRequest{
-		SampleRunID:   "s1",
+		RunID:         "s1",
 		NodeID:        "n1",
 		AttemptID:     "a1",
 		TerminalState: "Succeeded",
@@ -50,7 +50,7 @@ func TestGRPCClient_NotifyNodeTerminal(t *testing.T) {
 func TestGRPCClient_FinalizeSampleRun(t *testing.T) {
 	c := newTestGRPCClientConn(t)
 	if err := c.FinalizeSampleRun(context.Background(), FinalizeSampleRunRequest{
-		SampleRunID: "s1",
+		RunID: "s1",
 	}); err != nil {
 		t.Fatalf("FinalizeSampleRun() error = %v", err)
 	}
@@ -59,7 +59,7 @@ func TestGRPCClient_FinalizeSampleRun(t *testing.T) {
 func TestGRPCClient_EvaluateGC(t *testing.T) {
 	c := newTestGRPCClientConn(t)
 	if err := c.EvaluateGC(context.Background(), EvaluateGCRequest{
-		SampleRunID: "s1",
+		RunID: "s1",
 	}); err != nil {
 		t.Fatalf("EvaluateGC() error = %v", err)
 	}
@@ -75,6 +75,7 @@ func TestGRPCClient_SetMetrics(t *testing.T) {
 
 	// Resolve through metrics-enabled client to cover the IncHandoffResolve path.
 	if _, err := c.ResolveBinding(context.Background(), ResolveBindingRequest{
+		RunID:              "run-1",
 		BindingName:        "b",
 		ProducerNodeID:     "p",
 		ProducerOutputName: "out",
