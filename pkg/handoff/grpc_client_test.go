@@ -34,6 +34,7 @@ func TestGRPCClientRoundTrip(t *testing.T) {
 	}()
 
 	resolved, err := client.ResolveBinding(context.Background(), ResolveBindingRequest{
+		RunID:              "run-1",
 		SampleRunID:        "sample-1",
 		BindingName:        "dataset",
 		ProducerNodeID:     "node-a",
@@ -61,6 +62,7 @@ func TestGRPCClientRoundTrip(t *testing.T) {
 		t.Fatalf("localPath = %q, want /work/inputs/dataset", resolved.MaterializationPlan.LocalPath)
 	}
 	if err := client.RegisterArtifact(context.Background(), RegisterArtifactRequest{
+		RunID:             "run-1",
 		SampleRunID:       "sample-1",
 		ProducerNodeID:    "node-a",
 		ProducerAttemptID: "attempt-1",
@@ -89,7 +91,7 @@ func TestGRPCClientRoundTrip(t *testing.T) {
 		t.Fatalf("locations len = %d, want 1", len(stub.lastRegister.GetArtifact().GetLocations()))
 	}
 	lifecycle, ok, err := client.GetSampleRunLifecycle(context.Background(), GetSampleRunLifecycleRequest{
-		SampleRunID: "sample-1",
+		RunID: "run-1",
 	})
 	if err != nil {
 		t.Fatalf("GetSampleRunLifecycle() error = %v", err)
@@ -97,8 +99,11 @@ func TestGRPCClientRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("GetSampleRunLifecycle() ok = false, want true")
 	}
-	if lifecycle.SampleRunID != "sample-1" {
-		t.Fatalf("sampleRunId = %q, want sample-1", lifecycle.SampleRunID)
+	if lifecycle.RunID != "run-1" || lifecycle.SampleRunID != "sample-1" {
+		t.Fatalf("runId/sampleRunId = %q/%q, want run-1/sample-1", lifecycle.RunID, lifecycle.SampleRunID)
+	}
+	if stub.lastRegister.GetArtifact().GetRunId() != "run-1" {
+		t.Fatalf("register run_id = %q, want run-1", stub.lastRegister.GetArtifact().GetRunId())
 	}
 	if !lifecycle.Finalized {
 		t.Fatal("finalized = false, want true")
@@ -155,6 +160,7 @@ func (stubResolverServer) EvaluateGC(context.Context, *ahv1.EvaluateGCRequest) (
 
 func (stubResolverServer) GetSampleRunLifecycle(context.Context, *ahv1.GetSampleRunLifecycleRequest) (*ahv1.GetSampleRunLifecycleResponse, error) {
 	return &ahv1.GetSampleRunLifecycleResponse{
+		RunId:                 "run-1",
 		SampleRunId:           "sample-1",
 		Finalized:             true,
 		FinalizedAt:           "2026-05-31T01:02:03Z",

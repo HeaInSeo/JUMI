@@ -15,12 +15,12 @@ func runLifecycleCheck(args []string) {
 	fs := flag.NewFlagSet("lifecycle-check", flag.ExitOnError)
 	ahGRPC := fs.String("ah-grpc", "", "AH gRPC endpoint (host:port); mutually exclusive with --ah-http")
 	ahHTTP := fs.String("ah-http", "", "AH HTTP base URL; mutually exclusive with --ah-grpc")
-	sampleRunID := fs.String("sample-run-id", "", "sample run ID to query (required)")
+	runID := fs.String("run-id", "", "run ID to query (required); a lifecycle belongs to one Run, not a Sample")
 	timeout := fs.Duration("timeout", 10*time.Second, "request timeout")
 	_ = fs.Parse(args)
 
-	if *sampleRunID == "" {
-		fmt.Fprintln(os.Stderr, "error: --sample-run-id is required")
+	if *runID == "" {
+		fmt.Fprintln(os.Stderr, "error: --run-id is required")
 		fs.Usage()
 		os.Exit(2)
 	}
@@ -48,14 +48,14 @@ func runLifecycleCheck(args []string) {
 	defer cancel()
 
 	lifecycle, ok, err := client.GetSampleRunLifecycle(ctx, handoff.GetSampleRunLifecycleRequest{
-		SampleRunID: *sampleRunID,
+		RunID: *runID,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 	if !ok {
-		fmt.Fprintf(os.Stderr, "not found: sample run %s has no lifecycle record\n", *sampleRunID)
+		fmt.Fprintf(os.Stderr, "not found: run %s has no lifecycle record\n", *runID)
 		os.Exit(1)
 	}
 

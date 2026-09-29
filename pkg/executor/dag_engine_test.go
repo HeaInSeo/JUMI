@@ -133,7 +133,7 @@ func (f *fakeHandoffClient) EvaluateGC(_ context.Context, req handoff.EvaluateGC
 }
 
 func (f *fakeHandoffClient) GetSampleRunLifecycle(_ context.Context, req handoff.GetSampleRunLifecycleRequest) (handoff.SampleRunLifecycle, bool, error) {
-	return handoff.SampleRunLifecycle{SampleRunID: req.SampleRunID}, false, nil
+	return handoff.SampleRunLifecycle{RunID: req.RunID}, false, nil
 }
 
 func (f *fakeAdapter) PrepareNode(_ context.Context, _ spec.RunRecord, node spec.Node) (backend.PreparedNode, error) {
@@ -219,8 +219,8 @@ func TestDagEngineResolvesArtifactBindingsBeforeStart(t *testing.T) {
 	if len(handoffClient.requests) != 1 {
 		t.Fatalf("resolve binding calls = %d, want 1", len(handoffClient.requests))
 	}
-	if handoffClient.requests[0].SampleRunID != "sample-1" {
-		t.Fatalf("sampleRunID = %q, want sample-1", handoffClient.requests[0].SampleRunID)
+	if handoffClient.requests[0].RunID != "run-bindings" || handoffClient.requests[0].SampleRunID != "sample-1" {
+		t.Fatalf("runID/sampleRunID = %q/%q, want run-bindings/sample-1", handoffClient.requests[0].RunID, handoffClient.requests[0].SampleRunID)
 	}
 	if handoffClient.requests[0].ArtifactID != "sample-1:a:output" {
 		t.Fatalf("artifactID = %q, want sample-1:a:output", handoffClient.requests[0].ArtifactID)
@@ -282,14 +282,20 @@ func TestDagEngineResolvesArtifactBindingsBeforeStart(t *testing.T) {
 	if handoffClient.notifyRequests[0].AttemptID == "" {
 		t.Fatal("expected node terminal attemptID to be populated")
 	}
+	if handoffClient.notifyRequests[0].RunID != "run-bindings" {
+		t.Fatalf("node terminal runID = %q, want run-bindings", handoffClient.notifyRequests[0].RunID)
+	}
 	if len(handoffClient.finalizeRequests) != 1 {
 		t.Fatalf("finalize sample run calls = %d, want 1", len(handoffClient.finalizeRequests))
 	}
 	if len(handoffClient.evaluateRequests) != 1 {
 		t.Fatalf("evaluate gc calls = %d, want 1", len(handoffClient.evaluateRequests))
 	}
-	if handoffClient.evaluateRequests[0].SampleRunID != "sample-1" {
-		t.Fatalf("evaluate gc sampleRunID = %q, want sample-1", handoffClient.evaluateRequests[0].SampleRunID)
+	if handoffClient.finalizeRequests[0].RunID != "run-bindings" || handoffClient.finalizeRequests[0].SampleRunID != "sample-1" {
+		t.Fatalf("finalize runID/sampleRunID = %q/%q, want run-bindings/sample-1", handoffClient.finalizeRequests[0].RunID, handoffClient.finalizeRequests[0].SampleRunID)
+	}
+	if handoffClient.evaluateRequests[0].RunID != "run-bindings" {
+		t.Fatalf("evaluate gc runID = %q, want run-bindings", handoffClient.evaluateRequests[0].RunID)
 	}
 	assertEventTypePresent(t, reg, record.RunID, "node.placement.required_applied")
 }
@@ -433,8 +439,11 @@ func TestDagEngineRegistersNodeOutputsOnSuccess(t *testing.T) {
 	if len(handoffClient.registerRequests) != 2 {
 		t.Fatalf("register artifact calls = %d, want 2", len(handoffClient.registerRequests))
 	}
-	if handoffClient.registerRequests[0].SampleRunID != "sample-out" {
-		t.Fatalf("sampleRunID = %q, want sample-out", handoffClient.registerRequests[0].SampleRunID)
+	if handoffClient.registerRequests[0].RunID != "run-outputs" || handoffClient.registerRequests[0].SampleRunID != "sample-out" {
+		t.Fatalf("runID/sampleRunID = %q/%q, want run-outputs/sample-out", handoffClient.registerRequests[0].RunID, handoffClient.registerRequests[0].SampleRunID)
+	}
+	if handoffClient.registerRequests[0].ArtifactID != "" {
+		t.Fatalf("artifactID = %q, want empty (artifact-handoff assigns the canonical Run-keyed ID)", handoffClient.registerRequests[0].ArtifactID)
 	}
 	if handoffClient.registerRequests[0].ProducerNodeID != "producer" {
 		t.Fatalf("producerNodeID = %q, want producer", handoffClient.registerRequests[0].ProducerNodeID)

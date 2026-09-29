@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -23,6 +24,18 @@ type HTTPError struct {
 
 func (e *HTTPError) Error() string {
 	return fmt.Sprintf("handoff %s failed with status %d", e.Op, e.StatusCode)
+}
+
+// ErrMissingRunID is returned, before any request is sent, when an
+// artifact-handoff call carries no RunID. RunID is the canonical execution
+// identity; SampleRunID is grouping metadata and is never used in its place.
+var ErrMissingRunID = errors.New("handoff: runID is required")
+
+func requireRunID(op, runID string) error {
+	if strings.TrimSpace(runID) == "" {
+		return fmt.Errorf("%s: %w", op, ErrMissingRunID)
+	}
+	return nil
 }
 
 type ResolveBindingRequest struct {
@@ -107,25 +120,29 @@ type ResolveBindingResponse struct {
 }
 
 type NotifyNodeTerminalRequest struct {
-	SampleRunID   string `json:"sampleRunId"`
+	RunID         string `json:"runId"`
 	NodeID        string `json:"nodeId"`
 	AttemptID     string `json:"attemptId,omitempty"`
 	TerminalState string `json:"terminalState"`
 }
 
+// FinalizeSampleRunRequest finalizes one Run. SampleRunID is grouping
+// metadata only and never selects what is finalized.
 type FinalizeSampleRunRequest struct {
-	SampleRunID string `json:"sampleRunId"`
+	RunID       string `json:"runId"`
+	SampleRunID string `json:"sampleRunId,omitempty"`
 }
 
 type EvaluateGCRequest struct {
-	SampleRunID string `json:"sampleRunId"`
+	RunID string `json:"runId"`
 }
 
 type GetSampleRunLifecycleRequest struct {
-	SampleRunID string `json:"sampleRunId"`
+	RunID string `json:"runId"`
 }
 
 type SampleRunLifecycle struct {
+	RunID                 string `json:"runId,omitempty"`
 	SampleRunID           string `json:"sampleRunId,omitempty"`
 	Finalized             bool   `json:"finalized,omitempty"`
 	FinalizedAt           string `json:"finalizedAt,omitempty"`
@@ -144,7 +161,8 @@ type SampleRunLifecycle struct {
 }
 
 type RegisterArtifactRequest struct {
-	SampleRunID       string             `json:"sampleRunId"`
+	RunID             string             `json:"runId"`
+	SampleRunID       string             `json:"sampleRunId,omitempty"`
 	ProducerNodeID    string             `json:"producerNodeId"`
 	ProducerAttemptID string             `json:"producerAttemptId,omitempty"`
 	OutputName        string             `json:"outputName"`
@@ -201,7 +219,7 @@ func (c *NoopClient) EvaluateGC(_ context.Context, _ EvaluateGCRequest) error {
 }
 
 func (c *NoopClient) GetSampleRunLifecycle(_ context.Context, req GetSampleRunLifecycleRequest) (SampleRunLifecycle, bool, error) {
-	return SampleRunLifecycle{SampleRunID: req.SampleRunID}, false, nil
+	return SampleRunLifecycle{RunID: req.RunID}, false, nil
 }
 
 type HTTPClient struct {
@@ -227,10 +245,14 @@ func NewHTTPClientWithClient(baseURL string, client *http.Client) *HTTPClient {
 }
 
 func (c *HTTPClient) ResolveBinding(ctx context.Context, req ResolveBindingRequest) (ResolveBindingResponse, error) {
+	if err := requireRunID("resolve", req.RunID); err != nil {
+		return ResolveBindingResponse{}, err
+	}
 	body := struct {
 		Binding struct {
 			BindingName        string `json:"bindingName"`
-			SampleRunID        string `json:"sampleRunId"`
+			RunID              string `json:"runId"`
+			SampleRunID        string `json:"sampleRunId,omitempty"`
 			ChildNodeID        string `json:"childNodeId"`
 			ChildInputName     string `json:"childInputName,omitempty"`
 			ProducerNodeID     string `json:"producerNodeId"`
@@ -245,6 +267,7 @@ func (c *HTTPClient) ResolveBinding(ctx context.Context, req ResolveBindingReque
 		TargetNodeName string `json:"targetNodeName"`
 	}{TargetNodeName: req.TargetNodeName}
 	body.Binding.BindingName = req.BindingName
+	body.Binding.RunID = req.RunID
 	body.Binding.SampleRunID = req.SampleRunID
 	body.Binding.ChildNodeID = req.ChildNodeID
 	body.Binding.ChildInputName = req.ChildInputName
@@ -283,9 +306,13 @@ func (c *HTTPClient) ResolveBinding(ctx context.Context, req ResolveBindingReque
 }
 
 func (c *HTTPClient) RegisterArtifact(ctx context.Context, req RegisterArtifactRequest) error {
+	if err := requireRunID("register artifact", req.RunID); err != nil {
+		return err
+	}
 	var body struct {
 		Artifact struct {
-			SampleRunID       string             `json:"sampleRunId"`
+			RunID             string             `json:"runId"`
+			SampleRunID       string             `json:"sampleRunId,omitempty"`
 			ProducerNodeID    string             `json:"producerNodeId"`
 			ProducerAttemptID string             `json:"producerAttemptId,omitempty"`
 			OutputName        string             `json:"outputName"`
@@ -298,6 +325,7 @@ func (c *HTTPClient) RegisterArtifact(ctx context.Context, req RegisterArtifactR
 			SizeBytes         int64              `json:"sizeBytes,omitempty"`
 		} `json:"artifact"`
 	}
+	body.Artifact.RunID = req.RunID
 	body.Artifact.SampleRunID = req.SampleRunID
 	body.Artifact.ProducerNodeID = req.ProducerNodeID
 	body.Artifact.ProducerAttemptID = req.ProducerAttemptID
@@ -332,6 +360,9 @@ func (c *HTTPClient) RegisterArtifact(ctx context.Context, req RegisterArtifactR
 }
 
 func (c *HTTPClient) NotifyNodeTerminal(ctx context.Context, req NotifyNodeTerminalRequest) error {
+	if err := requireRunID("notify node terminal", req.RunID); err != nil {
+		return err
+	}
 	payload, err := json.Marshal(req)
 	if err != nil {
 		return err
@@ -355,6 +386,9 @@ func (c *HTTPClient) NotifyNodeTerminal(ctx context.Context, req NotifyNodeTermi
 }
 
 func (c *HTTPClient) FinalizeSampleRun(ctx context.Context, req FinalizeSampleRunRequest) error {
+	if err := requireRunID("finalize run", req.RunID); err != nil {
+		return err
+	}
 	payload, err := json.Marshal(req)
 	if err != nil {
 		return err
@@ -378,6 +412,9 @@ func (c *HTTPClient) FinalizeSampleRun(ctx context.Context, req FinalizeSampleRu
 }
 
 func (c *HTTPClient) EvaluateGC(ctx context.Context, req EvaluateGCRequest) error {
+	if err := requireRunID("evaluate gc", req.RunID); err != nil {
+		return err
+	}
 	payload, err := json.Marshal(req)
 	if err != nil {
 		return err
@@ -401,7 +438,10 @@ func (c *HTTPClient) EvaluateGC(ctx context.Context, req EvaluateGCRequest) erro
 }
 
 func (c *HTTPClient) GetSampleRunLifecycle(ctx context.Context, req GetSampleRunLifecycleRequest) (SampleRunLifecycle, bool, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/sampleRuns:lifecycle?sampleRunId="+url.QueryEscape(req.SampleRunID), nil)
+	if err := requireRunID("get run lifecycle", req.RunID); err != nil {
+		return SampleRunLifecycle{}, false, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/sampleRuns:lifecycle?runId="+url.QueryEscape(req.RunID), nil)
 	if err != nil {
 		return SampleRunLifecycle{}, false, err
 	}

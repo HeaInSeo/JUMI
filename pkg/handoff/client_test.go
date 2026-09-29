@@ -44,6 +44,7 @@ func TestHTTPClientResolveBinding(t *testing.T) {
 		}),
 	})
 	resp, err := client.ResolveBinding(context.Background(), ResolveBindingRequest{
+		RunID:              "run-1",
 		SampleRunID:        "sample-1",
 		ChildNodeID:        "child-a",
 		BindingName:        "dataset",
@@ -93,11 +94,11 @@ func TestHTTPClientResolveBinding(t *testing.T) {
 		t.Fatalf("resolve payload required = %#v, want true", binding["required"])
 	}
 	if err := client.RegisterArtifact(context.Background(), RegisterArtifactRequest{
+		RunID:             "run-1",
 		SampleRunID:       "sample-1",
 		ProducerNodeID:    "parent-a",
 		ProducerAttemptID: "attempt-1",
 		OutputName:        "output",
-		ArtifactID:        "sample-1/parent-a/attempt-1/output",
 		Digest:            "sha256:abc",
 		URI:               "jumi://runs/run-1/nodes/parent-a/outputs/output",
 		LogicalURI:        "jumi://runs/run-1/nodes/parent-a/outputs/output",
@@ -119,7 +120,7 @@ func TestHTTPClientResolveBinding(t *testing.T) {
 		t.Fatalf("register payload logicalUri = %#v, want logical URI", artifact["logicalUri"])
 	}
 	if err := client.NotifyNodeTerminal(context.Background(), NotifyNodeTerminalRequest{
-		SampleRunID:   "sample-1",
+		RunID:         "run-1",
 		NodeID:        "child-a",
 		AttemptID:     "attempt-1",
 		TerminalState: "Succeeded",
@@ -130,12 +131,13 @@ func TestHTTPClientResolveBinding(t *testing.T) {
 		t.Fatalf("notify payload attemptId = %#v, want attempt-1", notifyPayload["attemptId"])
 	}
 	if err := client.FinalizeSampleRun(context.Background(), FinalizeSampleRunRequest{
+		RunID:       "run-1",
 		SampleRunID: "sample-1",
 	}); err != nil {
 		t.Fatalf("FinalizeSampleRun() error = %v", err)
 	}
 	if err := client.EvaluateGC(context.Background(), EvaluateGCRequest{
-		SampleRunID: "sample-1",
+		RunID: "run-1",
 	}); err != nil {
 		t.Fatalf("EvaluateGC() error = %v", err)
 	}
@@ -147,10 +149,11 @@ func TestHTTPClientGetSampleRunLifecycle(t *testing.T) {
 			if r.URL.Path != "/v1/sampleRuns:lifecycle" {
 				t.Fatalf("unexpected path: %s", r.URL.Path)
 			}
-			if got := r.URL.Query().Get("sampleRunId"); got != "sample-1" {
-				t.Fatalf("sampleRunId query = %q, want sample-1", got)
+			if got := r.URL.Query().Get("runId"); got != "run-1" {
+				t.Fatalf("runId query = %q, want run-1", got)
 			}
 			return jsonResponse(http.StatusOK, `{
+				"runId":"run-1",
 				"sampleRunId":"sample-1",
 				"finalized":true,
 				"finalizedAt":"2026-05-31T01:02:03Z",
@@ -167,7 +170,7 @@ func TestHTTPClientGetSampleRunLifecycle(t *testing.T) {
 		}),
 	})
 	lifecycle, ok, err := client.GetSampleRunLifecycle(context.Background(), GetSampleRunLifecycleRequest{
-		SampleRunID: "sample-1",
+		RunID: "run-1",
 	})
 	if err != nil {
 		t.Fatalf("GetSampleRunLifecycle() error = %v", err)
@@ -175,8 +178,8 @@ func TestHTTPClientGetSampleRunLifecycle(t *testing.T) {
 	if !ok {
 		t.Fatal("GetSampleRunLifecycle() ok = false, want true")
 	}
-	if lifecycle.SampleRunID != "sample-1" {
-		t.Fatalf("sampleRunId = %q, want sample-1", lifecycle.SampleRunID)
+	if lifecycle.RunID != "run-1" || lifecycle.SampleRunID != "sample-1" {
+		t.Fatalf("runId/sampleRunId = %q/%q, want run-1/sample-1", lifecycle.RunID, lifecycle.SampleRunID)
 	}
 	if !lifecycle.Finalized {
 		t.Fatal("finalized = false, want true")
@@ -199,7 +202,7 @@ func TestHTTPClientGetSampleRunLifecycleReturnsNotFound(t *testing.T) {
 		}),
 	})
 	_, ok, err := client.GetSampleRunLifecycle(context.Background(), GetSampleRunLifecycleRequest{
-		SampleRunID: "missing",
+		RunID: "missing",
 	})
 	if err != nil {
 		t.Fatalf("GetSampleRunLifecycle() error = %v", err)
@@ -219,7 +222,7 @@ func TestHTTPClientResolveBindingDecodesLegacyResponseShape(t *testing.T) {
 		}),
 	})
 	resp, err := client.ResolveBinding(context.Background(), ResolveBindingRequest{
-		SampleRunID:        "sample-legacy",
+		RunID:              "run-legacy",
 		ChildNodeID:        "child-a",
 		BindingName:        "dataset",
 		ProducerNodeID:     "parent-a",
@@ -277,7 +280,7 @@ func TestHTTPClientResolveBindingDecodesMaterializationCandidates(t *testing.T) 
 		}),
 	})
 	resp, err := client.ResolveBinding(context.Background(), ResolveBindingRequest{
-		SampleRunID:        "sample-candidates",
+		RunID:              "run-candidates",
 		ChildNodeID:        "child-a",
 		BindingName:        "dataset",
 		ProducerNodeID:     "parent-a",

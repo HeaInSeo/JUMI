@@ -13,6 +13,7 @@ import (
 func TestNoopClient_ResolveBinding(t *testing.T) {
 	c := NewNoopClient()
 	resp, err := c.ResolveBinding(context.Background(), ResolveBindingRequest{
+		RunID:              "run-1",
 		BindingName:        "b",
 		ChildNodeID:        "child",
 		ProducerNodeID:     "producer",
@@ -36,6 +37,7 @@ func TestNoopClient_ResolveBinding(t *testing.T) {
 func TestNoopClient_ResolveBinding_FallsBackToProducerNodeID(t *testing.T) {
 	c := NewNoopClient()
 	resp, err := c.ResolveBinding(context.Background(), ResolveBindingRequest{
+		RunID:              "run-1",
 		BindingName:        "b",
 		ChildNodeID:        "child",
 		ProducerNodeID:     "producer",
@@ -53,7 +55,7 @@ func TestNoopClient_ResolveBinding_FallsBackToProducerNodeID(t *testing.T) {
 func TestNoopClient_RegisterArtifact(t *testing.T) {
 	c := NewNoopClient()
 	err := c.RegisterArtifact(context.Background(), RegisterArtifactRequest{
-		SampleRunID:    "s1",
+		RunID:          "s1",
 		ProducerNodeID: "n1",
 		OutputName:     "out",
 	})
@@ -65,7 +67,7 @@ func TestNoopClient_RegisterArtifact(t *testing.T) {
 func TestNoopClient_NotifyNodeTerminal(t *testing.T) {
 	c := NewNoopClient()
 	err := c.NotifyNodeTerminal(context.Background(), NotifyNodeTerminalRequest{
-		SampleRunID:   "s1",
+		RunID:         "s1",
 		NodeID:        "n1",
 		TerminalState: "Succeeded",
 	})
@@ -76,7 +78,7 @@ func TestNoopClient_NotifyNodeTerminal(t *testing.T) {
 
 func TestNoopClient_FinalizeSampleRun(t *testing.T) {
 	c := NewNoopClient()
-	err := c.FinalizeSampleRun(context.Background(), FinalizeSampleRunRequest{SampleRunID: "s1"})
+	err := c.FinalizeSampleRun(context.Background(), FinalizeSampleRunRequest{RunID: "s1"})
 	if err != nil {
 		t.Fatalf("FinalizeSampleRun() error = %v", err)
 	}
@@ -84,7 +86,7 @@ func TestNoopClient_FinalizeSampleRun(t *testing.T) {
 
 func TestNoopClient_EvaluateGC(t *testing.T) {
 	c := NewNoopClient()
-	err := c.EvaluateGC(context.Background(), EvaluateGCRequest{SampleRunID: "s1"})
+	err := c.EvaluateGC(context.Background(), EvaluateGCRequest{RunID: "s1"})
 	if err != nil {
 		t.Fatalf("EvaluateGC() error = %v", err)
 	}
@@ -92,15 +94,15 @@ func TestNoopClient_EvaluateGC(t *testing.T) {
 
 func TestNoopClient_GetSampleRunLifecycle(t *testing.T) {
 	c := NewNoopClient()
-	lc, ok, err := c.GetSampleRunLifecycle(context.Background(), GetSampleRunLifecycleRequest{SampleRunID: "s1"})
+	lc, ok, err := c.GetSampleRunLifecycle(context.Background(), GetSampleRunLifecycleRequest{RunID: "s1"})
 	if err != nil {
 		t.Fatalf("GetSampleRunLifecycle() error = %v", err)
 	}
 	if ok {
 		t.Fatal("GetSampleRunLifecycle() ok = true, want false for noop")
 	}
-	if lc.SampleRunID != "s1" {
-		t.Fatalf("SampleRunID = %q, want s1", lc.SampleRunID)
+	if lc.RunID != "s1" {
+		t.Fatalf("RunID = %q, want s1", lc.RunID)
 	}
 }
 
@@ -139,6 +141,7 @@ func TestHTTPClient_ResolveBinding_ServerError(t *testing.T) {
 		}),
 	})
 	_, err := c.ResolveBinding(context.Background(), ResolveBindingRequest{
+		RunID:       "run-1",
 		BindingName: "b", ChildNodeID: "c", ProducerNodeID: "p", ProducerOutputName: "o",
 	})
 	if err == nil {
@@ -164,7 +167,7 @@ func TestHTTPClient_RegisterArtifact_ServerError(t *testing.T) {
 		}),
 	})
 	err := c.RegisterArtifact(context.Background(), RegisterArtifactRequest{
-		SampleRunID: "s1", ProducerNodeID: "n1", OutputName: "out",
+		RunID: "s1", ProducerNodeID: "n1", OutputName: "out",
 	})
 	if err == nil {
 		t.Fatal("expected error for 400 response")
@@ -189,7 +192,7 @@ func TestHTTPClient_NotifyNodeTerminal_ServerError(t *testing.T) {
 		}),
 	})
 	err := c.NotifyNodeTerminal(context.Background(), NotifyNodeTerminalRequest{
-		SampleRunID: "s1", NodeID: "n1", TerminalState: "Succeeded",
+		RunID: "s1", NodeID: "n1", TerminalState: "Succeeded",
 	})
 	if err == nil {
 		t.Fatal("expected error for 502 response")
@@ -210,7 +213,7 @@ func TestHTTPClient_FinalizeSampleRun_ServerError(t *testing.T) {
 			}, nil
 		}),
 	})
-	err := c.FinalizeSampleRun(context.Background(), FinalizeSampleRunRequest{SampleRunID: "s1"})
+	err := c.FinalizeSampleRun(context.Background(), FinalizeSampleRunRequest{RunID: "s1"})
 	if err == nil {
 		t.Fatal("expected error for 500 response")
 	}
@@ -226,7 +229,7 @@ func TestHTTPClient_EvaluateGC_ServerError(t *testing.T) {
 			}, nil
 		}),
 	})
-	err := c.EvaluateGC(context.Background(), EvaluateGCRequest{SampleRunID: "s1"})
+	err := c.EvaluateGC(context.Background(), EvaluateGCRequest{RunID: "s1"})
 	if err == nil {
 		t.Fatal("expected error for 500 response")
 	}
@@ -242,7 +245,7 @@ func TestHTTPClient_GetSampleRunLifecycle_ServerError(t *testing.T) {
 			}, nil
 		}),
 	})
-	_, _, err := c.GetSampleRunLifecycle(context.Background(), GetSampleRunLifecycleRequest{SampleRunID: "s1"})
+	_, _, err := c.GetSampleRunLifecycle(context.Background(), GetSampleRunLifecycleRequest{RunID: "s1"})
 	if err == nil {
 		t.Fatal("expected error for 500 response")
 	}
