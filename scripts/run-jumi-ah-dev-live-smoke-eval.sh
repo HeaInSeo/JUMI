@@ -276,8 +276,10 @@ fi
 collect_metric_values "jumi" "jumi" "metrics-jumi-end-${RUN_STAMP,,}" >"${end_jumi}"
 collect_metric_values "${ARTIFACT_HANDOFF_SERVICE}" "ah" "metrics-ah-end-${RUN_STAMP,,}" >"${end_ah}"
 collect_k8s_churn_snapshot >"${k8s_churn_end_json}"
-collect_service_json "${ARTIFACT_HANDOFF_SERVICE}" "/v1/sampleRuns:lifecycle?sampleRunId=${SAMPLE_RUN_ID}" "lifecycle-ah-end-${RUN_STAMP,,}" >"${lifecycle_json}"
-collect_service_json "${ARTIFACT_HANDOFF_SERVICE}" "/v1/artifacts:list?sampleRunId=${SAMPLE_RUN_ID}" "artifacts-ah-end-${RUN_STAMP,,}" >"${artifacts_json}"
+# AH keys lifecycle and artifacts by the canonical RunID (F4 Mode B); the
+# Sample ID is grouping metadata only and no longer identifies one Run.
+collect_service_json "${ARTIFACT_HANDOFF_SERVICE}" "/v1/sampleRuns:lifecycle?runId=${RUN_ID}" "lifecycle-ah-end-${RUN_STAMP,,}" >"${lifecycle_json}"
+collect_service_json "${ARTIFACT_HANDOFF_SERVICE}" "/v1/artifacts:list?runId=${RUN_ID}" "artifacts-ah-end-${RUN_STAMP,,}" >"${artifacts_json}"
 
 finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
